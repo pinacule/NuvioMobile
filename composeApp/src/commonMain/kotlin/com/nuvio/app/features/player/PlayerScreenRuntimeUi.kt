@@ -183,6 +183,9 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                         if (active.value && playbackKey == activePlaybackKey) {
                             playerController = controller
                             playerControllerSourceUrl = activeSourceUrl
+                            // A watch party drives the rate itself; otherwise start at the user's default speed.
+                            val defaultSpeed = playerSettingsUiState.defaultPlaybackSpeed
+                            if (!isPartySynced && defaultSpeed != 1f) controller.setPlaybackSpeed(defaultSpeed)
                         }
                     },
                     onSnapshot = { snapshot ->
@@ -323,7 +326,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             onSeekBack = { seekBy(-10_000L) },
             onSeekForward = { seekBy(10_000L) },
             onResizeModeClick = { cycleResizeMode() },
-            onSpeedClick = { cyclePlaybackSpeed() },
+            onSpeedClick = { openPlaybackSpeedModal() },
             onSubtitleClick = {
                 refreshTracks()
                 showSubtitleModal = true
@@ -507,6 +510,14 @@ private fun BoxScope.RenderPlaybackOverlays(
 
 @Composable
 private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
+    PlaybackSpeedModal(
+        visible = showSpeedModal,
+        speed = playbackSnapshot.playbackSpeed,
+        defaultSpeed = playerSettingsUiState.defaultPlaybackSpeed,
+        onSpeedChanged = { applyUserPlaybackSpeed(it) },
+        onMakeDefault = { PlayerSettingsRepository.setDefaultPlaybackSpeed(it) },
+        onDismiss = { showSpeedModal = false },
+    )
     PlayerScreenModalHosts(
         pendingP2pSwitch = pendingP2pSwitch,
         onPendingP2pSwitchChanged = { pendingP2pSwitch = it },

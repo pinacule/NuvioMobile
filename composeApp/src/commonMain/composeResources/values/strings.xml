@@ -2400,6 +2400,10 @@
     <string name="compose_player_more_actions">More controls</string>
     <string name="compose_player_fewer_actions">Fewer controls</string>
     <string name="compose_player_speed">Playback speed</string>
+    <string name="player_speed_make_default">Make default</string>
+    <string name="player_speed_default_badge">Default</string>
+    <string name="settings_playback_default_speed">Default playback speed</string>
+    <string name="settings_playback_default_speed_description">Videos start at this speed. Change it anytime from the speed button in the player.</string>
     <string name="compose_player_show_elapsed_time">Show elapsed time</string>
     <string name="compose_player_show_remaining_time">Show remaining time</string>
     <string name="compose_player_brightness">Brightness</string>

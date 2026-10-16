@@ -76,6 +76,9 @@ import com.nuvio.app.features.player.SubtitleBackgroundColorSwatches
 import com.nuvio.app.features.player.SubtitleColorSwatches
 import com.nuvio.app.features.player.SubtitleLanguageOption
 import com.nuvio.app.features.player.formatPlaybackSpeedLabel
+import com.nuvio.app.features.player.MAX_PLAYBACK_SPEED
+import com.nuvio.app.features.player.MIN_PLAYBACK_SPEED
+import com.nuvio.app.features.player.roundPlaybackSpeed
 import com.nuvio.app.features.player.languageLabelForCode
 import com.nuvio.app.features.player.subtitleFontSizeRangeSp
 import com.nuvio.app.features.player.toStorageHexString
@@ -344,6 +347,9 @@ private fun PlaybackSettingsSection(
     var showLibmpvVideoOutputDialog by remember { mutableStateOf(false) }
     var showDecoderPriorityDialog by remember { mutableStateOf(false) }
     var showHoldToSpeedValueDialog by remember { mutableStateOf(false) }
+    var showDefaultPlaybackSpeedDialog by remember { mutableStateOf(false) }
+    val defaultPlaybackSpeed = PlayerSettingsRepository.uiState
+        .collectAsStateWithLifecycle().value.defaultPlaybackSpeed
     var showIosAudioOutputDialog by remember { mutableStateOf(false) }
     var showIosHardwareDecoderDialog by remember { mutableStateOf(false) }
     var showIosTargetPrimariesDialog by remember { mutableStateOf(false) }
@@ -498,6 +504,15 @@ private fun PlaybackSettingsSection(
                         description = formatPlaybackSpeedLabel(holdToSpeedValue),
                         isTablet = isTablet,
                         onClick = { showHoldToSpeedValueDialog = true },
+                    )
+                }
+                if (!autoPlayPlayerSettings.externalPlayerEnabled) {
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.settings_playback_default_speed),
+                        description = formatPlaybackSpeedLabel(defaultPlaybackSpeed),
+                        isTablet = isTablet,
+                        onClick = { showDefaultPlaybackSpeedDialog = true },
                     )
                 }
             }
@@ -1801,6 +1816,17 @@ private fun PlaybackSettingsSection(
         )
     }
 
+    if (showDefaultPlaybackSpeedDialog) {
+        DefaultPlaybackSpeedDialog(
+            initialSpeed = defaultPlaybackSpeed,
+            onConfirm = { speed ->
+                PlayerSettingsRepository.setDefaultPlaybackSpeed(speed)
+                showDefaultPlaybackSpeedDialog = false
+            },
+            onDismiss = { showDefaultPlaybackSpeedDialog = false },
+        )
+    }
+
     if (showHoldToSpeedValueDialog) {
         HoldToSpeedValueDialog(
             selectedSpeed = holdToSpeedValue,
@@ -2288,6 +2314,50 @@ private fun HoldToSpeedValueDialog(
             DialogButton(
                 text = stringResource(Res.string.action_done),
                 onClick = onDismiss,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DefaultPlaybackSpeedDialog(
+    initialSpeed: Float,
+    onConfirm: (Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var speed by remember { mutableFloatStateOf(initialSpeed) }
+    val shownSpeed = roundPlaybackSpeed(speed)
+
+    DialogSurface(
+        onDismissRequest = onDismiss,
+        title = stringResource(Res.string.settings_playback_default_speed),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = formatPlaybackSpeedLabel(shownSpeed),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Slider(
+                value = speed,
+                onValueChange = { speed = it },
+                valueRange = MIN_PLAYBACK_SPEED..MAX_PLAYBACK_SPEED,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                text = stringResource(Res.string.settings_playback_default_speed_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        DialogButtons {
+            DialogButton(
+                text = stringResource(Res.string.action_done),
+                onClick = { onConfirm(shownSpeed) },
             )
         }
     }

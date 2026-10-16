@@ -168,11 +168,19 @@ internal fun formatPlaybackRuntime(positionMs: Long, durationMs: Long, showRemai
         "${formatPlaybackTime(positionMs)} / ${formatPlaybackTime(durationMs)}"
     }
 
-/** Steps the player's speed button cycles through, wrapping back to normal speed after the last one. */
-internal val PLAYBACK_SPEED_STEPS = listOf(1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)
+internal const val MIN_PLAYBACK_SPEED = 1f
+internal const val MAX_PLAYBACK_SPEED = 4f
+internal const val PLAYBACK_SPEED_STEP = 0.05f
 
-internal fun nextPlaybackSpeedStep(current: Float): Float =
-    PLAYBACK_SPEED_STEPS.firstOrNull { it > current + 0.01f } ?: PLAYBACK_SPEED_STEPS.first()
+/** One-tap speeds shown under the speed slider. */
+internal val PLAYBACK_SPEED_PRESETS = listOf(1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 4f)
+
+/** Snaps a slider value to the nearest [PLAYBACK_SPEED_STEP] inside the supported range. */
+internal fun roundPlaybackSpeed(speed: Float): Float {
+    val clamped = speed.coerceIn(MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED)
+    val steps = kotlin.math.round((clamped - MIN_PLAYBACK_SPEED) / PLAYBACK_SPEED_STEP)
+    return (MIN_PLAYBACK_SPEED * 100f + steps * PLAYBACK_SPEED_STEP * 100f).let { kotlin.math.round(it) / 100f }
+}
 
 internal fun formatPlaybackSpeedLabel(speed: Float): String {
     val normalized = speed.toString().trimEnd('0').trimEnd('.')

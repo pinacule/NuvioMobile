@@ -5,15 +5,23 @@ import kotlin.test.assertEquals
 
 class PlaybackSpeedStepsTest {
     @Test
-    fun speedButtonCyclesThroughEveryStepAndWraps() {
-        val visited = generateSequence(1f) { nextPlaybackSpeedStep(it) }.take(8).toList()
-        assertEquals(listOf(1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 1f), visited)
+    fun sliderValuesSnapToFiveHundredthSteps() {
+        assertEquals(1.25f, roundPlaybackSpeed(1.26f))
+        assertEquals(1.75f, roundPlaybackSpeed(1.7499f))
+        assertEquals(3.35f, roundPlaybackSpeed(3.333f))
     }
 
     @Test
-    fun offStepSpeedMovesToTheNextHigherStep() {
-        assertEquals(1.25f, nextPlaybackSpeedStep(1.1f))
-        assertEquals(1f, nextPlaybackSpeedStep(3.5f))
+    fun speedsStayBetweenOneAndFour() {
+        assertEquals(1f, roundPlaybackSpeed(0.5f))
+        assertEquals(4f, roundPlaybackSpeed(5f))
+    }
+
+    @Test
+    fun presetsAreInsideTheSliderRange() {
+        PLAYBACK_SPEED_PRESETS.forEach { preset ->
+            assertEquals(preset, roundPlaybackSpeed(preset))
+        }
     }
 
     @Test

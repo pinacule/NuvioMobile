@@ -27,6 +27,7 @@ actual object PlayerSettingsStorage {
     private const val resizeModeKey = "resize_mode"
     private const val holdToSpeedEnabledKey = "hold_to_speed_enabled"
     private const val holdToSpeedValueKey = "hold_to_speed_value"
+    private const val defaultPlaybackSpeedKey = "default_playback_speed"
     private const val touchGesturesEnabledKey = "touch_gestures_enabled"
     private const val externalPlayerEnabledKey = "external_player_enabled"
     private const val externalPlayerForwardSubtitlesKey = "external_player_forward_subtitles"
@@ -320,6 +321,16 @@ actual object PlayerSettingsStorage {
 
     actual fun saveHoldToSpeedValue(speed: Float) {
         NSUserDefaults.standardUserDefaults.setFloat(speed, forKey = ProfileScopedKey.of(holdToSpeedValueKey))
+    }
+
+    actual fun loadDefaultPlaybackSpeed(): Float? {
+        val defaults = NSUserDefaults.standardUserDefaults
+        val key = ProfileScopedKey.of(defaultPlaybackSpeedKey)
+        return if (defaults.objectForKey(key) != null) defaults.floatForKey(key) else null
+    }
+
+    actual fun saveDefaultPlaybackSpeed(speed: Float) {
+        NSUserDefaults.standardUserDefaults.setFloat(speed, forKey = ProfileScopedKey.of(defaultPlaybackSpeedKey))
     }
 
     actual fun loadTouchGesturesEnabled(): Boolean? = loadBoolean(touchGesturesEnabledKey)

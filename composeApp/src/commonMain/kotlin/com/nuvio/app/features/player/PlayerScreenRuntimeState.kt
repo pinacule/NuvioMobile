@@ -194,6 +194,7 @@ internal class PlayerScreenRuntime(
     var credentialRefreshAttemptedSourceUrl by mutableStateOf<String?>(null)
 
     var showAudioModal by mutableStateOf(false)
+    var showSpeedModal by mutableStateOf(false)
     var showSubtitleModal by mutableStateOf(false)
     var showVideoSettingsModal by mutableStateOf(false)
     var showStreamInfo by mutableStateOf(false)
