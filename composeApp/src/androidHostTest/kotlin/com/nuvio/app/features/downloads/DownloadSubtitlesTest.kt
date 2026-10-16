@@ -5,7 +5,9 @@ import android.os.Bundle
 import androidx.core.content.FileProvider
 import com.nuvio.app.R
 import com.nuvio.app.features.player.ExternalPlayerPlaybackRequest
+import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.player.PlayerSubtitleCueParser
+import com.nuvio.app.features.player.SubtitleLanguageOption
 import com.nuvio.app.features.player.SubtitleFileCache
 import com.nuvio.app.features.player.prepareExternalPlayerLaunch
 import com.nuvio.app.features.player.SubtitleAddonRequest
@@ -42,7 +44,10 @@ class DownloadSubtitlesTest {
     @get:Rule val temporary = TemporaryFolder()
 
     @Test
-    fun backgroundDownloadSavesAddonAndStreamSubtitlesBeforeVideo(): Unit = runBlocking {
+    fun backgroundDownloadSavesAddonAndStreamSubtitlesBeforeVideo(): Unit = withSubtitlePreference(
+        // No concrete language: every subtitle is kept.
+        SubtitleLanguageOption.NONE,
+    ) {
         val context = RuntimeEnvironment.getApplication()
         val paths = Collections.synchronizedList(mutableListOf<String>())
         val playerSubtitles = SubtitleRepository.addonSubtitles.value
@@ -107,6 +112,48 @@ class DownloadSubtitlesTest {
         scheduler.remove(item.fileName)
         withTimeout(5_000) {
             while (DownloadSubtitles.localSubtitles(uri).isNotEmpty()) delay(10)
+        }
+    }
+
+    @Test
+    fun preferredLanguageDownloadsOnlyThoseSubtitles(): Unit = withSubtitlePreference("en") {
+        val paths = Collections.synchronizedList(mutableListOf<String>())
+        MockWebServer().use { server ->
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    paths += request.path.orEmpty()
+                    return when (request.path) {
+                        "/english.srt", "/french.srt" -> MockResponse().setBody(srt)
+                        "/video" -> MockResponse().setBody("video")
+                        else -> MockResponse().setResponseCode(404)
+                    }
+                }
+            }
+            val scheduler = AndroidDownloadScheduler(RuntimeEnvironment.getApplication())
+            val item = downloadItem(server.url("/video").toString()).copy(
+                fileName = "english-only.mkv",
+                sourceSubtitles = listOf(
+                    StreamSubtitle(server.url("/english.srt").toString(), "eng", "English"),
+                    StreamSubtitle(server.url("/french.srt").toString(), "fre", "French"),
+                ),
+            )
+            val transfer = scheduler.store.begin(item)
+            assertFalse(scheduler.execute(transfer) { })
+            val completed = assertNotNull(scheduler.store.get(item.fileName)).item
+            val tracks = DownloadSubtitles.localSubtitles(assertNotNull(completed.localFileUri))
+            assertEquals(listOf("eng"), tracks.map { it.language })
+            assertFalse("/french.srt" in paths)
+            scheduler.remove(item.fileName)
+        }
+    }
+
+    private fun withSubtitlePreference(language: String, block: suspend () -> Unit): Unit = runBlocking {
+        val previous = PlayerSettingsRepository.uiState.value.preferredSubtitleLanguage
+        PlayerSettingsRepository.setPreferredSubtitleLanguage(language)
+        try {
+            block()
+        } finally {
+            PlayerSettingsRepository.setPreferredSubtitleLanguage(previous)
         }
     }
 
