@@ -13,9 +13,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  full-debug-apk:
-    name: Build fullDebug APK
+  android-apk:
+    name: Build Android APK
     runs-on: ubuntu-latest
+    env:
+      RELEASE_KEYSTORE_BASE64: ${{ secrets.NUVIO_RELEASE_KEYSTORE_BASE64 }}
+      RELEASE_PASSWORD: ${{ secrets.NUVIO_RELEASE_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -37,15 +40,55 @@ jobs:
         run: |
           if [ -n "$LOCAL_PROPERTIES_BASE64" ]; then
             printf '%s' "$LOCAL_PROPERTIES_BASE64" | base64 --decode > local.properties
-            sed -i -E '/^[[:space:]]*(sdk\.dir|NUVIO_RELEASE_STORE_FILE)[[:space:]]*=/d' local.properties
+            sed -i -E '/^[[:space:]]*(sdk\.dir|NUVIO_RELEASE_[A-Z_]+)[[:space:]]*=/d' local.properties
           else
             touch local.properties
           fi
 
-      - name: Build fullDebug APK
-        run: ./gradlew :androidApp:assembleFullDebug -Pnuvio.android.distribution=full -Pnuvio.ios.distribution=appstore --stacktrace
+      # Release builds are optimized and much smoother than debug builds. They need the signing key
+      # secrets; without them the workflow falls back to a debug build.
+      - name: Configure release signing
+        if: env.RELEASE_KEYSTORE_BASE64 != '' && env.RELEASE_PASSWORD != ''
+        run: |
+          keystore_path="${RUNNER_TEMP}/nuvio-release.p12"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          {
+            printf '\nNUVIO_RELEASE_STORE_FILE=%s\n' "$keystore_path"
+            printf 'NUVIO_RELEASE_STORE_PASSWORD=%s\n' "$RELEASE_PASSWORD"
+            printf 'NUVIO_RELEASE_KEY_ALIAS=nuvio\n'
+            printf 'NUVIO_RELEASE_KEY_PASSWORD=%s\n' "$RELEASE_PASSWORD"
+          } >> local.properties
+
+      - name: Build fullRelease APKs
+        if: env.RELEASE_KEYSTORE_BASE64 != '' && env.RELEASE_PASSWORD != ''
+        run: ./gradlew :androidApp:assembleFullRelease -Pnuvio.android.distribution=full -Pnuvio.ios.distribution=appstore --stacktrace
+
+      - name: Upload release APK for arm64 phones
+        if: env.RELEASE_KEYSTORE_BASE64 != '' && env.RELEASE_PASSWORD != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: androidApp/build/outputs/apk/full/release/androidApp-full-arm64-v8a-release.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload release APKs for every ABI
+        if: env.RELEASE_KEYSTORE_BASE64 != '' && env.RELEASE_PASSWORD != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: nuvio-full-release-all-abis
+          path: androidApp/build/outputs/apk/full/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build fullDebug APK (no signing key configured)
+        if: env.RELEASE_KEYSTORE_BASE64 == '' || env.RELEASE_PASSWORD == ''
+        run: |
+          echo "::warning::NUVIO_RELEASE_KEYSTORE_BASE64 / NUVIO_RELEASE_PASSWORD are not set; building a slower debug APK."
+          ./gradlew :androidApp:assembleFullDebug -Pnuvio.android.distribution=full -Pnuvio.ios.distribution=appstore --stacktrace
 
       - name: Upload fullDebug APK
+        if: env.RELEASE_KEYSTORE_BASE64 == '' || env.RELEASE_PASSWORD == ''
         uses: actions/upload-artifact@v7
         with:
           path: androidApp/build/outputs/apk/full/debug/androidApp-full-debug.apk
