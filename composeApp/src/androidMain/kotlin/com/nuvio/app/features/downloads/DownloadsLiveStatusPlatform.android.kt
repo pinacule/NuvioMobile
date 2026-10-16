@@ -207,6 +207,9 @@ internal actual object DownloadsLiveStatusPlatform {
     private fun torrentSwarmLine(item: DownloadItem): String? {
         if (!item.isTorrent) return null
         val swarm = TorrentDownloadSwarmRepository.swarmFor(item.id) ?: return null
+        if (swarm.phase == TorrentDownloadPhase.Queued) {
+            return runBlocking { getString(Res.string.downloads_torrent_queued) }
+        }
         if (swarm.phase == TorrentDownloadPhase.FindingPeers) {
             return runBlocking { getString(Res.string.downloads_torrent_finding_peers) }
         }

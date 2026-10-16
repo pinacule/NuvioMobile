@@ -89,6 +89,13 @@ object DownloadsRepository {
         }
     }
 
+    /** True when the episode is already downloading, paused or downloaded (failed ones may be retried). */
+    fun hasActiveOrCompletedDownload(parentMetaId: String, seasonNumber: Int?, episodeNumber: Int?): Boolean {
+        ensureLoaded()
+        val key = buildLogicalKey(parentMetaId, seasonNumber, episodeNumber)
+        return _uiState.value.items.any { it.logicalContentKey == key && it.status != DownloadStatus.Failed }
+    }
+
     fun playableLocalFileUri(item: DownloadItem): String? {
         ensureLoaded()
         if (item.status != DownloadStatus.Completed) return null

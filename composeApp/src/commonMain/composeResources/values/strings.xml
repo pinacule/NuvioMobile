@@ -1658,6 +1658,13 @@
     <string name="streams_checking_more_addons">Checking more addons…</string>
     <string name="streams_copy_link">Copy stream link</string>
     <string name="streams_download_file">Download file</string>
+    <string name="streams_download_season">Download whole season</string>
+    <string name="season_download_started">Finding matching streams for the season…</string>
+    <string name="season_download_no_episodes">Couldn&apos;t load this season&apos;s episodes</string>
+    <string name="season_download_unsupported">Season download works with streams from installed addons</string>
+    <string name="season_download_nothing_new">Every episode of this season is already downloaded</string>
+    <string name="season_download_queued">Queued %1$d episodes</string>
+    <string name="season_download_queued_missing">Queued %1$d episodes · no matching stream for %2$s</string>
     <string name="streams_open_external_player">Open in external player</string>
     <string name="streams_open_internal_player">Open in internal player</string>
     <string name="streams_empty_load_failed_message">The installed stream addons failed to return a valid stream response.</string>

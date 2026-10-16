@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.SearchOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -67,6 +68,8 @@ import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.dismissNuvioBottomSheet
 import com.nuvio.app.features.downloads.DownloadEnqueueResult
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.SeasonDownloadResult
+import com.nuvio.app.features.downloads.SeasonDownloads
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
@@ -89,6 +92,7 @@ import com.nuvio.app.navigation.LocalUseNativeNavigation
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
+import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
 
 // ---------------------------------------------------------------------------
@@ -159,6 +163,7 @@ fun StreamsScreen(
     val noDirectStreamLinkText = stringResource(Res.string.streams_no_direct_link)
     var streamActionsTarget by remember(videoId) { mutableStateOf<StreamItem?>(null) }
     var pendingP2pDownload by remember(videoId) { mutableStateOf<StreamItem?>(null) }
+    var pendingP2pSeasonDownload by remember(videoId) { mutableStateOf(false) }
     val downloadScope = rememberCoroutineScope()
     val enqueueStreamDownload: (StreamItem) -> DownloadEnqueueResult = { stream ->
         DownloadsRepository.enqueueFromStream(
@@ -183,6 +188,50 @@ fun StreamsScreen(
             pendingP2pDownload = stream
         } else {
             NuvioToastController.show(result.toastMessage())
+        }
+    }
+    val seasonDownloadStartedText = stringResource(Res.string.season_download_started)
+    val seasonDownloadNoEpisodesText = stringResource(Res.string.season_download_no_episodes)
+    val seasonDownloadUnsupportedText = stringResource(Res.string.season_download_unsupported)
+    val seasonDownloadNothingNewText = stringResource(Res.string.season_download_nothing_new)
+    val startSeasonDownload: (StreamItem) -> Unit = { stream ->
+        val season = seasonNumber
+        if (season != null) {
+            NuvioToastController.show(seasonDownloadStartedText)
+            downloadScope.launch {
+                val result = SeasonDownloads.enqueueSeason(
+                    contentType = type,
+                    parentMetaId = parentMetaId,
+                    parentMetaType = parentMetaType,
+                    title = title,
+                    logo = logo,
+                    poster = poster,
+                    background = background,
+                    seasonNumber = season,
+                    template = stream,
+                    templateVideoId = videoId,
+                )
+                when (result) {
+                    SeasonDownloadResult.P2pDisabled -> {
+                        pendingP2pSeasonDownload = true
+                        pendingP2pDownload = stream
+                    }
+                    SeasonDownloadResult.NoEpisodes -> NuvioToastController.show(seasonDownloadNoEpisodesText)
+                    SeasonDownloadResult.UnsupportedSource -> NuvioToastController.show(seasonDownloadUnsupportedText)
+                    is SeasonDownloadResult.Queued -> NuvioToastController.show(
+                        when {
+                            result.queued == 0 && result.missingEpisodes.isEmpty() -> seasonDownloadNothingNewText
+                            result.missingEpisodes.isEmpty() ->
+                                getString(Res.string.season_download_queued, result.queued)
+                            else -> getString(
+                                Res.string.season_download_queued_missing,
+                                result.queued,
+                                result.missingEpisodes.joinToString(", ") { "E$it" },
+                            )
+                        },
+                    )
+                }
+            }
         }
     }
     var preferredFilterApplied by remember(videoId) { mutableStateOf(false) }
@@ -329,9 +378,17 @@ fun StreamsScreen(
                 onEnableP2p = {
                     pendingP2pDownload = null
                     P2pSettingsRepository.setP2pEnabled(true)
-                    showDownloadResult(stream, enqueueStreamDownload(stream))
+                    if (pendingP2pSeasonDownload) {
+                        pendingP2pSeasonDownload = false
+                        startSeasonDownload(stream)
+                    } else {
+                        showDownloadResult(stream, enqueueStreamDownload(stream))
+                    }
                 },
-                onDismiss = { pendingP2pDownload = null },
+                onDismiss = {
+                    pendingP2pDownload = null
+                    pendingP2pSeasonDownload = false
+                },
             )
         }
 
@@ -397,6 +454,7 @@ fun StreamsScreen(
                     showDownloadResult(stream, enqueueStreamDownload(stream))
                 }
             },
+            onDownloadSeason = if (isEpisode) startSeasonDownload else null,
             onOpen = { stream, openExternally ->
                 onStreamActionOpen(
                     stream,
@@ -1000,6 +1058,7 @@ private fun StreamActionsSheet(
     onDismiss: () -> Unit,
     onCopyLink: (StreamItem) -> Unit,
     onDownload: (StreamItem) -> Unit,
+    onDownloadSeason: ((StreamItem) -> Unit)?,
     onOpen: (StreamItem, openExternally: Boolean) -> Unit,
 ) {
     if (stream == null) return
@@ -1084,6 +1143,18 @@ private fun StreamActionsSheet(
                     }
                 },
             )
+            if (onDownloadSeason != null) {
+                NuvioBottomSheetActionRow(
+                    icon = Icons.Rounded.DownloadForOffline,
+                    title = stringResource(Res.string.streams_download_season),
+                    onClick = {
+                        onDownloadSeason(stream)
+                        coroutineScope.launch {
+                            dismissNuvioBottomSheet(sheetState = sheetState, onDismiss = onDismiss)
+                        }
+                    },
+                )
+            }
         }
     }
 }

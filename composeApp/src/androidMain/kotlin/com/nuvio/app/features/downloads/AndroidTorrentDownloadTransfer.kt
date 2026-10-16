@@ -16,6 +16,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.downloads_torrent_missing_hash
@@ -28,6 +29,13 @@ private const val SWARM_SAMPLE_INTERVAL_MS = 1_000L
 private const val STALL_TIMEOUT_MS = 10L * 60L * 1_000L
 private const val LOOPBACK_RETRIES_WITHOUT_PROGRESS = 3
 private const val LOOPBACK_RETRY_DELAY_MS = 2_000L
+
+/**
+ * Torrent downloads share one engine and one connection budget; running a whole season at once would
+ * split the bandwidth across every episode, so the rest wait in a queue.
+ */
+private const val MAX_CONCURRENT_TORRENT_DOWNLOADS = 2
+private val torrentDownloadSlots = Semaphore(MAX_CONCURRENT_TORRENT_DOWNLOADS)
 
 /**
  * The engine's loopback server blocks a read until the pieces behind it are verified, so a slow swarm
@@ -65,6 +73,13 @@ internal suspend fun transferTorrentDownload(
     // Pauses, network hiccups and retries keep the torrent and its peers in the engine; it is removed
     // once this file is done or the torrent itself failed.
     var finished = false
+    TorrentDownloadSwarmRepository.publish(item.id, TorrentDownloadSwarm(TorrentDownloadPhase.Queued), attempt)
+    try {
+        torrentDownloadSlots.acquire()
+    } catch (cancellation: CancellationException) {
+        TorrentDownloadSwarmRepository.clear(item.id, attempt)
+        throw cancellation
+    }
     try {
         val activeEngine = NuvioEngineHost.acquireEngine(owner)
         engine = activeEngine
@@ -149,6 +164,7 @@ internal suspend fun transferTorrentDownload(
             torrentLease?.let { NuvioEngineHost.releaseTorrent(it, removeWhenUnused = finished) }
             NuvioEngineHost.releaseEngine(owner)
             TorrentDownloadSwarmRepository.clear(item.id, attempt)
+            torrentDownloadSlots.release()
         }
     }
 }
