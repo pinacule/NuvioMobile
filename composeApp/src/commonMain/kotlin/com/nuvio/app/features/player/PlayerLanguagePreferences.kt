@@ -95,6 +95,9 @@ data class LanguagePreferenceOption(
     val labelRes: StringResource,
 )
 
+/** Audio and subtitles default to English until the user picks something else in Playback settings. */
+const val DefaultPreferredLanguage = "en"
+
 object AudioLanguageOption {
     const val DEFAULT = "default"
     const val DEVICE = "device"

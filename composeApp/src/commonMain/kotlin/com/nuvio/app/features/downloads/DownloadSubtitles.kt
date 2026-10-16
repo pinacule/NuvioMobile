@@ -1,7 +1,10 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.features.addons.httpGetTextWithHeaders
+import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.player.PlayerSubtitleCueParser
+import com.nuvio.app.features.player.SubtitleLanguageMatching
+import com.nuvio.app.features.player.SubtitleLanguageOption
 import com.nuvio.app.features.player.loadAddonSubtitles
 import com.nuvio.app.features.streams.StreamSubtitle
 import kotlinx.coroutines.CancellationException
@@ -29,8 +32,13 @@ internal object DownloadSubtitles {
         val addonSubtitles = loadAddonSubtitles(item.subtitleRequests).map {
             StreamSubtitle(url = it.url, language = it.language, name = it.display)
         }
+        val preferredLanguages = preferredDownloadSubtitleLanguages()
         val pending = (item.sourceSubtitles + addonSubtitles)
             .distinctBy { it.url }
+            .filter { subtitle ->
+                preferredLanguages.isEmpty() ||
+                    preferredLanguages.any { SubtitleLanguageMatching.matchesLanguageCode(subtitle.language, it) }
+            }
             .filter { subtitle ->
                 (subtitle.url.startsWith("https://", true) || subtitle.url.startsWith("http://", true)) &&
                     saved.none { it.sourceUrl == subtitle.url }
@@ -70,6 +78,21 @@ internal object DownloadSubtitles {
             storage.write("manifest.json", json.encodeToString(SubtitleManifest(complete = true, tracks = saved)))
         }
         Unit
+    }
+
+    /**
+     * Concrete languages chosen in Playback settings (English by default). Downloads keep only those
+     * subtitles; with no concrete language chosen, every subtitle is kept as before.
+     */
+    private fun preferredDownloadSubtitleLanguages(): List<String> {
+        // Not ensureLoaded(): a background job may run before the app initialized settings storage.
+        val settings = PlayerSettingsRepository.uiState.value
+        return listOfNotNull(settings.preferredSubtitleLanguage, settings.secondaryPreferredSubtitleLanguage)
+            .filter { language ->
+                language != SubtitleLanguageOption.NONE &&
+                    language != SubtitleLanguageOption.DEVICE &&
+                    language != SubtitleLanguageOption.FORCED
+            }
     }
 
     fun localSubtitles(localVideoUri: String): List<StreamSubtitle> {
