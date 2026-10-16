@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 enum class TorrentDownloadPhase {
+    /** Waiting for a free torrent download slot. */
+    Queued,
     FindingPeers,
     Downloading,
 }
