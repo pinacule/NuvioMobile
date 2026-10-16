@@ -106,15 +106,12 @@ internal fun unexpectedTorrentError(
 }
 
 actual object P2pStreamingEngine {
-    private data class EngineConfigurationKey(
-        val uploadEnabled: Boolean,
-        val torrentProfile: P2pTorrentProfile,
-        val diskCacheCapacityBytes: Long,
-    )
+    private const val PLAYBACK_OWNER = "playback"
 
     private data class DetachedStream(
         val engine: NuvioEngine?,
         val streamId: String?,
+        val torrentLease: NuvioEngineHost.TorrentLease?,
     )
 
     private val _state = MutableStateFlow<P2pStreamingState>(P2pStreamingState.Idle)
@@ -133,15 +130,13 @@ actual object P2pStreamingEngine {
     private var currentTorrentId: String? = null
     @Volatile
     private var currentStreamId: String? = null
-    private var appContext: Context? = null
+    private var currentTorrentLease: NuvioEngineHost.TorrentLease? = null
     @Volatile
     private var engine: NuvioEngine? = null
-    private var engineConfigurationKey: EngineConfigurationKey? = null
-    private val knownTorrentIds = mutableSetOf<String>()
     private var diagnosticRequestSequence = 0L
 
     fun initialize(context: Context) {
-        appContext = context.applicationContext
+        NuvioEngineHost.initialize(context)
     }
 
     actual suspend fun startStream(request: P2pStreamRequest): String = withContext(Dispatchers.IO) {
@@ -153,6 +148,9 @@ actual object P2pStreamingEngine {
             check(_state.value !is P2pStreamingState.Streaming &&
                 _state.value !is P2pStreamingState.Connecting) {
                 "Torrent cache cannot be cleared during active playback"
+            }
+            check(!NuvioEngineHost.hasOwnersOtherThan(PLAYBACK_OWNER)) {
+                "Torrent cache cannot be cleared while torrent downloads are active"
             }
             _cacheState.value = _cacheState.value.copy(isClearing = true)
             try {
@@ -191,14 +189,12 @@ actual object P2pStreamingEngine {
         var activeEngine: NuvioEngine? = null
         var payloadDownloadBaseline = 0L
         var preparedStream: NuvioStream? = null
+        var unattachedTorrentLease: NuvioEngineHost.TorrentLease? = null
         var attached = false
         var startupStatsJob: Job? = null
         return try {
             phase.set("build_magnet")
-            val magnetUri = buildP2pMagnetUri(
-                request.infoHash,
-                (DEFAULT_TRACKERS + request.trackers).distinct(),
-            )
+            val canonicalHash = canonicalP2pInfoHash(request.infoHash)
             logPhase(requestSequence, startedAtMs, phase.get())
 
             phase.set("ensure_engine")
@@ -216,18 +212,19 @@ actual object P2pStreamingEngine {
             )
 
             phase.set("add_magnet")
-            val canonicalHash = canonicalP2pInfoHash(request.infoHash)
-            val reusedTorrent = canonicalHash in knownTorrentIds
+            val reusedTorrent = NuvioEngineHost.isTorrentKnown(canonicalHash)
             Log.i(
                 DIAGNOSTIC_TAG,
                 "start request=$requestSequence phase=${phase.get()} begin elapsedMs=${elapsedSince(startedAtMs)} " +
                     "cached=$reusedTorrent hash=${diagnosticId(canonicalHash)}",
             )
-            val torrentId = if (reusedTorrent) {
-                canonicalHash
-            } else {
-                resolvedEngine.addMagnet(magnetUri).also { knownTorrentIds += it }
-            }
+            val torrentLease = NuvioEngineHost.acquireTorrent(
+                activeEngine = resolvedEngine,
+                infoHash = canonicalHash,
+                trackers = request.trackers,
+            )
+            unattachedTorrentLease = torrentLease
+            val torrentId = torrentLease.torrentId
             ensureCurrentGeneration(generation)
             Log.i(
                 DIAGNOSTIC_TAG,
@@ -255,13 +252,14 @@ actual object P2pStreamingEngine {
             )
             currentCoroutineContext().ensureActive()
             phase.set("attach_route")
-            if (!attachStreamIfCurrent(generation, torrentId, stream.id)) {
+            if (!attachStreamIfCurrent(generation, torrentLease, stream.id)) {
                 withContext(NonCancellable) {
                     stopPreparedStream(resolvedEngine, stream.id)
                 }
                 preparedStream = null
                 throw CancellationException("P2P stream start was cancelled")
             }
+            unattachedTorrentLease = null
             attached = true
             logPhase(requestSequence, startedAtMs, phase.get())
 
@@ -308,6 +306,7 @@ actual object P2pStreamingEngine {
                     generation = generation,
                     activeEngine = activeEngine,
                     preparedStream = preparedStream,
+                    unattachedTorrentLease = unattachedTorrentLease,
                     attached = attached,
                     terminalState = P2pStreamingState.Idle,
                 )
@@ -328,6 +327,7 @@ actual object P2pStreamingEngine {
                     generation = generation,
                     activeEngine = activeEngine,
                     preparedStream = preparedStream,
+                    unattachedTorrentLease = unattachedTorrentLease,
                     attached = attached,
                     terminalState = terminalState,
                 )
@@ -380,10 +380,15 @@ actual object P2pStreamingEngine {
     private fun detachActiveStream(): DetachedStream {
         val detached: Pair<DetachedStream, Job?> = synchronized(lifecycleLock) {
             streamGeneration += 1
-            val value = DetachedStream(engine = engine, streamId = currentStreamId)
+            val value = DetachedStream(
+                engine = engine,
+                streamId = currentStreamId,
+                torrentLease = currentTorrentLease,
+            )
             val job = statsJob
             currentTorrentId = null
             currentStreamId = null
+            currentTorrentLease = null
             statsJob = null
             _state.value = P2pStreamingState.Idle
             value to job
@@ -399,10 +404,15 @@ actual object P2pStreamingEngine {
         val detached: Pair<DetachedStream, Job?>? = synchronized(lifecycleLock) {
             if (streamGeneration != generation) return@synchronized null
             streamGeneration += 1
-            val value = DetachedStream(engine = engine, streamId = currentStreamId)
+            val value = DetachedStream(
+                engine = engine,
+                streamId = currentStreamId,
+                torrentLease = currentTorrentLease,
+            )
             val job = statsJob
             currentTorrentId = null
             currentStreamId = null
+            currentTorrentLease = null
             statsJob = null
             _state.value = terminalState
             value to job
@@ -415,8 +425,12 @@ actual object P2pStreamingEngine {
         detached.streamId?.let { streamId ->
             stopPreparedStream(detached.engine, streamId)
         }
+        // Playback keeps its torrent warm in the engine; a download that finishes later may remove it.
+        detached.torrentLease?.let { lease ->
+            NuvioEngineHost.releaseTorrent(lease, removeWhenUnused = false)
+        }
         if (shutdownEngine) {
-            closeEngine(detached.engine)
+            releasePlaybackEngine()
         }
     }
 
@@ -424,6 +438,7 @@ actual object P2pStreamingEngine {
         generation: Long,
         activeEngine: NuvioEngine?,
         preparedStream: NuvioStream?,
+        unattachedTorrentLease: NuvioEngineHost.TorrentLease?,
         attached: Boolean,
         terminalState: P2pStreamingState,
     ) {
@@ -433,6 +448,9 @@ actual object P2pStreamingEngine {
             }
         } else {
             preparedStream?.let { stream -> stopPreparedStream(activeEngine, stream.id) }
+            unattachedTorrentLease?.let { lease ->
+                NuvioEngineHost.releaseTorrent(lease, removeWhenUnused = false)
+            }
             detachGenerationIfCurrent(generation, terminalState)
         }
     }
@@ -449,82 +467,29 @@ actual object P2pStreamingEngine {
 
     private suspend fun ensureEngine(): NuvioEngine {
         val startedAtMs = SystemClock.elapsedRealtime()
-        P2pSettingsRepository.ensureLoaded()
-        val settings = P2pSettingsRepository.uiState.value
-        val configurationKey = EngineConfigurationKey(
-            uploadEnabled = settings.enableUpload,
-            torrentProfile = settings.torrentProfile,
-            diskCacheCapacityBytes = settings.cacheSize.bytes,
-        )
-        engine?.takeIf { engineConfigurationKey == configurationKey }?.let {
-            Log.i(
-                DIAGNOSTIC_TAG,
-                "engine reuse configuration=$configurationKey elapsedMs=${elapsedSince(startedAtMs)}",
-            )
-            return it
+        val acquired = NuvioEngineHost.acquireEngine(PLAYBACK_OWNER)
+        if (engine !== acquired) {
+            engine = acquired
+            observeEngineEvents(acquired)
         }
-
         Log.i(
             DIAGNOSTIC_TAG,
-            "engine create begin configuration=$configurationKey replacing=${engine != null}",
+            "engine acquire complete elapsedMs=${elapsedSince(startedAtMs)} " +
+                "owners=${NuvioEngineHost.owners.value.size}",
         )
-        closeEngine(engine)
-        currentCoroutineContext().ensureActive()
-        val context = requireContext()
-        val stateDirectory = File(context.noBackupFilesDir, "nuvio-engine/state")
-        val cacheDirectory = File(context.cacheDir, "nuvio-engine")
-        check(stateDirectory.mkdirs() || stateDirectory.isDirectory) {
-            "Could not create the Nuvio Engine state directory"
-        }
-        check(cacheDirectory.mkdirs() || cacheDirectory.isDirectory) {
-            "Could not create the Nuvio Engine cache directory"
-        }
-        migrateNestedPayloadDirectory(cacheDirectory)
-        return NuvioEngine.create(
-            buildNuvioEngineConfig(
-                stateDirectory = stateDirectory,
-                cacheDirectory = cacheDirectory,
-                uploadEnabled = configurationKey.uploadEnabled,
-                torrentProfile = configurationKey.torrentProfile,
-                diskCacheCapacityBytes = configurationKey.diskCacheCapacityBytes,
-            )
-        ).also { created ->
-            engine = created
-            engineConfigurationKey = configurationKey
-            observeEngineEvents(created)
-            Log.i(
-                TAG,
-                "Using Nuvio Engine ${NuvioEngine.version} (${NuvioEngine.protocolBackendVersion})"
-            )
-            Log.i(
-                DIAGNOSTIC_TAG,
-                "engine create complete configuration=$configurationKey elapsedMs=${elapsedSince(startedAtMs)} " +
-                    "version=${NuvioEngine.version} backend=${NuvioEngine.protocolBackendVersion}",
-            )
-        }
+        return acquired
     }
 
-    private suspend fun closeEngine(target: NuvioEngine?) {
-        if (target == null) return
+    private suspend fun releasePlaybackEngine() {
         val startedAtMs = SystemClock.elapsedRealtime()
-        Log.i(DIAGNOSTIC_TAG, "engine shutdown begin active=${engine === target}")
-        if (engine === target) {
-            engineEventsJob?.cancel()
-            engineEventsJob = null
-            engine = null
-            engineConfigurationKey = null
-            knownTorrentIds.clear()
-        }
-        withContext(NonCancellable) {
-            try {
-                target.shutdown()
-            } catch (error: Exception) {
-                Log.w(TAG, "Error shutting down Nuvio Engine", error)
-            }
-        }
+        engineEventsJob?.cancel()
+        engineEventsJob = null
+        engine = null
+        NuvioEngineHost.releaseEngine(PLAYBACK_OWNER)
         Log.i(
             DIAGNOSTIC_TAG,
-            "engine shutdown complete elapsedMs=${elapsedSince(startedAtMs)}",
+            "engine release complete elapsedMs=${elapsedSince(startedAtMs)} " +
+                "remainingOwners=${NuvioEngineHost.owners.value.size}",
         )
     }
 
@@ -580,6 +545,12 @@ actual object P2pStreamingEngine {
                             streamGeneration += 1
                             currentTorrentId = null
                             currentStreamId = null
+                            currentTorrentLease?.let { lease ->
+                                scope.launch {
+                                    NuvioEngineHost.releaseTorrent(lease, removeWhenUnused = false)
+                                }
+                            }
+                            currentTorrentLease = null
                             statsJob?.cancel()
                             statsJob = null
                             _state.value = error
@@ -770,12 +741,13 @@ actual object P2pStreamingEngine {
 
     private fun attachStreamIfCurrent(
         generation: Long,
-        torrentId: String,
+        torrentLease: NuvioEngineHost.TorrentLease,
         streamId: String,
     ): Boolean = synchronized(lifecycleLock) {
         if (streamGeneration != generation) return@synchronized false
-        currentTorrentId = torrentId
+        currentTorrentId = torrentLease.torrentId
         currentStreamId = streamId
+        currentTorrentLease = torrentLease
         true
     }
 
@@ -808,9 +780,6 @@ actual object P2pStreamingEngine {
         }
     }
 
-    private fun requireContext(): Context =
-        appContext ?: throw P2pStreamingException("P2P streaming engine is not initialized")
-
     private fun logPhase(requestSequence: Long, startedAtMs: Long, phase: String) {
         Log.i(
             DIAGNOSTIC_TAG,
@@ -831,27 +800,4 @@ actual object P2pStreamingEngine {
 
     private fun diagnosticMessage(value: String?): String =
         value?.replace('\n', ' ')?.replace('\r', ' ')?.take(160) ?: "none"
-
-    private val DEFAULT_TRACKERS = listOf(
-        "udp://zer0day.ch:1337/announce",
-        "udp://tracker.publictracker.xyz:6969/announce",
-        "udp://tracker.opentrackr.org:1337/announce",
-        "udp://open.demonii.com:1337/announce",
-        "udp://open.stealth.si:80/announce",
-        "http://tracker.renfei.net:8080/announce",
-        "udp://udp.tracker.projectk.org:23333/announce",
-        "udp://tracker.tryhackx.org:6969/announce",
-        "udp://tracker.torrent.eu.org:451/announce",
-        "udp://tracker.theoks.net:6969/announce",
-        "udp://tracker.startwork.cv:1337/announce",
-        "udp://tracker.qu.ax:6969/announce",
-        "udp://tracker.plx.im:6969/announce",
-        "udp://tracker.nyaa.vc:6969/announce",
-        "udp://tracker.iperson.xyz:6969/announce",
-        "udp://tracker.gmi.gd:6969/announce",
-        "udp://tracker.fnix.net:6969/announce",
-        "udp://tracker.flatuslifir.is:6969/announce",
-        "udp://tracker.ducks.party:1984/announce",
-        "udp://tracker.bluefrog.pw:2710/announce",
-    )
 }

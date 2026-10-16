@@ -65,7 +65,10 @@ import com.nuvio.app.core.ui.NuvioBottomSheetDivider
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.dismissNuvioBottomSheet
+import com.nuvio.app.features.downloads.DownloadEnqueueResult
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.p2p.P2pConsentDialog
+import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -155,7 +158,33 @@ fun StreamsScreen(
     val streamLinkCopiedText = stringResource(Res.string.streams_link_copied)
     val noDirectStreamLinkText = stringResource(Res.string.streams_no_direct_link)
     var streamActionsTarget by remember(videoId) { mutableStateOf<StreamItem?>(null) }
+    var pendingP2pDownload by remember(videoId) { mutableStateOf<StreamItem?>(null) }
     val downloadScope = rememberCoroutineScope()
+    val enqueueStreamDownload: (StreamItem) -> DownloadEnqueueResult = { stream ->
+        DownloadsRepository.enqueueFromStream(
+            contentType = type,
+            videoId = videoId,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
+            title = title,
+            logo = logo,
+            poster = poster,
+            background = background,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+            episodeTitle = episodeTitle,
+            episodeThumbnail = episodeThumbnail,
+            stream = stream,
+        )
+    }
+    // Torrent downloads need P2P; ask for consent the same way playback does instead of failing.
+    val showDownloadResult: (StreamItem, DownloadEnqueueResult) -> Unit = { stream, result ->
+        if (result == DownloadEnqueueResult.P2pDisabled) {
+            pendingP2pDownload = stream
+        } else {
+            NuvioToastController.show(result.toastMessage())
+        }
+    }
     var preferredFilterApplied by remember(videoId) { mutableStateOf(false) }
     val episodeProgress = watchProgressUiState.progressForVideo(
         videoId = videoId,
@@ -295,6 +324,17 @@ fun StreamsScreen(
         }
 
 
+        pendingP2pDownload?.let { stream ->
+            P2pConsentDialog(
+                onEnableP2p = {
+                    pendingP2pDownload = null
+                    P2pSettingsRepository.setP2pEnabled(true)
+                    showDownloadResult(stream, enqueueStreamDownload(stream))
+                },
+                onDismiss = { pendingP2pDownload = null },
+            )
+        }
+
         StreamActionsSheet(
             stream = streamActionsTarget,
             externalPlayerEnabled = playerSettings.externalPlayerEnabled,
@@ -343,22 +383,7 @@ fun StreamsScreen(
                         )
                         when (resolved) {
                             is DirectDebridPlayableResult.Success -> {
-                                val result = DownloadsRepository.enqueueFromStream(
-                                    contentType = type,
-                                    videoId = videoId,
-                                    parentMetaId = parentMetaId,
-                                    parentMetaType = parentMetaType,
-                                    title = title,
-                                    logo = logo,
-                                    poster = poster,
-                                    background = background,
-                                    seasonNumber = seasonNumber,
-                                    episodeNumber = episodeNumber,
-                                    episodeTitle = episodeTitle,
-                                    episodeThumbnail = episodeThumbnail,
-                                    stream = resolved.stream,
-                                )
-                                NuvioToastController.show(result.toastMessage())
+                                showDownloadResult(resolved.stream, enqueueStreamDownload(resolved.stream))
                             }
                             else -> {
                                 val message = resolved.toastMessage()
@@ -369,22 +394,7 @@ fun StreamsScreen(
                         }
                     }
                 } else {
-                    val result = DownloadsRepository.enqueueFromStream(
-                        contentType = type,
-                        videoId = videoId,
-                        parentMetaId = parentMetaId,
-                        parentMetaType = parentMetaType,
-                        title = title,
-                        logo = logo,
-                        poster = poster,
-                        background = background,
-                        seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber,
-                        episodeTitle = episodeTitle,
-                        episodeThumbnail = episodeThumbnail,
-                        stream = stream,
-                    )
-                    NuvioToastController.show(result.toastMessage())
+                    showDownloadResult(stream, enqueueStreamDownload(stream))
                 }
             },
             onOpen = { stream, openExternally ->

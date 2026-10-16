@@ -42,6 +42,8 @@ import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioScreenHeader
 import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.NuvioToastController
+import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.p2p.formatP2pSpeed
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 
@@ -350,6 +352,7 @@ private fun DownloadRow(
         item = item,
         displayTitle = displayTitle,
     )
+    val torrentSwarmText = torrentSwarmText(item)
 
     Surface(
         modifier = Modifier
@@ -394,6 +397,15 @@ private fun DownloadRow(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (torrentSwarmText != null) {
+                        Text(
+                            text = torrentSwarmText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -494,6 +506,24 @@ private fun SectionTitle(title: String) {
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontWeight = FontWeight.SemiBold,
+    )
+}
+
+/** "Finding peers…" until bytes flow, then speed with peer and seed counts, for running torrents. */
+@Composable
+private fun torrentSwarmText(item: DownloadItem): String? {
+    val swarms by TorrentDownloadSwarmRepository.state.collectAsStateWithLifecycle()
+    val p2pSettings by P2pSettingsRepository.uiState.collectAsStateWithLifecycle()
+    val findingPeersText = stringResource(Res.string.downloads_torrent_finding_peers)
+    if (!item.isTorrent || item.status != DownloadStatus.Downloading) return null
+    val swarm = swarms[item.id]
+    if (swarm == null || swarm.phase == TorrentDownloadPhase.FindingPeers) return findingPeersText
+    if (p2pSettings.hideTorrentStats) return null
+    return stringResource(
+        Res.string.downloads_torrent_swarm,
+        formatP2pSpeed(swarm.downloadSpeedBytesPerSecond),
+        swarm.peers,
+        swarm.seeds,
     )
 }
 

@@ -13,6 +13,7 @@ expect object AppFeaturePolicy {
     val accountDeletionEnabled: Boolean
     val personalMediaAddonCopyEnabled: Boolean
     val p2pEnabled: Boolean
+    val p2pDownloadsEnabled: Boolean
     val trailerPlaybackMode: TrailerPlaybackMode
     val heroTrailerPlaybackSupported: Boolean
     val inAppUpdaterEnabled: Boolean

@@ -117,6 +117,7 @@ internal class AndroidDownloadScheduler(val context: Context) {
 
     fun remove(fileName: String) {
         val transfer = store.get(fileName)
+        val outputFileName = transfer?.outputFileName?.takeIf { it != fileName }
         store.remove(fileName)
         transfer?.let(::cancelScheduled)
         transfer?.let { DownloadsLiveStatusPlatform.removeNotification(it.item.id) }
@@ -125,6 +126,9 @@ internal class AndroidDownloadScheduler(val context: Context) {
                 if (store.get(fileName) == null) {
                     File(directory, "$fileName.part").delete()
                     DownloadSubtitleStorage(File(directory, fileName).toURI().toString()).remove()
+                    outputFileName?.let { name ->
+                        DownloadSubtitleStorage(File(directory, name).toURI().toString()).remove()
+                    }
                 }
             }
         }
@@ -142,8 +146,10 @@ internal class AndroidDownloadScheduler(val context: Context) {
     ): Boolean = lock(transfer.item.fileName).withLock {
         val fileName = transfer.item.fileName
         if (!isActive(transfer)) return@withLock false
-        val destination = File(directory, fileName)
-        val client = if (network != null) {
+        val torrent = transfer.item.isTorrent
+        var destination = File(directory, transfer.outputFileName ?: fileName)
+        // Torrent bytes come from the engine's loopback server, which a network-bound socket cannot reach.
+        val client = if (network != null && !torrent) {
             downloadHttpClient.newBuilder()
                 .socketFactory(network.socketFactory)
                 .dns { network.getAllByName(it).toList() }
@@ -151,28 +157,47 @@ internal class AndroidDownloadScheduler(val context: Context) {
                 .build()
         } else downloadHttpClient
         try {
-            DownloadSubtitles.prepare(transfer.item, destination.toURI().toString())
+            if (!torrent) {
+                // Torrent subtitles are prepared once the real output file name is known.
+                DownloadSubtitles.prepare(transfer.item, destination.toURI().toString())
+            }
             currentCoroutineContext().ensureActive()
             if (!isActive(transfer)) return@withLock false
             var lastProgressAt = 0L
-            val partial = if (destination.isFile) destination else transferAndroidDownload(
-                item = transfer.item,
-                directory = directory,
-                validator = transfer.validator,
-                client = client,
-                onHeaders = { total, validator ->
-                    updateActive(transfer) { it.copy(validator = validator, item = it.item.copy(totalBytes = total)) }
-                },
-                onProgress = { bytes, total ->
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastProgressAt >= 1_000L || bytes == total) {
-                        lastProgressAt = now
-                        updateActive(transfer) {
-                            it.copy(item = it.item.copy(downloadedBytes = bytes, totalBytes = total))
-                        }?.let(onProgress)
-                    }
-                },
-            )
+            val onHeaders: (Long?, String?) -> Unit = { total, validator ->
+                updateActive(transfer) { it.copy(validator = validator, item = it.item.copy(totalBytes = total)) }
+            }
+            val onBytes: (Long, Long?) -> Unit = { bytes, total ->
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastProgressAt >= 1_000L || bytes == total) {
+                    lastProgressAt = now
+                    updateActive(transfer) {
+                        it.copy(item = it.item.copy(downloadedBytes = bytes, totalBytes = total))
+                    }?.let(onProgress)
+                }
+            }
+            val partial = when {
+                destination.isFile -> destination
+                torrent -> transferTorrentDownload(
+                    item = transfer.item,
+                    directory = directory,
+                    onResolvedFile = { outputFileName ->
+                        updateActive(transfer) { it.copy(outputFileName = outputFileName) }
+                        destination = File(directory, outputFileName)
+                        DownloadSubtitles.prepare(transfer.item, destination.toURI().toString())
+                    },
+                    onHeaders = onHeaders,
+                    onProgress = onBytes,
+                )
+                else -> transferAndroidDownload(
+                    item = transfer.item,
+                    directory = directory,
+                    validator = transfer.validator,
+                    client = client,
+                    onHeaders = onHeaders,
+                    onProgress = onBytes,
+                )
+            }
             currentCoroutineContext().ensureActive()
             updateActive(transfer) { current ->
                 if (partial != destination && !partial.renameTo(destination)) {
@@ -198,7 +223,9 @@ internal class AndroidDownloadScheduler(val context: Context) {
             else fail(transfer, error)
             retry
         } finally {
-            if (network != null) withContext(NonCancellable + Dispatchers.IO) { client.connectionPool.evictAll() }
+            if (client !== downloadHttpClient) {
+                withContext(NonCancellable + Dispatchers.IO) { client.connectionPool.evictAll() }
+            }
         }
     }
 

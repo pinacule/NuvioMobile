@@ -1,5 +1,9 @@
 package com.nuvio.app.features.downloads
 
+import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.p2p.buildP2pMagnetUri
+import com.nuvio.app.features.p2p.canonicalP2pInfoHash
 import com.nuvio.app.features.player.addonSubtitleRequests
 import com.nuvio.app.features.streams.StreamItem
 import kotlinx.coroutines.runBlocking
@@ -126,14 +130,20 @@ object DownloadsRepository {
     ): DownloadEnqueueResult {
         ensureLoaded()
 
-        val sourceUrl = stream.playableDirectUrl
+        val directUrl = stream.playableDirectUrl
             ?.trim()
             ?.takeIf { it.isNotBlank() }
-            ?: return DownloadEnqueueResult.MissingUrl
-
-        if (!sourceUrl.isSupportedDownloadUrl()) {
+        val torrentSource = if (directUrl == null) stream.torrentDownloadSource() else null
+        if (torrentSource != null) {
+            if (!AppFeaturePolicy.p2pDownloadsEnabled) return DownloadEnqueueResult.MissingUrl
+            P2pSettingsRepository.ensureLoaded()
+            if (!P2pSettingsRepository.uiState.value.p2pEnabled) return DownloadEnqueueResult.P2pDisabled
+        } else if (directUrl == null) {
+            return DownloadEnqueueResult.MissingUrl
+        } else if (!directUrl.isSupportedDownloadUrl()) {
             return DownloadEnqueueResult.UnsupportedFormat
         }
+        val sourceUrl = directUrl ?: requireNotNull(torrentSource).magnetUri
 
         val now = DownloadsClock.nowEpochMs()
         val logicalKey = buildLogicalKey(
@@ -160,7 +170,11 @@ object DownloadsRepository {
             episodeNumber = episodeNumber,
             episodeTitle = episodeTitle,
             fallbackTitle = stream.streamLabel,
-            sourceUrl = sourceUrl,
+            extension = if (torrentSource != null) {
+                torrentSource.filenameHint?.mediaFileExtensionOrNull() ?: TORRENT_FALLBACK_EXTENSION
+            } else {
+                sourceUrl.fileExtensionFromUrl()
+            },
             downloadId = downloadId,
         )
 
@@ -183,6 +197,11 @@ object DownloadsRepository {
             providerName = stream.addonName,
             providerAddonId = stream.addonId,
             sourceUrl = sourceUrl,
+            sourceKind = if (torrentSource != null) DownloadSourceKind.Torrent else DownloadSourceKind.Http,
+            torrentInfoHash = torrentSource?.infoHash,
+            torrentFileIdx = torrentSource?.fileIdx,
+            torrentTrackers = torrentSource?.trackers.orEmpty(),
+            torrentFilenameHint = torrentSource?.filenameHint,
             sourceHeaders = sanitizeRequestHeaders(stream.behaviorHints.proxyHeaders?.request),
             sourceResponseHeaders = sanitizeResponseHeaders(stream.behaviorHints.proxyHeaders?.response),
             subtitleRequests = addonSubtitleRequests(contentType, videoId),
@@ -519,7 +538,7 @@ private fun buildFileName(
     episodeNumber: Int?,
     episodeTitle: String?,
     fallbackTitle: String,
-    sourceUrl: String,
+    extension: String,
     downloadId: String,
 ): String {
     val baseTitle = if (seasonNumber != null && episodeNumber != null) {
@@ -538,7 +557,6 @@ private fun buildFileName(
         title.ifBlank { fallbackTitle }
     }
 
-    val extension = sourceUrl.fileExtensionFromUrl()
     return buildString {
         append(baseTitle.sanitizeFileName().ifBlank { "download" }.take(92))
         append('_')
@@ -546,6 +564,31 @@ private fun buildFileName(
         append('.')
         append(extension)
     }
+}
+
+// Most torrent releases are Matroska; the real extension replaces this once the engine resolves the file.
+private const val TORRENT_FALLBACK_EXTENSION = "mkv"
+
+private data class TorrentDownloadSource(
+    val infoHash: String,
+    val fileIdx: Int?,
+    val trackers: List<String>,
+    val filenameHint: String?,
+    val magnetUri: String,
+)
+
+private fun StreamItem.torrentDownloadSource(): TorrentDownloadSource? {
+    if (!isTorrentStream) return null
+    val rawInfoHash = p2pInfoHash ?: return null
+    val infoHash = runCatching { canonicalP2pInfoHash(rawInfoHash) }.getOrNull() ?: return null
+    val trackers = p2pTrackers
+    return TorrentDownloadSource(
+        infoHash = infoHash,
+        fileIdx = p2pFileIdx,
+        trackers = trackers,
+        filenameHint = behaviorHints.filename?.trim()?.takeIf { it.isNotEmpty() },
+        magnetUri = buildP2pMagnetUri(infoHash, trackers),
+    )
 }
 
 private fun String.sanitizeFileName(): String =

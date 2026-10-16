@@ -12,6 +12,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.nuvio.app.core.deeplink.buildDownloadsDeepLinkUrl
+import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.p2p.formatP2pSpeed
 import com.nuvio.app.features.settings.AppIconPlatform
 import kotlinx.coroutines.runBlocking
 import nuvio.composeapp.generated.resources.*
@@ -188,16 +190,34 @@ internal actual object DownloadsLiveStatusPlatform {
             DownloadStatus.Downloading -> {
                 val downloaded = formatBytes(item.downloadedBytes)
                 val total = item.totalBytes?.let(::formatBytes)
-                if (total != null) {
+                val progress = if (total != null) {
                     runBlocking { getString(Res.string.downloads_live_downloading_with_total, detail, downloaded, total) }
                 } else {
                     runBlocking { getString(Res.string.downloads_live_downloading, detail, downloaded) }
                 }
+                torrentSwarmLine(item)?.let { swarm -> "$swarm\n$progress" } ?: progress
             }
 
             DownloadStatus.Paused -> runBlocking { getString(Res.string.downloads_live_paused, detail) }
             DownloadStatus.Failed -> item.errorMessage?.takeIf { it.isNotBlank() } ?: runBlocking { getString(Res.string.downloads_live_failed) }
             DownloadStatus.Completed -> runBlocking { getString(Res.string.downloads_live_completed) }
+        }
+    }
+
+    private fun torrentSwarmLine(item: DownloadItem): String? {
+        if (!item.isTorrent) return null
+        val swarm = TorrentDownloadSwarmRepository.swarmFor(item.id)
+        if (swarm == null || swarm.phase == TorrentDownloadPhase.FindingPeers) {
+            return runBlocking { getString(Res.string.downloads_torrent_finding_peers) }
+        }
+        if (P2pSettingsRepository.uiState.value.hideTorrentStats) return null
+        return runBlocking {
+            getString(
+                Res.string.downloads_torrent_swarm,
+                formatP2pSpeed(swarm.downloadSpeedBytesPerSecond),
+                swarm.peers,
+                swarm.seeds,
+            )
         }
     }
 

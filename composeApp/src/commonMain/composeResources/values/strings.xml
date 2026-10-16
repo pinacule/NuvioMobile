@@ -1900,6 +1900,11 @@
     <string name="details_videos">Videos</string>
     <string name="details_episode_badge_file">FILE</string>
     <string name="downloads_enqueue_missing_url">No direct stream link available</string>
+    <string name="downloads_enqueue_p2p_disabled">Turn on P2P streaming to download torrents</string>
+    <string name="downloads_torrent_finding_peers">Finding peers…</string>
+    <string name="downloads_torrent_swarm">%1$s · %2$d peers · %3$d seeds</string>
+    <string name="downloads_torrent_stalled">No peers are sharing this torrent right now. Try again later.</string>
+    <string name="downloads_torrent_missing_hash">This download is missing its torrent info hash</string>
     <string name="downloads_enqueue_replaced">Replaced previous download</string>
     <string name="downloads_enqueue_started">Download started</string>
     <string name="downloads_enqueue_unsupported_format">Unsupported stream format for downloads</string>

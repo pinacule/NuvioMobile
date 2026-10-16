@@ -3,6 +3,8 @@ package com.nuvio.app.features.downloads
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
+import com.nuvio.app.features.p2p.NuvioEngineHost
+import com.nuvio.app.features.p2p.P2pSettingsStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +28,9 @@ internal actual object DownloadsPlatformDownloader {
     @Synchronized
     internal fun scheduler(context: Context): AndroidDownloadScheduler {
         appContext = context.applicationContext
+        // Background jobs can start without MainActivity; torrent transfers need the engine and its settings.
+        P2pSettingsStorage.initialize(context.applicationContext)
+        NuvioEngineHost.initialize(context.applicationContext)
         return downloadScheduler ?: AndroidDownloadScheduler(context.applicationContext).also { downloadScheduler = it }
     }
 

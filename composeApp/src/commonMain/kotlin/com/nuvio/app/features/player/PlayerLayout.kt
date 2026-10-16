@@ -168,6 +168,12 @@ internal fun formatPlaybackRuntime(positionMs: Long, durationMs: Long, showRemai
         "${formatPlaybackTime(positionMs)} / ${formatPlaybackTime(durationMs)}"
     }
 
+/** Steps the player's speed button cycles through, wrapping back to normal speed after the last one. */
+internal val PLAYBACK_SPEED_STEPS = listOf(1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)
+
+internal fun nextPlaybackSpeedStep(current: Float): Float =
+    PLAYBACK_SPEED_STEPS.firstOrNull { it > current + 0.01f } ?: PLAYBACK_SPEED_STEPS.first()
+
 internal fun formatPlaybackSpeedLabel(speed: Float): String {
     val normalized = speed.toString().trimEnd('0').trimEnd('.')
     return "${normalized}x"

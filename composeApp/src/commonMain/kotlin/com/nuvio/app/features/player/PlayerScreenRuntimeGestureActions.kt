@@ -247,9 +247,7 @@ internal fun PlayerScreenRuntime.cycleResizeMode() {
 
 internal fun PlayerScreenRuntime.cyclePlaybackSpeed() {
     if (partyBlocksControl()) return
-    val speeds = listOf(1f, 1.25f, 1.5f, 2f)
-    val current = playbackSnapshot.playbackSpeed
-    val next = speeds.firstOrNull { it > current + 0.01f } ?: speeds.first()
+    val next = nextPlaybackSpeedStep(playbackSnapshot.playbackSpeed)
     partyRateNudge = null
     playerController?.setPlaybackSpeed(next)
     publishPartyPlayback(rate = next)
