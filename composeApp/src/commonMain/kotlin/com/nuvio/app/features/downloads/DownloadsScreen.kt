@@ -509,15 +509,15 @@ private fun SectionTitle(title: String) {
     )
 }
 
-/** "Finding peers…" until bytes flow, then speed with peer and seed counts, for running torrents. */
+/** "Finding peers…" while no peer is connected, otherwise speed with peer and seed counts. */
 @Composable
 private fun torrentSwarmText(item: DownloadItem): String? {
     val swarms by TorrentDownloadSwarmRepository.state.collectAsStateWithLifecycle()
     val p2pSettings by P2pSettingsRepository.uiState.collectAsStateWithLifecycle()
     val findingPeersText = stringResource(Res.string.downloads_torrent_finding_peers)
     if (!item.isTorrent || item.status != DownloadStatus.Downloading) return null
-    val swarm = swarms[item.id]
-    if (swarm == null || swarm.phase == TorrentDownloadPhase.FindingPeers) return findingPeersText
+    val swarm = swarms[item.id] ?: return null
+    if (swarm.phase == TorrentDownloadPhase.FindingPeers) return findingPeersText
     if (p2pSettings.hideTorrentStats) return null
     return stringResource(
         Res.string.downloads_torrent_swarm,

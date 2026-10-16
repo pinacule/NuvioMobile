@@ -1,5 +1,7 @@
 package com.nuvio.app.features.downloads
 
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,13 +29,21 @@ object TorrentDownloadSwarmRepository {
     private val _state = MutableStateFlow<Map<String, TorrentDownloadSwarm>>(emptyMap())
     val state: StateFlow<Map<String, TorrentDownloadSwarm>> = _state.asStateFlow()
 
+    private val lock = SynchronizedObject()
+    private val attempts = mutableMapOf<String, Any>()
+
     fun swarmFor(downloadId: String): TorrentDownloadSwarm? = _state.value[downloadId]
 
-    internal fun publish(downloadId: String, swarm: TorrentDownloadSwarm) {
+    /** Publishes figures for [attempt], which becomes the download's current attempt. */
+    internal fun publish(downloadId: String, swarm: TorrentDownloadSwarm, attempt: Any) = synchronized(lock) {
+        attempts[downloadId] = attempt
         _state.update { current -> current + (downloadId to swarm) }
     }
 
-    internal fun clear(downloadId: String) {
+    /** Clears the figures only if [attempt] is still the download's current attempt. */
+    internal fun clear(downloadId: String, attempt: Any) = synchronized(lock) {
+        if (attempts[downloadId] !== attempt) return@synchronized
+        attempts.remove(downloadId)
         _state.update { current -> current - downloadId }
     }
 }

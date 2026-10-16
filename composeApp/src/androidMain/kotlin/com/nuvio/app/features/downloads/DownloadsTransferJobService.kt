@@ -21,6 +21,11 @@ class DownloadsTransferJobService : JobService() {
 
     override fun onNetworkChanged(params: JobParameters) {
         val generation = params.extras.getString(AndroidDownloadScheduler.GENERATION) ?: return
+        // Torrent transfers read from the engine's loopback server and the engine manages its own sockets,
+        // so restarting them on a network change would only drop their peers.
+        val fileName = params.extras.getString(AndroidDownloadScheduler.FILE_NAME)
+        val transfer = fileName?.let { DownloadsPlatformDownloader.scheduler(this).store.get(it) }
+        if (transfer?.item?.isTorrent == true) return
         if (runs[generation]?.isActive == true) startTransfer(params)
     }
 

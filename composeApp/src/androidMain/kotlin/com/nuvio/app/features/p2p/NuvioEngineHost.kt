@@ -13,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +24,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private const val HOST_TAG = "NuvioEngineHost"
+
+/** Keeps an unused engine (and its peers) alive briefly so retries and quick resumes reuse the swarm. */
+private const val IDLE_SHUTDOWN_DELAY_MS = 60_000L
 
 /**
  * Owns the single Nuvio Engine instance shared by playback and torrent downloads.
@@ -57,6 +61,7 @@ internal object NuvioEngineHost {
     private var engine: NuvioEngine? = null
     private var configurationKey: ConfigurationKey? = null
     private var engineEventsJob: Job? = null
+    private var idleShutdownJob: Job? = null
     private val engineOwners = mutableSetOf<String>()
     private val knownTorrents = mutableMapOf<String, String>()
     private val torrentLeases = mutableMapOf<String, MutableSet<TorrentLease>>()
@@ -80,6 +85,8 @@ internal object NuvioEngineHost {
      * running engine is reused and the new settings apply once it is idle.
      */
     suspend fun acquireEngine(owner: String): NuvioEngine = engineMutex.withLock {
+        idleShutdownJob?.cancel()
+        idleShutdownJob = null
         P2pSettingsRepository.ensureLoaded()
         val settings = P2pSettingsRepository.uiState.value
         val desiredKey = ConfigurationKey(
@@ -107,7 +114,10 @@ internal object NuvioEngineHost {
         }
     }
 
-    /** Drops [owner]'s lease and shuts the engine down when nobody uses it anymore. */
+    /**
+     * Drops [owner]'s lease. Once nobody uses the engine it shuts down after [IDLE_SHUTDOWN_DELAY_MS],
+     * unless someone acquires it again first.
+     */
     suspend fun releaseEngine(owner: String) {
         withContext(NonCancellable) {
             engineMutex.withLock {
@@ -115,8 +125,17 @@ internal object NuvioEngineHost {
                     if (!engineOwners.remove(owner)) return@withLock
                     _owners.value = engineOwners.toSet()
                     engine.takeIf { engineOwners.isEmpty() }
+                } ?: return@withLock
+                idleShutdownJob?.cancel()
+                idleShutdownJob = scope.launch {
+                    delay(IDLE_SHUTDOWN_DELAY_MS)
+                    engineMutex.withLock {
+                        val stillIdle = synchronized(stateLock) {
+                            engine === idleEngine && engineOwners.isEmpty()
+                        }
+                        if (stillIdle) closeEngineLocked(idleEngine)
+                    }
                 }
-                idleEngine?.let { closeEngineLocked(it) }
             }
         }
     }
