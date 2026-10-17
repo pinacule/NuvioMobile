@@ -2,7 +2,7 @@ package com.nuvio.app.features.watched
 
 import com.nuvio.app.core.storage.DesktopPreferences
 
-internal actual object WatchedStorage {
+actual object WatchedStorage {
     private val prefs = DesktopPreferences("watched")
 
     actual fun loadPayload(profileId: Int): String? =

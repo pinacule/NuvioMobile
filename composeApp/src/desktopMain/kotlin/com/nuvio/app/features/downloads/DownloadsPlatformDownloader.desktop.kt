@@ -171,7 +171,7 @@ internal actual object DownloadsPlatformDownloader {
             var lastReportMs = 0L
             var lastReportBytes = downloaded
             while (true) {
-                ensureActive()
+                coroutineContext.ensureActive()
                 val read = channel.readAvailable(buffer)
                 if (read == -1) break
                 if (read == 0) continue

@@ -514,6 +514,10 @@ kotlin {
             implementation(libs.compose.foundation)
             implementation(libs.compose.material3)
             implementation(libs.compose.materialRipple)
+            // material-icons-extended is pinned to 1.7.3 and its version-catalog
+            // accessor is now a hard error, so the coordinates are declared
+            // explicitly (per the deprecation notice's suggested fix).
+            implementation("org.jetbrains.compose.material:material-icons-extended:1.7.3")
             implementation(libs.compose.ui)
             implementation(libs.compose.components.resources)
             implementation(libs.compose.uiToolingPreview)

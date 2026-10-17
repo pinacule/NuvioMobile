@@ -112,7 +112,8 @@ private suspend fun fetchWithRedirects(
     var currentUrl = url
     var currentBody = bodyBytes
     var redirects = 0
-    while (true) {
+    var fetched: FetchedResponse? = null
+    while (fetched == null) {
         val response: HttpResponse = addonHttpClient.request(currentUrl) {
             this.method = HttpMethod.parse(currentMethod)
             sanitizedHeaders.forEach { (key, value) -> header(key, value) }
@@ -142,8 +143,9 @@ private suspend fun fetchWithRedirects(
             }
             continue
         }
-        return@withContext FetchedResponse(response, currentUrl)
+        fetched = FetchedResponse(response, currentUrl)
     }
+    return@withContext fetched
 }
 
 private fun decodeBody(bytes: ByteArray, response: HttpResponse): String {
