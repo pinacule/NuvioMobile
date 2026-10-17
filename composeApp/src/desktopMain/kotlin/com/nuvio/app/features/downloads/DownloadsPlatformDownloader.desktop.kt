@@ -92,7 +92,7 @@ internal actual object DownloadsPlatformDownloader {
                 }
 
                 val total = response.contentLength()?.let { resumeFrom + it }
-                streamToFile(response, partFile, resumeFrom, total, onProgress)
+                streamToFile(response, partFile, resumeFrom, total, job, onProgress)
 
                 if (destFile.exists()) destFile.delete()
                 if (!partFile.renameTo(destFile)) {
@@ -162,19 +162,17 @@ internal actual object DownloadsPlatformDownloader {
         partFile: File,
         resumeFrom: Long,
         total: Long?,
+        job: Job,
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
     ) {
         val channel = response.bodyAsChannel()
-        // Capture the caller's coroutine context before entering the `use` block:
-        // `coroutineContext` does not resolve inside the non-suspend `use` lambda.
-        val context = coroutineContext
         FileOutputStream(partFile, resumeFrom > 0L).use { out ->
             val buffer = ByteArray(32 * 1024)
             var downloaded = resumeFrom
             var lastReportMs = 0L
             var lastReportBytes = downloaded
             while (true) {
-                context.ensureActive()
+                job.ensureActive()
                 val read = channel.readAvailable(buffer)
                 if (read == -1) break
                 if (read == 0) continue
