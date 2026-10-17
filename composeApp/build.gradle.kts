@@ -340,6 +340,10 @@ tasks.withType<KotlinCompilationTask<*>>().configureEach {
 }
 
 kotlin {
+    // JVM toolchain is configured once at the extension level: it applies to every JVM
+    // target (including Android) and is prohibited inside a single target's DSL.
+    jvmToolchain(21)
+
     android {
         namespace = "com.nuvio.app"
         compileSdk {
@@ -357,8 +361,6 @@ kotlin {
     }
 
     jvm("desktop") {
-        // Compose Desktop needs a modern JVM at compile and run time.
-        jvmToolchain(21)
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
@@ -512,7 +514,6 @@ kotlin {
             implementation(libs.compose.foundation)
             implementation(libs.compose.material3)
             implementation(libs.compose.materialRipple)
-            implementation(compose.materialIconsExtended)
             implementation(libs.compose.ui)
             implementation(libs.compose.components.resources)
             implementation(libs.compose.uiToolingPreview)
