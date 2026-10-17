@@ -70,10 +70,14 @@ import com.nuvio.app.features.downloads.DownloadEnqueueResult
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.SeasonDownloadResult
 import com.nuvio.app.features.downloads.SeasonDownloads
+import com.nuvio.app.features.p2p.P2P_METADATA_PREFETCH_MAX_STREAMS
 import com.nuvio.app.features.p2p.P2pConsentDialog
+import com.nuvio.app.features.p2p.P2pMetadataPrefetchTarget
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.acquireP2pEngineWarmup
+import com.nuvio.app.features.p2p.acquireP2pMetadataPrefetch
 import com.nuvio.app.features.p2p.releaseP2pEngineWarmup
+import com.nuvio.app.features.p2p.releaseP2pMetadataPrefetch
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -300,6 +304,33 @@ fun StreamsScreen(
             awaitCancellation()
         } finally {
             withContext(NonCancellable) { releaseP2pEngineWarmup(lease) }
+        }
+    }
+
+    // Speculative torrent metadata prefetch: while the engine warmup above holds the engine,
+    // fetch metadata (only — no content bytes are downloaded) for the top-listed torrent streams
+    // so a later playback start skips the metadata round-trip. Same gate as the warmup hook;
+    // re-runs when the listed streams change, releasing the previous run's leases first.
+    // Android only — the desktop/iOS actuals are no-ops.
+    val prefetchTargets = remember(uiState.allStreams) {
+        uiState.allStreams.asSequence()
+            .filter { it.isTorrentStream }
+            .mapNotNull { stream ->
+                val infoHash = stream.p2pInfoHash ?: return@mapNotNull null
+                P2pMetadataPrefetchTarget(infoHash = infoHash, trackers = stream.p2pTrackers)
+            }
+            .distinctBy { it.infoHash }
+            .take(P2P_METADATA_PREFETCH_MAX_STREAMS)
+            .toList()
+    }
+    LaunchedEffect(warmupEngine, prefetchTargets) {
+        if (!warmupEngine || prefetchTargets.isEmpty()) return@LaunchedEffect
+        val handle = withContext(Dispatchers.IO) { acquireP2pMetadataPrefetch(prefetchTargets) }
+            ?: return@LaunchedEffect
+        try {
+            awaitCancellation()
+        } finally {
+            withContext(NonCancellable) { releaseP2pMetadataPrefetch(handle) }
         }
     }
 
