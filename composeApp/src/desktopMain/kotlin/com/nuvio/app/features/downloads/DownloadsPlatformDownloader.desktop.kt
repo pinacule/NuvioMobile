@@ -165,13 +165,16 @@ internal actual object DownloadsPlatformDownloader {
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
     ) {
         val channel = response.bodyAsChannel()
+        // Capture the caller's coroutine context before entering the `use` block:
+        // `coroutineContext` does not resolve inside the non-suspend `use` lambda.
+        val context = coroutineContext
         FileOutputStream(partFile, resumeFrom > 0L).use { out ->
             val buffer = ByteArray(32 * 1024)
             var downloaded = resumeFrom
             var lastReportMs = 0L
             var lastReportBytes = downloaded
             while (true) {
-                coroutineContext.ensureActive()
+                context.ensureActive()
                 val read = channel.readAvailable(buffer)
                 if (read == -1) break
                 if (read == 0) continue
