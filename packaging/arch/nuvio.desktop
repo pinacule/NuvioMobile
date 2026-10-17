@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Nuvio
+GenericName=Media Center
+Comment=Watch movies and shows
+Exec=/usr/bin/nuvio
+Icon=nuvio
+Terminal=false
+Categories=AudioVideo;Video;Player;
+StartupWMClass=nuvio

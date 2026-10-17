@@ -1,0 +1,57 @@
+# Maintainer: pinacule
+# Nuvio desktop client (Compose Desktop) for Arch Linux.
+#
+# Build from a release tarball:
+#   1. Copy this directory to a fresh AUR-style package dir (PKGBUILD must sit
+#      at the root for `makepkg`).
+#   2. Bump pkgver to the release tag and fill in sha256sums.
+#   3. makepkg -si
+#
+# Runtime needs:
+#   - mpv               (video playback; the app launches the system mpv)
+#   - torrserver-bin    (AUR, optional: local torrent streaming backend)
+
+pkgname=nuvio-desktop
+pkgver=0.6.0
+pkgrel=1
+pkgdesc="Nuvio media center (desktop build)"
+arch=('x86_64')
+url="https://github.com/pinacule/NuvioMobile"
+license=('GPL-3.0-or-later')
+depends=(
+  'mpv'
+  'hicolor-icon-theme'
+)
+optdepends=(
+  'torrserver-bin: local torrent streaming backend (AUR)'
+)
+makedepends=(
+  'jdk21-openjdk'
+  'git'
+  # Needed for Gradle configuration of the Android target in the same module.
+  'android-sdk'
+)
+source=("$pkgname-$pkgver.tar.gz::https://github.com/pinacule/NuvioMobile/archive/refs/tags/v$pkgver.tar.gz")
+# TODO: fill in before publishing.
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/NuvioMobile-$pkgver"
+  export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+  export ANDROID_HOME=/opt/android-sdk
+  ./gradlew :composeApp:createDistributable --no-daemon -Pnuvio.app.versionName="$pkgver"
+}
+
+package() {
+  cd "$srcdir/NuvioMobile-$pkgver"
+
+  install -dm755 "$pkgdir/opt/nuvio"
+  cp -a composeApp/build/compose/binaries/main/app/. "$pkgdir/opt/nuvio/"
+
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s /opt/nuvio/bin/nuvio "$pkgdir/usr/bin/nuvio"
+
+  install -Dm644 packaging/arch/nuvio.desktop "$pkgdir/usr/share/applications/nuvio.desktop"
+  install -Dm644 composeApp/src/commonMain/composeResources/drawable/app_icon_original.png \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/nuvio.png"
+}

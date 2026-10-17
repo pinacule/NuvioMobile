@@ -8,6 +8,7 @@ import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.CommandLineArgumentProvider
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.TestExecutable
 import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest
@@ -354,7 +355,15 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
-    
+
+    jvm("desktop") {
+        // Compose Desktop needs a modern JVM at compile and run time.
+        jvmToolchain(21)
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+
     val iosTargets = listOf(
         iosArm64(),
         iosSimulatorArm64()
@@ -528,6 +537,35 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${libs.versions.kotlinx.coroutines.get()}")
             implementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
+        }
+        val desktopMain by getting {
+            dependencies {
+                implementation(compose.desktop.currentOs)
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:${libs.versions.kotlinx.coroutines.get()}")
+                implementation(libs.ktor.client.okhttp)
+            }
+        }
+    }
+}
+
+compose.desktop {
+    application {
+        mainClass = "com.nuvio.app.MainKt"
+        nativeDistributions {
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb, TargetFormat.AppImage)
+            packageName = "nuvio"
+            packageVersion = releaseAppVersionName
+            description = "Nuvio media center"
+            vendor = "Nuvio"
+            copyright = "Copyright © Nuvio contributors"
+            linux {
+                debMaintainer = "Nuvio <noreply@nuvio.app>"
+                menuGroup = "AudioVideo;Video;"
+                iconFile.set(project.file("src/commonMain/composeResources/drawable/app_icon_original.png"))
+            }
+            macOS {
+                bundleID = "app.nuvio.desktop"
+            }
         }
     }
 }
