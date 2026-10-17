@@ -149,7 +149,9 @@ actual object P2pStreamingEngine {
                 _state.value !is P2pStreamingState.Connecting) {
                 "Torrent cache cannot be cleared during active playback"
             }
-            check(!NuvioEngineHost.hasOwnersOtherThan(PLAYBACK_OWNER)) {
+            // Warmup leases are weak: they hold no torrent or stream, so they must not block
+            // the cache-clear exclusive check (see NuvioEngineHost.hasNonWarmupOwnersOtherThan).
+            check(!NuvioEngineHost.hasNonWarmupOwnersOtherThan(PLAYBACK_OWNER)) {
                 "Torrent cache cannot be cleared while torrent downloads are active"
             }
             _cacheState.value = _cacheState.value.copy(isClearing = true)
@@ -573,6 +575,7 @@ actual object P2pStreamingEngine {
         statsJob?.cancel()
         statsJob = scope.launch {
             var nextDiagnosticSampleAtMs = 0L
+            var firstByteLogged = false
             while (isActive) {
                 if (!isCurrentGeneration(generation)) return@launch
                 val currentState = _state.value
@@ -585,7 +588,22 @@ actual object P2pStreamingEngine {
                         Log.w(TAG, "Error sampling Nuvio Engine stream progress", error)
                         null
                     }
+                    // First-byte timing: the moment the first payload byte reaches the player
+                    // through the loopback route. Together with the phase timings above this is
+                    // the before/after measure for engine warmup work.
                     val aggregate = activeEngine.stats.value
+                    if (!firstByteLogged && (route?.deliveredBytes ?: 0L) > 0L) {
+                        firstByteLogged = true
+                        Log.i(
+                            DIAGNOSTIC_TAG,
+                            "start request=$requestSequence phase=first_byte " +
+                                "elapsedMs=${elapsedSince(startedAtMs)} generation=$generation " +
+                                "stream=${diagnosticId(stream.id)} " +
+                                "delivered=${route?.deliveredBytes} " +
+                                "contiguous=${route?.contiguousReadyBytes ?: -1L} " +
+                                "peers=${aggregate.connectedPeers} seeds=${aggregate.connectedSeeds}",
+                        )
+                    }
                     val nowMs = SystemClock.elapsedRealtime()
                     if (nowMs >= nextDiagnosticSampleAtMs) {
                         nextDiagnosticSampleAtMs = nowMs + DIAGNOSTIC_SAMPLE_INTERVAL_MS

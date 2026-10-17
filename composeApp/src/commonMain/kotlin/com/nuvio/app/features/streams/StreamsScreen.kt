@@ -72,6 +72,8 @@ import com.nuvio.app.features.downloads.SeasonDownloadResult
 import com.nuvio.app.features.downloads.SeasonDownloads
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.p2p.acquireP2pEngineWarmup
+import com.nuvio.app.features.p2p.releaseP2pEngineWarmup
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -90,6 +92,10 @@ import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watched.watchedItemKeys
 import com.nuvio.app.navigation.LocalUseNativeNavigation
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
@@ -153,6 +159,10 @@ fun StreamsScreen(
     val watchedUiState by remember {
         WatchedRepository.ensureLoaded()
         WatchedRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val p2pSettings by remember {
+        P2pSettingsRepository.ensureLoaded()
+        P2pSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
     remember {
         DownloadsRepository.ensureLoaded()
@@ -272,6 +282,24 @@ fun StreamsScreen(
         if (uiState.groups.any { it.addonId == preferredAddonId }) {
             StreamsRepository.selectFilter(preferredAddonId)
             preferredFilterApplied = true
+        }
+    }
+
+    // Speculative P2P engine warmup: once the stream list shows torrent streams while P2P is
+    // enabled (policy and user setting), start the engine early so a later playback start finds
+    // it hot. Engine only — no torrent is added, peer limits are untouched, and the lease is
+    // weak: it never blocks playback's engine reconfigure or the cache-clear check. The lease
+    // is released when the screen is left or the condition stops holding.
+    val warmupEngine = P2pSettingsRepository.isVisible &&
+        p2pSettings.p2pEnabled &&
+        uiState.allStreams.any { it.isTorrentStream }
+    LaunchedEffect(warmupEngine) {
+        if (!warmupEngine) return@LaunchedEffect
+        val lease = withContext(Dispatchers.IO) { acquireP2pEngineWarmup() } ?: return@LaunchedEffect
+        try {
+            awaitCancellation()
+        } finally {
+            withContext(NonCancellable) { releaseP2pEngineWarmup(lease) }
         }
     }
 

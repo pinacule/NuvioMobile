@@ -31,12 +31,32 @@ private const val IDLE_SHUTDOWN_DELAY_MS = 60_000L
 /**
  * Owns the single Nuvio Engine instance shared by playback and torrent downloads.
  *
- * Every user of the engine holds a lease under an owner key (`playback`, `download:<id>`). The engine
- * is only reconfigured when nobody else holds a lease, and it shuts down once the last lease is
- * released. Torrents are reference counted the same way, so a torrent is never removed while another
- * download or playback stream still uses it.
+ * Every user of the engine holds a lease under an owner key (`playback`, `download:<id>`,
+ * `warmup:streams`). The engine is only reconfigured when nobody else holds a lease, and it shuts
+ * down once the last lease is released. Torrents are reference counted the same way, so a torrent
+ * is never removed while another download or playback stream still uses it.
+ *
+ * Warmup leases (owner keys starting with `warmup:`) are weak: they keep an already-running
+ * engine alive but never block reconfiguration for real work and never block the cache-clear
+ * exclusive check. See [hasNonWarmupOwnersOtherThan].
+ *
+ * Engine tuning that lives below the Kotlin API — piece prioritization, sequential readahead,
+ * peer/connection limits — is configured inside the closed-source native engine
+ * (lib-nuvio-engine-android, libtorrent-based) and cannot be changed from Kotlin.
+ * `NuvioEngine.preloadStream` exists in the native API but performs a loopback HTTP
+ * preload of an already-added stream, so it has no safe call site on the warmup path, which by
+ * design never adds a torrent; it is therefore intentionally unused here.
  */
 internal object NuvioEngineHost {
+    /**
+     * Owner key for speculative engine warmup (see `P2pEngineWarmup`). The engine is started
+     * without adding any torrent; the warmup lease only keeps it alive.
+     */
+    const val WARMUP_OWNER = "warmup:streams"
+
+    /** Prefix identifying weak warmup leases. Any current or future warmup owner must use it. */
+    const val WARMUP_OWNER_PREFIX = "warmup:"
+
     private data class ConfigurationKey(
         val uploadEnabled: Boolean,
         val torrentProfile: P2pTorrentProfile,
@@ -63,6 +83,15 @@ internal object NuvioEngineHost {
     private var engineEventsJob: Job? = null
     private var idleShutdownJob: Job? = null
     private val engineOwners = mutableSetOf<String>()
+    /**
+     * In-memory dedup of magnets added to the *current* engine, keyed by canonical infohash.
+     * This is intentionally not persisted: it is only valid for the running engine instance.
+     * Torrent metadata itself is persisted on disk by the native engine inside its state directory
+     * (`nuvio-engine/state`, see [createEngine]), so when a magnet is re-added after an engine or
+     * process restart the native side can restore the metadata it already fetched instead of
+     * refetching it from the swarm. Re-adding is still required — the native engine starts with
+     * no torrents after a shutdown — but the metadata fetch step is skipped for known infohashes.
+     */
     private val knownTorrents = mutableMapOf<String, String>()
     private val torrentLeases = mutableMapOf<String, MutableSet<TorrentLease>>()
 
@@ -76,13 +105,25 @@ internal object NuvioEngineHost {
     fun hasOwnersOtherThan(owner: String): Boolean =
         synchronized(stateLock) { (engineOwners - owner).isNotEmpty() }
 
+    /**
+     * Like [hasOwnersOtherThan] but ignores warmup leases. A warmup lease must never block
+     * playback's engine reconfigure nor the torrent-cache exclusive check: it holds no torrent
+     * and no stream, it only keeps an already-running engine from idling out.
+     */
+    fun hasNonWarmupOwnersOtherThan(owner: String): Boolean =
+        synchronized(stateLock) {
+            engineOwners.any { it != owner && !it.startsWith(WARMUP_OWNER_PREFIX) }
+        }
+
     fun isTorrentKnown(infoHash: String): Boolean =
         synchronized(stateLock) { canonicalP2pInfoHash(infoHash) in knownTorrents }
 
     /**
      * Returns the shared engine and records [owner] as a user of it. When the P2P settings changed
-     * since the engine was created, it is recreated only if no other owner is using it; otherwise the
-     * running engine is reused and the new settings apply once it is idle.
+     * since the engine was created, it is recreated only if no other non-warmup owner is using it;
+     * a lone warmup lease never blocks the reconfigure (it holds no torrent or stream, so there is
+     * nothing to preserve). Otherwise the running engine is reused and the new settings apply once
+     * it is idle.
      */
     suspend fun acquireEngine(owner: String): NuvioEngine = engineMutex.withLock {
         idleShutdownJob?.cancel()
@@ -95,7 +136,7 @@ internal object NuvioEngineHost {
             diskCacheCapacityBytes = settings.cacheSize.bytes,
         )
         val current = engine
-        if (current != null && (configurationKey == desiredKey || hasOwnersOtherThan(owner))) {
+        if (current != null && (configurationKey == desiredKey || hasNonWarmupOwnersOtherThan(owner))) {
             addOwner(owner)
             return@withLock current
         }
@@ -204,6 +245,10 @@ internal object NuvioEngineHost {
         val context = appContext ?: throw P2pStreamingException("P2P streaming engine is not initialized")
         val stateDirectory = File(context.noBackupFilesDir, "nuvio-engine/state")
         val cacheDirectory = File(context.cacheDir, "nuvio-engine")
+        // The native engine persists torrent metadata under the state directory across restarts.
+        // Logging whether it already holds data tells us (in NuvioP2PDiag-adjacent logs) whether a
+        // freshly created engine could restore previously fetched metadata instead of refetching.
+        val hadPriorState = stateDirectory.isDirectory && (stateDirectory.list()?.isNotEmpty() == true)
         check(stateDirectory.mkdirs() || stateDirectory.isDirectory) {
             "Could not create the Nuvio Engine state directory"
         }
@@ -220,7 +265,11 @@ internal object NuvioEngineHost {
                 diskCacheCapacityBytes = key.diskCacheCapacityBytes,
             ),
         ).also {
-            Log.i(HOST_TAG, "Using Nuvio Engine ${NuvioEngine.version} (${NuvioEngine.protocolBackendVersion})")
+            Log.i(
+                HOST_TAG,
+                "Using Nuvio Engine ${NuvioEngine.version} (${NuvioEngine.protocolBackendVersion}) " +
+                    "priorState=$hadPriorState",
+            )
         }
     }
 
@@ -262,25 +311,37 @@ internal object NuvioEngineHost {
     }
 }
 
+/**
+ * Default trackers appended to every magnet the app adds to the engine. Best-effort list of
+ * long-lived public trackers: the engine tries them in order and moves on from unresponsive ones,
+ * so breadth matters more than any single entry. UDP liveness cannot be verified from every
+ * network (some sandbox/VPN setups block raw UDP), so entries are kept while their domains
+ * resolve and the swarm is expected to route around dead ones via DHT/PEX as well.
+ */
 internal val P2P_DEFAULT_TRACKERS = listOf(
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://explodie.org:6969/announce",
+    "udp://tracker.tiny-vps.com:6969/announce",
+    "udp://opentracker.i2p.rocks:6969/announce",
+    "udp://tracker.eddie4.nl:1337/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://tracker.qu.ax:6969/announce",
     "udp://zer0day.ch:1337/announce",
     "udp://tracker.publictracker.xyz:6969/announce",
-    "udp://tracker.opentrackr.org:1337/announce",
-    "udp://open.demonii.com:1337/announce",
-    "udp://open.stealth.si:80/announce",
-    "http://tracker.renfei.net:8080/announce",
-    "udp://udp.tracker.projectk.org:23333/announce",
-    "udp://tracker.tryhackx.org:6969/announce",
     "udp://tracker.torrent.eu.org:451/announce",
     "udp://tracker.theoks.net:6969/announce",
-    "udp://tracker.startwork.cv:1337/announce",
-    "udp://tracker.qu.ax:6969/announce",
-    "udp://tracker.plx.im:6969/announce",
-    "udp://tracker.nyaa.vc:6969/announce",
-    "udp://tracker.iperson.xyz:6969/announce",
     "udp://tracker.gmi.gd:6969/announce",
     "udp://tracker.fnix.net:6969/announce",
     "udp://tracker.flatuslifir.is:6969/announce",
     "udp://tracker.ducks.party:1984/announce",
     "udp://tracker.bluefrog.pw:2710/announce",
+    "udp://tracker.nyaa.vc:6969/announce",
+    "udp://tracker.iperson.xyz:6969/announce",
+    "udp://tracker.plx.im:6969/announce",
+    "udp://tracker.startwork.cv:1337/announce",
+    "udp://tracker.tryhackx.org:6969/announce",
+    "udp://udp.tracker.projectk.org:23333/announce",
+    "http://tracker.renfei.net:8080/announce",
 )
