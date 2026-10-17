@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ccr-1b012adb-wg9nn1]
+    branches: [ccr-1b012adb-wg9nn1, feat/desktop-p2p-sync]
   workflow_dispatch:
 
 permissions:

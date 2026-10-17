@@ -1,0 +1,56 @@
+name: Build Desktop (Linux)
+
+on:
+  push:
+    branches: [feat/desktop-p2p-sync]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-linux:
+    name: Build desktop packages (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Prepare runtime properties
+        env:
+          LOCAL_PROPERTIES_BASE64: ${{ secrets.NUVIO_LOCAL_PROPERTIES_BASE64 }}
+        run: |
+          if [ -n "$LOCAL_PROPERTIES_BASE64" ]; then
+            printf '%s' "$LOCAL_PROPERTIES_BASE64" | base64 --decode > local.properties
+            sed -i -E '/^[[:space:]]*(sdk\.dir|NUVIO_RELEASE_[A-Z_]+)[[:space:]]*=/d' local.properties
+          else
+            touch local.properties
+          fi
+
+      - name: Build desktop distribution packages
+        run: ./gradlew :composeApp:packageDistributionForCurrentOS -Pnuvio.android.distribution=playstore -Pnuvio.ios.distribution=appstore --stacktrace
+
+      - name: Upload desktop packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: nuvio-desktop-linux
+          path: composeApp/build/compose/binaries/main/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Run desktop unit tests
+        run: ./gradlew :composeApp:desktopTest -Pnuvio.android.distribution=playstore -Pnuvio.ios.distribution=appstore --stacktrace
