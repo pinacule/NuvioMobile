@@ -1,6 +1,6 @@
 package com.nuvio.app.features.tracking
 
-import kotlin.io.IOException
+import io.ktor.utils.io.errors.IOException
 
 enum class TrackingListStatus(val wireValue: String) {
     WATCHING("watching"),
