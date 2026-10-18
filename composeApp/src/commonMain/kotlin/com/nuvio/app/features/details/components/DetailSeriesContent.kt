@@ -64,6 +64,7 @@ import co.touchlab.kermit.Logger
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.format.formatReleaseDateForDisplay
 import com.nuvio.app.core.i18n.localizedSeasonEpisodeCode
+import com.nuvio.app.core.ui.HorizontalCarouselControls
 import com.nuvio.app.core.ui.NuvioAnimatedWatchedBadge
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.NuvioProgressBar
@@ -732,46 +733,52 @@ private fun EpisodeHorizontalRow(
         }
     }
 
-    LazyRow(
-        state = listState,
-        modifier = Modifier
-            .nuvioHorizontalScrollBleed(horizontalScrollPadding)
-            .fillMaxWidth(),
-        contentPadding = PaddingValues(
-            horizontal = horizontalScrollPadding + rowMetrics.rowHorizontalPadding,
-            vertical = rowMetrics.rowVerticalPadding,
-        ),
-        horizontalArrangement = Arrangement.spacedBy(rowMetrics.itemSpacing),
-    ) {
-        itemsIndexed(
-            items = episodes,
-            key = { index, episode -> "${episode.season}:${episode.episode}:${episode.id}#$index" },
-        ) { _, episode ->
-            val episodeVideoId = buildPlaybackVideoId(
-                parentMetaId = parentMetaId,
-                seasonNumber = episode.season,
-                episodeNumber = episode.episode,
-                fallbackVideoId = episode.id,
-            )
-            EpisodeHorizontalCard(
-                video = episode,
-                fallbackImage = fallbackImage,
-                progressEntry = progressByVideoId[episodeVideoId],
-                imdbRating = episode.seasonEpisodeKey()?.let { episodeRatings[it] } ?: episode.rating,
-                isWatched = progressByVideoId[episodeVideoId]?.isEffectivelyCompleted == true ||
-                    WatchingState.isEpisodeWatched(
-                        watchedKeys = watchedKeys,
-                        metaType = metaType,
-                        metaId = parentMetaId,
-                        episode = episode,
-                    ),
-                episodeRatingsVisibility = episodeRatingsVisibility,
-                blurUnwatchedEpisodes = blurUnwatchedEpisodes,
-                metrics = rowMetrics,
-                onClick = { onEpisodeClick?.invoke(episode) },
-                onLongPress = { onEpisodeLongPress?.invoke(episode) },
-            )
+    Box(modifier = Modifier.fillMaxWidth()) {
+        LazyRow(
+            state = listState,
+            modifier = Modifier
+                .nuvioHorizontalScrollBleed(horizontalScrollPadding)
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(
+                horizontal = horizontalScrollPadding + rowMetrics.rowHorizontalPadding,
+                vertical = rowMetrics.rowVerticalPadding,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(rowMetrics.itemSpacing),
+        ) {
+            itemsIndexed(
+                items = episodes,
+                key = { index, episode -> "${episode.season}:${episode.episode}:${episode.id}#$index" },
+            ) { _, episode ->
+                val episodeVideoId = buildPlaybackVideoId(
+                    parentMetaId = parentMetaId,
+                    seasonNumber = episode.season,
+                    episodeNumber = episode.episode,
+                    fallbackVideoId = episode.id,
+                )
+                EpisodeHorizontalCard(
+                    video = episode,
+                    fallbackImage = fallbackImage,
+                    progressEntry = progressByVideoId[episodeVideoId],
+                    imdbRating = episode.seasonEpisodeKey()?.let { episodeRatings[it] } ?: episode.rating,
+                    isWatched = progressByVideoId[episodeVideoId]?.isEffectivelyCompleted == true ||
+                        WatchingState.isEpisodeWatched(
+                            watchedKeys = watchedKeys,
+                            metaType = metaType,
+                            metaId = parentMetaId,
+                            episode = episode,
+                        ),
+                    episodeRatingsVisibility = episodeRatingsVisibility,
+                    blurUnwatchedEpisodes = blurUnwatchedEpisodes,
+                    metrics = rowMetrics,
+                    onClick = { onEpisodeClick?.invoke(episode) },
+                    onLongPress = { onEpisodeLongPress?.invoke(episode) },
+                )
+            }
         }
+        HorizontalCarouselControls(
+            listState = listState,
+            modifier = Modifier.matchParentSize(),
+        )
     }
 }
 

@@ -61,4 +61,8 @@ internal fun buildSimklAuthorizationUrl(
     append(appName.encodeURLParameter())
     append("&app-version=")
     append(appVersion.encodeURLParameter())
+    // Simkl grants read-only tokens when scope is omitted; the app reads
+    // (library, watch progress) and writes (scrobbles, history), so request both.
+    append("&scope=")
+    append("media:read media:write".encodeURLParameter())
 }

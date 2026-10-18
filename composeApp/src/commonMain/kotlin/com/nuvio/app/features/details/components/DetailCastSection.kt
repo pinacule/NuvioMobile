@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
+import com.nuvio.app.core.ui.HorizontalCarouselControls
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.nuvioHorizontalScrollBleed
 import com.nuvio.app.core.ui.nuvioCardDepth
@@ -63,33 +65,41 @@ fun DetailCastSection(
         BoxWithConstraints {
             val sizing = castSectionSizing(maxWidth.value)
 
-            LazyRow(
-                modifier = Modifier
-                    .nuvioHorizontalScrollBleed(horizontalScrollPadding)
-                    .fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = horizontalScrollPadding),
-                horizontalArrangement = Arrangement.spacedBy(sizing.avatarGap),
-            ) {
-                itemsIndexed(
-                    items = cast,
-                    key = { index, person -> "${person.name}-${person.role.orEmpty()}-${person.photo.orEmpty()}-$index" },
-                ) { index, person ->
-                    val sharedTransitionKey = person.tmdbId
-                        ?.takeIf { it > 0 }
-                        ?.let { castAvatarSharedTransitionKey(it, occurrenceIndex = index) }
-                    CastItem(
-                        person = person,
-                        sharedTransitionKey = sharedTransitionKey,
-                        sizing = sizing,
-                        sharedTransitionScope = sharedTransitionScope,
-                        animatedVisibilityScope = animatedVisibilityScope,
-                        onClick = if (onCastClick != null && person.tmdbId != null && person.tmdbId > 0) {
-                            { onCastClick(person, sharedTransitionKey) }
-                        } else {
-                            null
-                        },
-                    )
+            val castListState = rememberLazyListState()
+            Box(modifier = Modifier.fillMaxWidth()) {
+                LazyRow(
+                    state = castListState,
+                    modifier = Modifier
+                        .nuvioHorizontalScrollBleed(horizontalScrollPadding)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = horizontalScrollPadding),
+                    horizontalArrangement = Arrangement.spacedBy(sizing.avatarGap),
+                ) {
+                    itemsIndexed(
+                        items = cast,
+                        key = { index, person -> "${person.name}-${person.role.orEmpty()}-${person.photo.orEmpty()}-$index" },
+                    ) { index, person ->
+                        val sharedTransitionKey = person.tmdbId
+                            ?.takeIf { it > 0 }
+                            ?.let { castAvatarSharedTransitionKey(it, occurrenceIndex = index) }
+                        CastItem(
+                            person = person,
+                            sharedTransitionKey = sharedTransitionKey,
+                            sizing = sizing,
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            onClick = if (onCastClick != null && person.tmdbId != null && person.tmdbId > 0) {
+                                { onCastClick(person, sharedTransitionKey) }
+                            } else {
+                                null
+                            },
+                        )
+                    }
                 }
+                HorizontalCarouselControls(
+                    listState = castListState,
+                    modifier = Modifier.matchParentSize(),
+                )
             }
         }
     }
