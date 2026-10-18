@@ -47,6 +47,7 @@ import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.details.SeriesPrimaryAction
 import com.nuvio.app.features.details.seriesPrimaryAction
+import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.home.components.HomeCatalogRowSection
 import com.nuvio.app.features.home.components.HomeContinueWatchingSection
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
@@ -162,6 +163,10 @@ fun HomeScreen(
     val effectiveWatchProgressSource = watchProgressUiState.source
     val cloudLibraryUiState by CloudLibraryRepository.uiState.collectAsStateWithLifecycle()
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
+    val downloadsUiState by remember {
+        DownloadsRepository.ensureLoaded()
+        DownloadsRepository.uiState
+    }.collectAsStateWithLifecycle()
     val trackingSettingsUiState by remember {
         TrackingSettingsRepository.ensureLoaded()
         TrackingSettingsRepository.uiState
@@ -544,6 +549,9 @@ fun HomeScreen(
         )
     }
     val hasContinueWatchingRows = continueWatchingItems.isNotEmpty() || upcomingItems.isNotEmpty()
+    // Local content that works without internet: completed/active downloads and
+    // continue watching rows backed by on-device progress.
+    val hasLocalOfflineContent = downloadsUiState.items.isNotEmpty() || hasContinueWatchingRows
 
     ScreenActivityEffect(activeProfileId, continueWatchingItems.isNotEmpty(), hasUserScrolledContinueWatching) { active ->
         if (!active) return@ScreenActivityEffect
@@ -1084,6 +1092,32 @@ fun HomeScreen(
                                     message = addonManifestErrorMessage,
                                     actionLabel = stringResource(Res.string.action_retry),
                                     onActionClick = {
+                                        NetworkStatusRepository.requestRefresh(force = true)
+                                        AddonRepository.refreshAll()
+                                    },
+                                )
+                            }
+
+                            networkStatusUiState.isOfflineLike && hasLocalOfflineContent -> {
+                                // Offline, but the user has downloads and/or continue watching:
+                                // catalogs are unreachable, yet local content works. Don't
+                                // suggest adding an addon — that prompt is for genuinely
+                                // unconfigured sources.
+                                HomeEmptyStateCard(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    title = stringResource(Res.string.home_empty_offline_title),
+                                    message = stringResource(Res.string.home_empty_offline_message),
+                                )
+                            }
+
+                            networkStatusUiState.isOfflineLike && enabledAddons.isNotEmpty() -> {
+                                // Offline with addons configured but unreachable and no
+                                // recorded manifest error: surface the offline state, not
+                                // "no content sources".
+                                NuvioNetworkOfflineCard(
+                                    condition = networkStatusUiState.condition,
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    onRetry = {
                                         NetworkStatusRepository.requestRefresh(force = true)
                                         AddonRepository.refreshAll()
                                     },

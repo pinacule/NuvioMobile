@@ -257,6 +257,7 @@ internal object TraktScrobbleRepository : TrackingScrobbler {
 
         val attempts = if (action == "stop") maxStopRetries + 1 else 1
         var wasSent = false
+        var lastTransportError: Throwable? = null
         for (attempt in 1..attempts) {
             val response = runCatching {
                 httpRequestRaw(
@@ -267,6 +268,7 @@ internal object TraktScrobbleRepository : TrackingScrobbler {
                 )
             }.onFailure { error ->
                 if (error is CancellationException) throw error
+                lastTransportError = error
                 log.w(error) {
                     "Trakt scrobble $action transport failure on attempt $attempt/$attempts"
                 }
@@ -277,7 +279,10 @@ internal object TraktScrobbleRepository : TrackingScrobbler {
                     delay(retryDelayMs * attempt)
                     continue
                 }
-                return
+                // Surface the transport failure instead of swallowing it, so the
+                // scrobble coordinator can queue the event in the offline outbox.
+                throw lastTransportError
+                    ?: IllegalStateException("Trakt scrobble $action failed after $attempts attempts")
             }
 
             log.d {

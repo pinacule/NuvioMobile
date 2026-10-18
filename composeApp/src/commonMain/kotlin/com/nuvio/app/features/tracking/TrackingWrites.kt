@@ -1,5 +1,7 @@
 package com.nuvio.app.features.tracking
 
+import kotlin.io.IOException
+
 enum class TrackingListStatus(val wireValue: String) {
     WATCHING("watching"),
     PLAN_TO_WATCH("plantowatch"),
@@ -91,4 +93,30 @@ interface TrackingScrobbler {
         action: TrackingScrobbleAction,
         event: TrackingScrobbleEvent,
     )
+
+    /**
+     * Whether [error] looks like a connectivity failure (offline, DNS, timeout)
+     * rather than an application-level failure (auth, validation, rate limit).
+     * Connectivity failures are queued in the offline outbox for later retry;
+     * anything else is dropped after logging.
+     *
+     * The default implementation walks the cause chain for [IOException].
+     * Providers that wrap transport failures in their own exception types
+     * should override this.
+     */
+    fun isConnectivityFailure(error: Throwable): Boolean = error.hasConnectivityCause()
+}
+
+/**
+ * Walks the cause chain looking for IO failures (no route to host, DNS,
+ * connect/read timeouts). Never treats [CancellationException][kotlinx.coroutines.CancellationException]
+ * as connectivity: cancellation must always propagate.
+ */
+internal fun Throwable.hasConnectivityCause(): Boolean {
+    var current: Throwable? = this
+    while (current != null) {
+        if (current is IOException) return true
+        current = current.cause
+    }
+    return false
 }

@@ -40,6 +40,8 @@
     <string name="servers_error_failed">Could not connect to the server.</string>
     <string name="home_empty_no_sources_title">No content sources</string>
     <string name="home_empty_no_sources_message">Add an addon or connect a media server to see catalogs on Home.</string>
+    <string name="home_empty_offline_title">You're offline</string>
+    <string name="home_empty_offline_message">Catalogs need an internet connection. Your downloads and continue watching still work.</string>
     <string name="servers_failure_auth">Sign in to this server again in Settings.</string>
     <string name="servers_failure_unreachable">The server is unavailable.</string>
     <string name="servers_failure_not_found">This item is no longer available on the server.</string>

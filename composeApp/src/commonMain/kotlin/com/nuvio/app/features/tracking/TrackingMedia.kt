@@ -1,11 +1,15 @@
 package com.nuvio.app.features.tracking
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 enum class TrackingMediaKind {
     MOVIE,
     SHOW,
     ANIME,
 }
 
+@Serializable
 data class TrackingExternalIds(
     val imdb: String? = null,
     val tmdb: Long? = null,
@@ -44,6 +48,7 @@ data class TrackingExternalIds(
         )
 }
 
+@Serializable
 data class TrackingEpisode(
     val season: Int? = null,
     val number: Int,
@@ -53,12 +58,14 @@ data class TrackingEpisode(
     val usesTvdbSeasonMapping: Boolean = false,
 )
 
+@Serializable
 data class TrackingCatalogReference(
     val contentId: String,
     val contentType: String,
     val videoId: String? = null,
 )
 
+@Serializable
 data class TrackingMediaReference(
     val kind: TrackingMediaKind,
     val title: String? = null,

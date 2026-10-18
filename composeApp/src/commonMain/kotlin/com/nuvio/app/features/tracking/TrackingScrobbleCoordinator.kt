@@ -3,8 +3,12 @@ package com.nuvio.app.features.tracking
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.profiles.ProfileRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 
 data class TrackingScrobbleFailure(
@@ -14,6 +18,7 @@ data class TrackingScrobbleFailure(
 
 object TrackingScrobbleCoordinator {
     private val log = Logger.withTag("TrackingScrobble")
+    private val outboxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     suspend fun scrobble(
         profileId: Int,
@@ -22,16 +27,33 @@ object TrackingScrobbleCoordinator {
     ): List<TrackingScrobbleFailure> {
         if (profileId != ProfileRepository.activeProfileId) return emptyList()
         TrackingProviderRegistry.ensureLoaded()
+        val scrobblers = TrackingProviderRegistry.connectedScrobblers()
         val failures = dispatchTrackingScrobble(
-            scrobblers = TrackingProviderRegistry.connectedScrobblers(),
+            scrobblers = scrobblers,
             profileId = profileId,
             action = action,
             event = event,
         )
-        failures.forEach { failure ->
+        for (failure in failures) {
             log.w(failure.cause) {
                 "${failure.providerId.storageId} scrobble ${action.wireValue} failed"
             }
+            val scrobbler = scrobblers.firstOrNull { it.providerId == failure.providerId }
+            if (scrobbler?.isConnectivityFailure(failure.cause) == true) {
+                // Device is offline (or the network path failed): persist the
+                // event instead of dropping it. It flushes on reconnect.
+                TrackingScrobbleOutbox.enqueue(
+                    providerId = failure.providerId,
+                    profileId = profileId,
+                    action = action,
+                    event = event,
+                )
+            }
+        }
+        if (scrobblers.isNotEmpty() && failures.size < scrobblers.size) {
+            // At least one provider was reached, so connectivity is available:
+            // drain anything the outbox queued while offline.
+            outboxScope.launch { TrackingScrobbleOutbox.flush() }
         }
         return failures
     }

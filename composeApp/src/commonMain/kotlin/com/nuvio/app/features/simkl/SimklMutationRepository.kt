@@ -206,6 +206,11 @@ object SimklMutationRepository : TrackingListWriter, TrackingHistoryWriter, Trac
         }
     }
 
+    override fun isConnectivityFailure(error: Throwable): Boolean =
+        super.isConnectivityFailure(error) ||
+            // Simkl wraps transport failures as status=null (no HTTP response).
+            (error is SimklApiException && error.status == null)
+
     private fun isActiveProfile(profileId: Int): Boolean = ProfileRepository.activeProfileId == profileId
 }
 

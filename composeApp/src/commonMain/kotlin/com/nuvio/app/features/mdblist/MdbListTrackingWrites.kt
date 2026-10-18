@@ -27,6 +27,11 @@ class MdbListTrackingWrites(
     override suspend fun scrobble(profileId: Int, action: TrackingScrobbleAction, event: TrackingScrobbleEvent) =
         scrobble.scrobble(scope(profileId), action, event)
 
+    override fun isConnectivityFailure(error: Throwable): Boolean =
+        super.isConnectivityFailure(error) ||
+            // MDBList wraps transport failures after exhausting retries.
+            (error is MdbListApiException && error.code == "transport_failure")
+
     private fun scope(profileId: Int): MdbListAuthScope = sync.currentScope().also {
         if (it.profileId != profileId) throw CancellationException("MDBList profile changed")
     }
