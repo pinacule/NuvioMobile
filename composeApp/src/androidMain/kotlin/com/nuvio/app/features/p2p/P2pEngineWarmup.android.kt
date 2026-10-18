@@ -3,6 +3,7 @@ package com.nuvio.app.features.p2p
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -10,6 +11,9 @@ import kotlinx.coroutines.withContext
 internal actual class P2pEngineWarmupLease actual constructor() {
     internal val released = AtomicBoolean(false)
 }
+
+/** Live view of [NuvioEngineHost] owners; torrent downloads hold `download:<id>` owners. */
+internal actual val p2pEngineOwners: StateFlow<Set<String>> = NuvioEngineHost.owners
 
 /**
  * Serializes warmup lease bookkeeping. [NuvioEngineHost] tracks owners as a set, so concurrent

@@ -219,7 +219,7 @@ internal fun AppGate(
             ProfileRepository.selectProfile(profile.profileIndex)
             SyncManager.pullAllForProfile(profile.profileIndex)
             gateScreen = AppGateScreen.Main.name
-            onActivate?.invoke(AppScreenTab.Home)
+            onActivate?.invoke(AppScreenTab.Library)
         }
     }
 
@@ -545,7 +545,7 @@ internal fun AppGate(
                             )
                             gateScreen = AppGateScreen.Main.name
                             if (!renderMainContent) {
-                                onActivate?.invoke(AppScreenTab.Home)
+                                onActivate?.invoke(AppScreenTab.Library)
                             }
                         }
                     },

@@ -171,6 +171,9 @@ internal fun AppTabHost(
                     onPreviewClick = actions.onPosterClick,
                     onPreviewLongClick = actions.onPosterLongClick,
                     onDownloadsClick = actions.onDownloadsClick,
+                    onContinueWatchingClick = actions.onContinueWatchingClick,
+                    onContinueWatchingLongPress = actions.onContinueWatchingLongPress,
+                    continueWatchingDisintegrationRequest = state.continueWatchingDisintegrationRequest,
                     disintegrationRequest = state.libraryDisintegrationRequest,
                 )
             }

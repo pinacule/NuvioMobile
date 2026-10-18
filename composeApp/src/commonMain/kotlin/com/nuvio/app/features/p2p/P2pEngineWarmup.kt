@@ -1,5 +1,7 @@
 package com.nuvio.app.features.p2p
 
+import kotlinx.coroutines.flow.StateFlow
+
 /**
  * Opaque handle for a speculative P2P engine warmup lease.
  *
@@ -9,6 +11,13 @@ package com.nuvio.app.features.p2p
  * exclusive check.
  */
 internal expect class P2pEngineWarmupLease()
+
+/**
+ * Current owners of the shared P2P engine (e.g. `download:<id>`, `warmup:streams`). Lets
+ * speculative work (warmup, metadata prefetch) yield while real downloads hold the engine.
+ * Empty on platforms without a shared in-process engine.
+ */
+internal expect val p2pEngineOwners: StateFlow<Set<String>>
 
 /**
  * Best-effort speculative start of the P2P engine. Returns a lease that must be released with

@@ -2,17 +2,17 @@ package com.nuvio.app.features.player
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -37,6 +37,7 @@ import nuvio.composeapp.generated.resources.player_speed_make_default
 import org.jetbrains.compose.resources.stringResource
 
 /** Playback speed panel: a 1x–4x slider, one-tap presets and a button to keep the speed as default. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlaybackSpeedModal(
     visible: Boolean,
@@ -98,11 +99,12 @@ fun PlaybackSpeedModal(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                // Presets wrap onto multiple rows so every option is visible —
+                // nothing is clipped off the edge or hidden behind scrolling.
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     PLAYBACK_SPEED_PRESETS.forEach { preset ->
                         SpeedChip(

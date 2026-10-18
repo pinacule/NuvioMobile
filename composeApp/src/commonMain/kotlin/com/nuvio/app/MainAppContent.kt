@@ -101,6 +101,7 @@ import com.nuvio.app.features.collection.CollectionSyncService
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.downloads.DownloadItem
+import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadSubtitles
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.home.HomeCatalogSection
@@ -192,7 +193,7 @@ import org.jetbrains.compose.resources.stringResource
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 internal fun MainAppContent(
-    initialTab: AppScreenTab = AppScreenTab.Home,
+    initialTab: AppScreenTab = AppScreenTab.Library,
     initialRoute: AppRoute = TabsRoute,
     useNativeNavigation: Boolean = false,
     useNativeTabBar: Boolean = false,
@@ -830,7 +831,12 @@ internal fun MainAppContent(
         }
 
         fun openDownloadedItem(item: DownloadItem) {
-            val sourceUrl = DownloadsRepository.playableLocalFileUri(item) ?: return
+            val completedUrl = DownloadsRepository.playableLocalFileUri(item)
+            if (completedUrl == null) {
+                openInProgressTorrentDownload(item)
+                return
+            }
+            val sourceUrl = completedUrl
             val resumeEntry = item.videoId
                 .takeIf { it.isNotBlank() }
                 ?.let(WatchProgressRepository::progressForVideo)
@@ -866,6 +872,72 @@ internal fun MainAppContent(
                 coroutineScope.launch { openExternalPlayback(playerLaunch) }
                 return
             }
+            val launchId = PlayerLaunchStore.put(playerLaunch)
+            navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
+        }
+
+        /**
+         * Starts playback of a torrent that is still downloading, streaming progressively from the
+         * partial data through the P2P engine. The engine reuses the download's torrent (it is
+         * already added), so playback works as long as the download stays ahead of the playhead;
+         * the loopback server blocks reads at the downloaded frontier until more pieces verify
+         * instead of erroring out. The download itself keeps running untouched.
+         *
+         * HTTP downloads cannot play until complete: ExoPlayer treats a concurrently-written
+         * partial file's EOF as end-of-stream, so playback would stop at the frontier instead of
+         * waiting for more bytes.
+         */
+        fun openInProgressTorrentDownload(item: DownloadItem) {
+            if (!item.isTorrent) return
+            if (item.status != DownloadStatus.Downloading && item.status != DownloadStatus.Paused) return
+            val infoHash = item.torrentInfoHash?.trim()?.takeIf { it.isNotBlank() } ?: return
+            P2pSettingsRepository.ensureLoaded()
+            if (!P2pSettingsRepository.uiState.value.p2pEnabled) return
+            val resumeEntry = item.videoId
+                .takeIf { it.isNotBlank() }
+                ?.let(WatchProgressRepository::progressForVideo)
+                ?.takeIf { it.isResumable }
+
+            // Mirrors the streaming flow's P2P launch: the sentinel URL marks the source as a
+            // torrent and the player resolves it through P2pStreamingEngine.
+            val sentinelUrl = buildString {
+                append("torrent://")
+                append(infoHash)
+                item.torrentFileIdx?.let { append("?index=").append(it) }
+            }
+            val playerLaunch = PlayerLaunch(
+                profileId = activePlaybackProfileId,
+                title = item.title,
+                sourceUrl = sentinelUrl,
+                sourceHeaders = emptyMap(),
+                sourceResponseHeaders = emptyMap(),
+                externalSubtitles = item.sourceSubtitles,
+                streamType = null,
+                logo = item.logo,
+                poster = item.poster,
+                background = item.background,
+                seasonNumber = item.seasonNumber,
+                episodeNumber = item.episodeNumber,
+                episodeTitle = item.episodeTitle,
+                episodeThumbnail = item.episodeThumbnail,
+                streamTitle = item.streamTitle,
+                streamSubtitle = item.streamSubtitle,
+                providerName = item.providerName,
+                providerAddonId = item.providerAddonId,
+                contentType = item.contentType,
+                videoId = item.videoId,
+                parentMetaId = item.parentMetaId,
+                parentMetaType = item.parentMetaType,
+                torrentInfoHash = infoHash,
+                torrentFileIdx = item.torrentFileIdx,
+                torrentFilename = item.torrentFilenameHint,
+                torrentTrackers = item.torrentTrackers,
+                initialPositionMs = resumeEntry?.lastPositionMs?.takeIf { it > 0L } ?: 0L,
+                initialProgressFraction = resumeEntry?.progressFraction?.takeIf { it > 0f },
+                sourceFilename = item.torrentFilenameHint,
+            )
+            // External players cannot consume the engine's loopback stream through the intent
+            // flow, so in-progress torrents always play in the internal player.
             val launchId = PlayerLaunchStore.put(playerLaunch)
             navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
         }
@@ -1481,8 +1553,8 @@ internal fun MainAppContent(
                             )
                         },
                         onBack = {
-                            if (selectedTab != AppScreenTab.Home) {
-                                activateTab(AppScreenTab.Home)
+                            if (selectedTab != AppScreenTab.Library) {
+                                activateTab(AppScreenTab.Library)
                             } else {
                                 showExitConfirmation = !showExitConfirmation
                             }
@@ -1492,7 +1564,7 @@ internal fun MainAppContent(
                             if (profile.profileIndex != ProfileRepository.state.value.activeProfile?.profileIndex) {
                                 profileSwitchLoading = true
                                 NativeTabBridge.publishTabBarVisible(false)
-                                activateTab(AppScreenTab.Home)
+                                activateTab(AppScreenTab.Library)
                                 ProfileRepository.selectProfile(profile.profileIndex)
                                 SyncManager.pullAllForProfile(profile.profileIndex)
                             }

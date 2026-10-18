@@ -183,9 +183,22 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                         if (active.value && playbackKey == activePlaybackKey) {
                             playerController = controller
                             playerControllerSourceUrl = activeSourceUrl
-                            // A watch party drives the rate itself; otherwise start at the user's default speed.
-                            val defaultSpeed = playerSettingsUiState.defaultPlaybackSpeed
-                            if (!isPartySynced && defaultSpeed != 1f) controller.setPlaybackSpeed(defaultSpeed)
+                            // A watch party drives the rate itself. Otherwise apply the speed here so
+                            // it holds for every playback entry point (streams, downloads, next
+                            // episode, …): a new playback starts at the user's saved default speed,
+                            // while a recreated controller mid-playback (engine switch / source
+                            // refresh) keeps the speed the user actually had instead of resetting.
+                            if (!isPartySynced) {
+                                val speed = if (playbackSpeedControllerKey == playbackKey) {
+                                    manualPlaybackSpeed
+                                        ?: playerSettingsUiState.defaultPlaybackSpeed
+                                } else {
+                                    playbackSpeedControllerKey = playbackKey
+                                    manualPlaybackSpeed = null
+                                    playerSettingsUiState.defaultPlaybackSpeed
+                                }
+                                controller.setPlaybackSpeed(speed)
+                            }
                         }
                     },
                     onSnapshot = { snapshot ->

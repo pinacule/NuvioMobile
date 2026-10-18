@@ -58,6 +58,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.ScreenActivityEffect
+import com.nuvio.app.core.auth.AuthRepository
+import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.i18n.localizedByteUnit
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
@@ -88,11 +90,28 @@ import com.nuvio.app.features.home.components.HomeSkeletonRow
 import com.nuvio.app.features.home.components.posterGridColumnCountForWidth
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.tracking.TrackingRefreshIntent
+import com.nuvio.app.features.tracking.TrackingSettingsRepository
 import com.nuvio.app.features.watched.WatchedRepository
+import com.nuvio.app.features.watchprogress.ContinueWatchingEnrichmentCache
+import com.nuvio.app.features.watchprogress.ContinueWatchingItem
+import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
+import com.nuvio.app.features.watchprogress.CurrentDateProvider
+import com.nuvio.app.features.watchprogress.WatchProgressClock
+import com.nuvio.app.features.watchprogress.WatchProgressRepository
+import com.nuvio.app.features.watchprogress.WatchProgressSourceCoordinator
+import com.nuvio.app.features.watchprogress.continueWatchingEntries
+import com.nuvio.app.features.watchprogress.resolvedProgressKey
 import com.nuvio.app.features.watching.application.WatchingState
 import com.nuvio.app.core.poster.CustomPosterScreen
 import com.nuvio.app.core.poster.CustomPosterUrlRepository
 import com.nuvio.app.core.poster.withCustomPosterUrl
+import com.nuvio.app.core.poster.withCustomPosterUrls
+import com.nuvio.app.features.home.HomeContinueWatchingMaxRecentProgressItems
+import com.nuvio.app.features.home.buildHomeContinueWatchingItems
+import com.nuvio.app.features.home.filterEntriesForContinueWatchingWindow
+import com.nuvio.app.features.home.toContinueWatchingItem
+import com.nuvio.app.features.home.components.HomeContinueWatchingSection
+import com.nuvio.app.features.home.components.HomeContinueWatchingSectionBottomPadding
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -112,6 +131,9 @@ fun LibraryScreen(
     onPreviewClick: ((MetaPreview) -> Unit)? = null,
     onPreviewLongClick: ((MetaPreview) -> Unit)? = null,
     onDownloadsClick: (() -> Unit)? = null,
+    onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
+    onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
+    continueWatchingDisintegrationRequest: DisintegrationRequest<String>? = null,
     disintegrationRequest: DisintegrationRequest<String>? = null,
 ) {
     val uiState by remember {
@@ -136,6 +158,74 @@ fun LibraryScreen(
         WatchedRepository.uiState
     }.collectAsStateWithLifecycle()
     val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
+    val watchProgressUiState by remember {
+        WatchProgressRepository.ensureLoaded()
+        WatchProgressRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val effectiveWatchProgressSource = watchProgressUiState.source
+    val continueWatchingPreferences by remember {
+        ContinueWatchingPreferencesRepository.ensureLoaded()
+        ContinueWatchingPreferencesRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val trackingSettingsUiState by remember {
+        TrackingSettingsRepository.ensureLoaded()
+        TrackingSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val profileState by ProfileRepository.state.collectAsStateWithLifecycle()
+    val activeProfileId = profileState.activeProfile?.profileIndex ?: 1
+    val cwCacheGeneration by ContinueWatchingEnrichmentCache.generation.collectAsStateWithLifecycle()
+    val continueWatchingCutoffEpochMs = remember(
+        effectiveWatchProgressSource,
+        trackingSettingsUiState.continueWatchingDaysCap,
+    ) {
+        WatchProgressRepository.activeProviderContinueWatchingCutoffEpochMs(
+            daysCap = trackingSettingsUiState.continueWatchingDaysCap,
+            nowEpochMs = WatchProgressClock.nowEpochMs(),
+        )
+    }
+    val cachedInProgressItems = remember(activeProfileId, effectiveWatchProgressSource, cwCacheGeneration) {
+        ContinueWatchingEnrichmentCache.getSnapshots(
+            profileId = activeProfileId,
+            source = effectiveWatchProgressSource,
+        ).second.mapNotNull { cached ->
+            cached.resolvedProgressKey() to cached.toContinueWatchingItem()
+        }.toMap()
+    }
+    val cwPosterPattern = remember(libraryPosterPattern, libraryPosterScreens) {
+        if (CustomPosterScreen.CONTINUE_WATCHING in libraryPosterScreens) libraryPosterPattern else ""
+    }
+    val libraryContinueWatchingItems = remember(
+        watchProgressUiState.entries,
+        watchProgressUiState.hiddenContentIds,
+        continueWatchingCutoffEpochMs,
+        cachedInProgressItems,
+        continueWatchingPreferences.sortMode,
+        cloudUiState,
+        cwPosterPattern,
+    ) {
+        val visibleEntries = filterEntriesForContinueWatchingWindow(
+            entries = watchProgressUiState.entries.filterNot { entry ->
+                entry.parentMetaId in watchProgressUiState.hiddenContentIds ||
+                    WatchProgressRepository.isDroppedShow(entry.parentMetaId)
+            },
+            cutoffEpochMs = continueWatchingCutoffEpochMs,
+        ).continueWatchingEntries(limit = HomeContinueWatchingMaxRecentProgressItems)
+        buildHomeContinueWatchingItems(
+            visibleEntries = visibleEntries,
+            cachedInProgressByProgressKey = cachedInProgressItems,
+            nextUpItemsBySeries = emptyMap(),
+            nextUpSuppressedSeriesIds = emptySet(),
+            sortMode = continueWatchingPreferences.sortMode,
+            todayIsoDate = CurrentDateProvider.todayIsoDate(),
+            cloudLibraryUiState = cloudUiState,
+        ).withCustomPosterUrls(cwPosterPattern)
+    }
+    LaunchedEffect(Unit) {
+        val authState = AuthRepository.state.value
+        if (authState !is AuthState.Authenticated || authState.isAnonymous) {
+            WatchProgressSourceCoordinator.ensureStarted()
+        }
+    }
     val displaySettings by remember {
         LibraryDisplaySettingsRepository.ensureLoaded()
         LibraryDisplaySettingsRepository.uiState
@@ -146,13 +236,9 @@ fun LibraryScreen(
         ServerRepository.ensureLoaded()
         ServerRepository.uiState
     }.collectAsStateWithLifecycle()
-    val hasServers = serversUiState.connections.any { it.enabled }
-    var sourceModeName by rememberSaveable { mutableStateOf(LibraryViewMode.Saved.name) }
-    val sourceMode = remember(sourceModeName, hasServers) {
-        runCatching { LibraryViewMode.valueOf(sourceModeName) }.getOrDefault(LibraryViewMode.Saved)
-            .takeUnless { it == LibraryViewMode.Servers && !hasServers }
-            ?: LibraryViewMode.Saved
-    }
+    // Cloud/servers source switching was removed from the UI; the Library screen
+    // always shows the saved library now.
+    val sourceMode = LibraryViewMode.Saved
     var serverShelves by remember { mutableStateOf<List<LibraryServerShelf>?>(null) }
     var serverShelvesRequest by remember { mutableStateOf(0) }
     var selectedProviderId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -362,15 +448,6 @@ fun LibraryScreen(
                                 }
                             },
                         )
-                        LibrarySourceSwitch(
-                            selectedMode = sourceMode,
-                            showServers = hasServers,
-                            onModeSelected = { mode ->
-                                sourceModeName = mode.name
-                            },
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
                     }
                 }
             }
@@ -477,6 +554,21 @@ fun LibraryScreen(
                     }
 
                     else -> {
+                        if (continueWatchingPreferences.isVisible && libraryContinueWatchingItems.isNotEmpty()) {
+                            item(key = "library_continue_watching", contentType = "continue_watching") {
+                                HomeContinueWatchingSection(
+                                    items = libraryContinueWatchingItems,
+                                    dataSourceKey = effectiveWatchProgressSource,
+                                    style = continueWatchingPreferences.style,
+                                    useEpisodeThumbnails = continueWatchingPreferences.useEpisodeThumbnails,
+                                    blurNextUp = continueWatchingPreferences.blurNextUp,
+                                    modifier = Modifier.padding(bottom = HomeContinueWatchingSectionBottomPadding),
+                                    onItemClick = onContinueWatchingClick,
+                                    onItemLongPress = onContinueWatchingLongPress,
+                                    disintegrationRequest = continueWatchingDisintegrationRequest,
+                                )
+                            }
+                        }
                         item(
                             key = "library-saved-controls:${uiState.sourceMode}:" +
                                 "${displaySettings.layoutMode}:$effectiveSortOption",
@@ -725,37 +817,6 @@ private fun LazyListScope.cloudLibrarySkeletonItems() {
 }
 
 @Composable
-private fun LibrarySourceSwitch(
-    selectedMode: LibraryViewMode,
-    showServers: Boolean,
-    onModeSelected: (LibraryViewMode) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        LibraryChip(
-            label = stringResource(Res.string.library_source_saved),
-            selected = selectedMode == LibraryViewMode.Saved,
-            onClick = { onModeSelected(LibraryViewMode.Saved) },
-        )
-        LibraryChip(
-            label = stringResource(Res.string.library_source_cloud),
-            selected = selectedMode == LibraryViewMode.Cloud,
-            onClick = { onModeSelected(LibraryViewMode.Cloud) },
-        )
-        if (showServers) {
-            LibraryChip(
-                label = stringResource(Res.string.library_source_servers),
-                selected = selectedMode == LibraryViewMode.Servers,
-                onClick = { onModeSelected(LibraryViewMode.Servers) },
-            )
-        }
-    }
-}
-
-@Composable
 private fun CloudLibraryToolbar(
     uiState: CloudLibraryUiState,
     selectedProviderId: String?,
@@ -843,41 +904,6 @@ private fun CloudLibraryToolbar(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun LibraryChip(
-    label: String,
-    selected: Boolean,
-    loading: Boolean = false,
-    error: Boolean = false,
-    onClick: () -> Unit,
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    Surface(
-        modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
-        color = if (selected) colorScheme.primaryContainer else colorScheme.surfaceContainerLow,
-        border = if (selected) BorderStroke(1.dp, colorScheme.primary.copy(alpha = 0.45f)) else null,
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier
-                .padding(horizontal = 14.dp, vertical = 8.dp)
-                .shimmer(loading),
-            style = MaterialTheme.typography.labelMedium,
-            color = when {
-                error -> colorScheme.error
-                selected -> colorScheme.onPrimaryContainer
-                else -> colorScheme.onSurfaceVariant
-            },
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 

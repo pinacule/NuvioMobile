@@ -1936,7 +1936,7 @@ private fun CachedNextUpItem.toContinueWatchingItem(
     )
 }
 
-private fun CachedInProgressItem.toContinueWatchingItem(): ContinueWatchingItem {
+internal fun CachedInProgressItem.toContinueWatchingItem(): ContinueWatchingItem {
     val explicitResumeProgressFraction = progressPercent
         ?.takeIf { duration <= 0L && it > 0f }
         ?.let { (it / 100f).coerceIn(0f, 1f) }

@@ -81,6 +81,12 @@ internal fun MainTabsDestination(
         val navBarGlowEnabled by ThemeSettingsRepository.navBarGlowEnabled.collectAsStateWithLifecycle()
         val floatingNavigationItems = listOf(
             FloatingNavigationItem(
+                selected = selectedTab == AppScreenTab.Library,
+                onClick = { onTabSelected(AppScreenTab.Library) },
+                drawable = Res.drawable.sidebar_library,
+                label = stringResource(Res.string.compose_nav_library),
+            ),
+            FloatingNavigationItem(
                 selected = selectedTab == AppScreenTab.Home,
                 onClick = { onTabSelected(AppScreenTab.Home) },
                 icon = Icons.Filled.Home,
@@ -91,12 +97,6 @@ internal fun MainTabsDestination(
                 onClick = { onTabSelected(AppScreenTab.Search) },
                 drawable = Res.drawable.sidebar_search,
                 label = stringResource(Res.string.compose_nav_search),
-            ),
-            FloatingNavigationItem(
-                selected = selectedTab == AppScreenTab.Library,
-                onClick = { onTabSelected(AppScreenTab.Library) },
-                drawable = Res.drawable.sidebar_library,
-                label = stringResource(Res.string.compose_nav_library),
             ),
             FloatingNavigationItem(
                 selected = selectedTab == AppScreenTab.Settings,
@@ -125,6 +125,12 @@ internal fun MainTabsDestination(
                 if (!isTabletLayout && !useNativeBottomTabs && navBarStyleSetting == NavBarStyle.CLASSIC) {
                     NuvioClassicNavigationBar {
                         NavItem(
+                            selected = selectedTab == AppScreenTab.Library,
+                            onClick = { onTabSelected(AppScreenTab.Library) },
+                            icon = Res.drawable.sidebar_library,
+                            contentDescription = stringResource(Res.string.compose_nav_library),
+                        )
+                        NavItem(
                             selected = selectedTab == AppScreenTab.Home,
                             onClick = { onTabSelected(AppScreenTab.Home) },
                             icon = Icons.Filled.Home,
@@ -135,12 +141,6 @@ internal fun MainTabsDestination(
                             onClick = { onTabSelected(AppScreenTab.Search) },
                             icon = Res.drawable.sidebar_search,
                             contentDescription = stringResource(Res.string.compose_nav_search),
-                        )
-                        NavItem(
-                            selected = selectedTab == AppScreenTab.Library,
-                            onClick = { onTabSelected(AppScreenTab.Library) },
-                            icon = Res.drawable.sidebar_library,
-                            contentDescription = stringResource(Res.string.compose_nav_library),
                         )
                         NavItem(
                             selected = selectedTab == AppScreenTab.Settings,

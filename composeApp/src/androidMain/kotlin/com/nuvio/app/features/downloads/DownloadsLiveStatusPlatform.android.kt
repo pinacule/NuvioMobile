@@ -214,14 +214,9 @@ internal actual object DownloadsLiveStatusPlatform {
             return runBlocking { getString(Res.string.downloads_torrent_finding_peers) }
         }
         if (P2pSettingsRepository.uiState.value.hideTorrentStats) return null
-        return runBlocking {
-            getString(
-                Res.string.downloads_torrent_swarm,
-                formatP2pSpeed(swarm.downloadSpeedBytesPerSecond),
-                swarm.peers,
-                swarm.seeds,
-            )
-        }
+        // Peer/seed counts are engine-global (every torrent the engine serves), not per-episode,
+        // so only this episode's own speed is shown here — same as the Downloads screen card.
+        return formatP2pSpeed(swarm.downloadSpeedBytesPerSecond)
     }
 
     private fun formatBytes(bytes: Long): String {

@@ -255,6 +255,7 @@ internal fun PlayerScreenRuntime.applyUserPlaybackSpeed(speed: Float) {
     if (partyBlocksControl()) return
     val next = roundPlaybackSpeed(speed)
     partyRateNudge = null
+    manualPlaybackSpeed = next
     playerController?.setPlaybackSpeed(next)
     publishPartyPlayback(rate = next)
     controlsVisible = true

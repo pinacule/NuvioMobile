@@ -21,9 +21,9 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 internal enum class NativeNavigationTab {
+    Library,
     Home,
     Search,
-    Library,
     Settings,
     ;
 

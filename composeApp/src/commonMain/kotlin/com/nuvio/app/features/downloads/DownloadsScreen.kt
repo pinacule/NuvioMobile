@@ -167,7 +167,9 @@ private fun LazyListScope.downloadsRootContent(
     onOpenShow: (showId: String, title: String) -> Unit,
     onDeleteDownload: (String) -> Unit,
 ) {
-    val activeItems = uiState.activeItems
+    // Displayed in queue order (first episode first), matching the order transfer slots are
+    // handed out in.
+    val activeItems = uiState.activeItems.sortedForSeriesDownloads()
     val completedMovies = uiState.completedItems.filterNot(DownloadItem::isEpisode)
     val completedShows = uiState.completedItems
         .filter(DownloadItem::isEpisode)
@@ -200,6 +202,7 @@ private fun LazyListScope.downloadsRootContent(
         items(items = activeItems, key = { it.id }) { item ->
             ActiveDownloadCard(
                 item = item,
+                onPlay = { onOpenDownload(item) },
                 onPause = { DownloadsRepository.pauseDownload(item.id) },
                 onResume = { DownloadsRepository.resumeDownload(item.id) },
                 onRetry = { DownloadsRepository.retryDownload(item.id) },
@@ -319,6 +322,7 @@ private fun DownloadsSummary(uiState: DownloadsUiState) {
 @Composable
 private fun ActiveDownloadCard(
     item: DownloadItem,
+    onPlay: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onRetry: () -> Unit,
@@ -330,11 +334,18 @@ private fun ActiveDownloadCard(
     val estimatedSpeed = rememberTransferSpeed(item)
     val speed = swarm?.downloadSpeedBytesPerSecond ?: estimatedSpeed
     val queued = swarm?.phase == TorrentDownloadPhase.Queued
+    // In-progress torrents can play progressively from the partial data; the tap handler routes
+    // them through the P2P engine, which reuses the download's torrent.
+    val canWatchNow = item.isTorrent &&
+        !item.torrentInfoHash.isNullOrBlank() &&
+        (item.status == DownloadStatus.Downloading || item.status == DownloadStatus.Paused) &&
+        p2pSettings.p2pEnabled
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clickable(enabled = canWatchNow, onClick = onPlay),
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
@@ -343,11 +354,24 @@ private fun ActiveDownloadCard(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Artwork(
-                    url = item.episodeThumbnail ?: item.background ?: item.poster,
-                    width = 112.dp,
-                    aspectRatio = 16f / 9f,
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    Artwork(
+                        url = item.episodeThumbnail ?: item.background ?: item.poster,
+                        width = 112.dp,
+                        aspectRatio = 16f / 9f,
+                    )
+                    if (canWatchNow) {
+                        Icon(
+                            imageVector = Icons.Rounded.PlayArrow,
+                            contentDescription = stringResource(Res.string.action_play),
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(22.dp))
+                                .padding(8.dp),
+                        )
+                    }
+                }
                 Spacer(Modifier.width(12.dp))
                 Column(
                     modifier = Modifier.weight(1f),
@@ -466,7 +490,9 @@ private fun progressLine(item: DownloadItem, total: Long?, speed: Long?): String
     }
 }
 
-/** Swarm line for running torrents: queued, finding peers, or peer and seed counts. */
+/** Swarm line for running torrents: queued, finding peers, or the current speed. Peer and seed
+ * counts are deliberately not shown: the engine only reports them globally (across every torrent
+ * it serves), so per-episode counts next to a per-episode speed would be misleading. */
 @Composable
 private fun torrentSwarmText(item: DownloadItem, swarm: TorrentDownloadSwarm?, hideStats: Boolean): String? {
     val findingPeersText = stringResource(Res.string.downloads_torrent_finding_peers)
@@ -475,16 +501,8 @@ private fun torrentSwarmText(item: DownloadItem, swarm: TorrentDownloadSwarm?, h
     return when (swarm.phase) {
         TorrentDownloadPhase.Queued -> queuedText
         TorrentDownloadPhase.FindingPeers -> findingPeersText
-        TorrentDownloadPhase.Downloading -> if (hideStats) {
-            null
-        } else {
-            stringResource(
-                Res.string.downloads_torrent_swarm,
-                formatP2pSpeed(swarm.downloadSpeedBytesPerSecond),
-                swarm.peers,
-                swarm.seeds,
-            )
-        }
+        TorrentDownloadPhase.Downloading ->
+            if (hideStats) null else formatP2pSpeed(swarm.downloadSpeedBytesPerSecond)
     }
 }
 

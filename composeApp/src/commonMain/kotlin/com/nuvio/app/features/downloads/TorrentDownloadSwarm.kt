@@ -15,6 +15,12 @@ enum class TorrentDownloadPhase {
 }
 
 /**
+ * Engine-owner prefix for active torrent downloads: each transfer acquires the shared engine as
+ * `"download:<download id>"`. Weak `warmup:*` owners use a different prefix and never collide.
+ */
+internal const val TORRENT_DOWNLOAD_OWNER_PREFIX = "download:"
+
+/**
  * Live swarm figures for a running torrent download. Speed is measured from the bytes this download
  * writes; peer and seed counts come from the engine and cover every torrent it is serving.
  */

@@ -3,9 +3,9 @@ package com.nuvio.app
 import com.nuvio.app.core.ui.NativeNavigationTab
 
 enum class AppScreenTab {
+    Library,
     Home,
     Search,
-    Library,
     Settings,
     ;
 

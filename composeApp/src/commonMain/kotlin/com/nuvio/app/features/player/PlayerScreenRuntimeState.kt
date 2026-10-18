@@ -135,6 +135,14 @@ internal class PlayerScreenRuntime(
     var playbackSnapshotKey by mutableStateOf<PlaybackKey?>(null)
     var playerController by mutableStateOf<PlayerEngineController?>(null)
     var playerControllerSourceUrl by mutableStateOf<String?>(null)
+    /**
+     * The [PlaybackKey] the controller's speed was last applied for. A new playback starts
+     * at the user's saved default speed; a recreated controller mid-playback (engine
+     * switch / source refresh) keeps the speed the user actually had instead of resetting.
+     */
+    var playbackSpeedControllerKey: PlaybackKey? = null
+    /** Speed the user picked manually this playback (via the speed sheet); null = default. */
+    var manualPlaybackSpeed: Float? = null
     var errorMessage by mutableStateOf<String?>(null)
     var isScrubbingTimeline by mutableStateOf(false)
     var scrubbingPositionMs by mutableStateOf<Long?>(null)

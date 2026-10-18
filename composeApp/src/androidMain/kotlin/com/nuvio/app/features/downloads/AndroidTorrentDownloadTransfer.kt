@@ -16,7 +16,9 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.downloads_torrent_missing_hash
@@ -26,6 +28,13 @@ import org.jetbrains.compose.resources.getString
 
 private const val TAG = "TorrentDownload"
 private const val SWARM_SAMPLE_INTERVAL_MS = 1_000L
+/**
+ * Samples kept for the rolling speed average. The loopback read stalls for a sample whenever the
+ * next sequential piece has not arrived yet, so a single 1 s window regularly reads 0 B/s even
+ * while the engine pulls other pieces at full speed. Averaging over [SPEED_WINDOW_SAMPLES]
+ * windows shows the sustained rate instead of that sawtooth.
+ */
+private const val SPEED_WINDOW_SAMPLES = 5
 private const val STALL_TIMEOUT_MS = 10L * 60L * 1_000L
 private const val LOOPBACK_RETRIES_WITHOUT_PROGRESS = 3
 private const val LOOPBACK_RETRY_DELAY_MS = 2_000L
@@ -35,7 +44,52 @@ private const val LOOPBACK_RETRY_DELAY_MS = 2_000L
  * split the bandwidth across every episode, so the rest wait in a queue.
  */
 private const val MAX_CONCURRENT_TORRENT_DOWNLOADS = 2
-private val torrentDownloadSlots = Semaphore(MAX_CONCURRENT_TORRENT_DOWNLOADS)
+internal val torrentDownloadSlots = Semaphore(MAX_CONCURRENT_TORRENT_DOWNLOADS)
+
+/**
+ * Hands out torrent download slots in series-episode order (E1 before E2, ...). Workers start in
+ * whatever order WorkManager/JobScheduler runs them, so a bare semaphore would let a later
+ * episode grab a free slot first; the ordered queue guarantees first-episode-first no matter the
+ * arrival order.
+ *
+ * Entries are (item, token): the token identifies one acquire attempt so a cancelled attempt
+ * removes exactly its own entry. The queue is in-memory only; across a process restart workers
+ * re-insert themselves in episode order as they arrive.
+ */
+private val torrentSlotQueueMutex = Mutex()
+private val torrentSlotQueue = ArrayDeque<Pair<DownloadItem, Any>>()
+private const val TORRENT_SLOT_POLL_MS = 250L
+
+internal suspend fun acquireOrderedTorrentSlot(item: DownloadItem, token: Any) {
+    torrentSlotQueueMutex.withLock {
+        val queue = torrentSlotQueue
+        val index = queue.indexOfFirst { (queued, _) ->
+            downloadSeriesEpisodeComparator.compare(item, queued) < 0
+        }
+        if (index < 0) queue.addLast(item to token) else queue.add(index, item to token)
+    }
+    try {
+        while (true) {
+            val acquired = torrentSlotQueueMutex.withLock {
+                if (torrentSlotQueue.firstOrNull()?.let { (head, _) -> head.id == item.id } == true &&
+                    torrentDownloadSlots.tryAcquire()
+                ) {
+                    torrentSlotQueue.removeFirst()
+                    true
+                } else {
+                    false
+                }
+            }
+            if (acquired) return
+            delay(TORRENT_SLOT_POLL_MS)
+        }
+    } catch (cancellation: CancellationException) {
+        torrentSlotQueueMutex.withLock {
+            torrentSlotQueue.removeAll { (_, queuedToken) -> queuedToken === token }
+        }
+        throw cancellation
+    }
+}
 
 /**
  * The engine's loopback server blocks a read until the pieces behind it are verified, so a slow swarm
@@ -64,7 +118,7 @@ internal suspend fun transferTorrentDownload(
 ): File {
     val infoHash = item.torrentInfoHash?.takeIf { it.isNotBlank() }
         ?: throw TorrentDownloadException(getString(Res.string.downloads_torrent_missing_hash))
-    val owner = "download:${item.id}"
+    val owner = "$TORRENT_DOWNLOAD_OWNER_PREFIX${item.id}"
     // Identifies this attempt so a superseded attempt's cleanup cannot wipe a newer attempt's stats.
     val attempt = Any()
     var engine: NuvioEngine? = null
@@ -74,8 +128,10 @@ internal suspend fun transferTorrentDownload(
     // once this file is done or the torrent itself failed.
     var finished = false
     TorrentDownloadSwarmRepository.publish(item.id, TorrentDownloadSwarm(TorrentDownloadPhase.Queued), attempt)
+    var slotAcquired = false
     try {
-        torrentDownloadSlots.acquire()
+        acquireOrderedTorrentSlot(item, attempt)
+        slotAcquired = true
     } catch (cancellation: CancellationException) {
         TorrentDownloadSwarmRepository.clear(item.id, attempt)
         throw cancellation
@@ -164,7 +220,8 @@ internal suspend fun transferTorrentDownload(
             torrentLease?.let { NuvioEngineHost.releaseTorrent(it, removeWhenUnused = finished) }
             NuvioEngineHost.releaseEngine(owner)
             TorrentDownloadSwarmRepository.clear(item.id, attempt)
-            torrentDownloadSlots.release()
+            // A cancelled wait never held a permit; releasing one would inflate the semaphore.
+            if (slotAcquired) torrentDownloadSlots.release()
         }
     }
 }
@@ -186,8 +243,13 @@ private suspend fun resolveFileExtension(
 }
 
 /**
- * Publishes swarm figures every second and fails the transfer when no bytes arrive for
+ * Publishes smoothed swarm figures every second and fails the transfer when no bytes arrive for
  * [STALL_TIMEOUT_MS], which also covers a torrent whose metadata never arrives.
+ *
+ * The published speed is a rolling average over the last [SPEED_WINDOW_SAMPLES] samples rather
+ * than the raw 1 s delta: the loopback read blocks until the next sequential piece is verified,
+ * so a single sample often reads 0 B/s mid-download. Stall detection still uses the raw
+ * progress, so a genuinely stuck torrent fails exactly as before.
  */
 private suspend fun sampleSwarm(
     downloadId: String,
@@ -198,18 +260,24 @@ private suspend fun sampleSwarm(
     var lastBytes = writtenBytes.get()
     var lastSampleAt = SystemClock.elapsedRealtime()
     var lastProgressAt = lastSampleAt
+    val recentSamples = ArrayDeque<Pair<Long, Long>>()
     while (true) {
         delay(SWARM_SAMPLE_INTERVAL_MS)
         val now = SystemClock.elapsedRealtime()
         val bytes = writtenBytes.get()
         val delta = if (bytes >= 0L && lastBytes >= 0L) (bytes - lastBytes).coerceAtLeast(0L) else 0L
-        val speed = delta * 1_000L / (now - lastSampleAt).coerceAtLeast(1L)
         if (delta > 0L || (bytes >= 0L && lastBytes < 0L)) {
             // The first progress report is the resume offset; the stall clock restarts from there too.
             lastProgressAt = now
         }
         lastBytes = bytes
+        val sampleMs = (now - lastSampleAt).coerceAtLeast(1L)
         lastSampleAt = now
+        recentSamples.addLast(delta to sampleMs)
+        while (recentSamples.size > SPEED_WINDOW_SAMPLES) recentSamples.removeFirst()
+        val windowBytes = recentSamples.sumOf { it.first }
+        val windowMs = recentSamples.sumOf { it.second }.coerceAtLeast(1L)
+        val speed = windowBytes * 1_000L / windowMs
         TorrentDownloadSwarmRepository.publish(downloadId, swarmFrom(engine, speed), attempt)
         if (now - lastProgressAt >= STALL_TIMEOUT_MS) {
             throw TorrentDownloadException(getString(Res.string.downloads_torrent_stalled))
