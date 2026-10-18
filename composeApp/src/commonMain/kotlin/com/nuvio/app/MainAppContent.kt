@@ -830,52 +830,6 @@ internal fun MainAppContent(
             }
         }
 
-        fun openDownloadedItem(item: DownloadItem) {
-            val completedUrl = DownloadsRepository.playableLocalFileUri(item)
-            if (completedUrl == null) {
-                openInProgressTorrentDownload(item)
-                return
-            }
-            val sourceUrl = completedUrl
-            val resumeEntry = item.videoId
-                .takeIf { it.isNotBlank() }
-                ?.let(WatchProgressRepository::progressForVideo)
-                ?.takeIf { it.isResumable }
-
-            val playerLaunch = PlayerLaunch(
-                profileId = activePlaybackProfileId,
-                title = item.title,
-                sourceUrl = sourceUrl,
-                sourceHeaders = emptyMap(),
-                sourceResponseHeaders = emptyMap(),
-                externalSubtitles = DownloadSubtitles.localSubtitles(sourceUrl),
-                streamType = null,
-                logo = item.logo,
-                poster = item.poster,
-                background = item.background,
-                seasonNumber = item.seasonNumber,
-                episodeNumber = item.episodeNumber,
-                episodeTitle = item.episodeTitle,
-                episodeThumbnail = item.episodeThumbnail,
-                streamTitle = item.streamTitle,
-                streamSubtitle = item.streamSubtitle,
-                providerName = item.providerName,
-                providerAddonId = item.providerAddonId,
-                contentType = item.contentType,
-                videoId = item.videoId,
-                parentMetaId = item.parentMetaId,
-                parentMetaType = item.parentMetaType,
-                initialPositionMs = resumeEntry?.lastPositionMs?.takeIf { it > 0L } ?: 0L,
-                initialProgressFraction = resumeEntry?.progressFraction?.takeIf { it > 0f },
-            )
-            if (playerSettingsUiState.externalPlayerEnabled) {
-                coroutineScope.launch { openExternalPlayback(playerLaunch) }
-                return
-            }
-            val launchId = PlayerLaunchStore.put(playerLaunch)
-            navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
-        }
-
         /**
          * Starts playback of a torrent that is still downloading, streaming progressively from the
          * partial data through the P2P engine. The engine reuses the download's torrent (it is
@@ -938,6 +892,52 @@ internal fun MainAppContent(
             )
             // External players cannot consume the engine's loopback stream through the intent
             // flow, so in-progress torrents always play in the internal player.
+            val launchId = PlayerLaunchStore.put(playerLaunch)
+            navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
+        }
+
+        fun openDownloadedItem(item: DownloadItem) {
+            val completedUrl = DownloadsRepository.playableLocalFileUri(item)
+            if (completedUrl == null) {
+                openInProgressTorrentDownload(item)
+                return
+            }
+            val sourceUrl = completedUrl
+            val resumeEntry = item.videoId
+                .takeIf { it.isNotBlank() }
+                ?.let(WatchProgressRepository::progressForVideo)
+                ?.takeIf { it.isResumable }
+
+            val playerLaunch = PlayerLaunch(
+                profileId = activePlaybackProfileId,
+                title = item.title,
+                sourceUrl = sourceUrl,
+                sourceHeaders = emptyMap(),
+                sourceResponseHeaders = emptyMap(),
+                externalSubtitles = DownloadSubtitles.localSubtitles(sourceUrl),
+                streamType = null,
+                logo = item.logo,
+                poster = item.poster,
+                background = item.background,
+                seasonNumber = item.seasonNumber,
+                episodeNumber = item.episodeNumber,
+                episodeTitle = item.episodeTitle,
+                episodeThumbnail = item.episodeThumbnail,
+                streamTitle = item.streamTitle,
+                streamSubtitle = item.streamSubtitle,
+                providerName = item.providerName,
+                providerAddonId = item.providerAddonId,
+                contentType = item.contentType,
+                videoId = item.videoId,
+                parentMetaId = item.parentMetaId,
+                parentMetaType = item.parentMetaType,
+                initialPositionMs = resumeEntry?.lastPositionMs?.takeIf { it > 0L } ?: 0L,
+                initialProgressFraction = resumeEntry?.progressFraction?.takeIf { it > 0f },
+            )
+            if (playerSettingsUiState.externalPlayerEnabled) {
+                coroutineScope.launch { openExternalPlayback(playerLaunch) }
+                return
+            }
             val launchId = PlayerLaunchStore.put(playerLaunch)
             navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
         }
