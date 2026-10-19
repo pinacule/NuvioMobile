@@ -116,8 +116,6 @@ internal fun PlayerControlsShell(
     onAudioClick: () -> Unit,
     onVideoSettingsClick: (() -> Unit)? = null,
     onSourcesClick: (() -> Unit)? = null,
-    onQualityClick: (() -> Unit)? = null,
-    qualityLabel: String? = null,
     onEpisodesClick: (() -> Unit)? = null,
     onOpenInExternalPlayer: (() -> Unit)? = null,
     onSubmitIntroClick: (() -> Unit)? = null,
