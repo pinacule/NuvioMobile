@@ -57,7 +57,7 @@ internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem
     for (quality in orderQualitiesByCloseness(qualities, targetQuality)) {
         for ((group, stream) in usable) {
             if (stream.streamResolution() != quality) continue
-            val resolved = SeasonDownloads.resolvePlayable(stream, item.seasonNumber, item.episodeNumber)
+            val resolved = SeasonDownloads.resolvePlayable(stream, item.seasonNumber ?: 0, item.episodeNumber)
                 ?: continue
             val freshUrl = resolved.playableDirectUrl?.trim()
                 ?.takeIf { it.isSupportedDownloadUrl() && it != deadUrl }
