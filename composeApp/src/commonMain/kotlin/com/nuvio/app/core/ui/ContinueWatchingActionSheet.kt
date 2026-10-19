@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
@@ -35,6 +36,7 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.cw_action_go_to_details
 import nuvio.composeapp.generated.resources.cw_action_remove
 import nuvio.composeapp.generated.resources.cw_action_start_from_beginning
+import nuvio.composeapp.generated.resources.hero_download
 import nuvio.composeapp.generated.resources.play_manually
 import org.jetbrains.compose.resources.stringResource
 
@@ -48,6 +50,7 @@ fun NuvioContinueWatchingActionSheet(
     onOpenDetails: () -> Unit,
     onStartFromBeginning: (() -> Unit)? = null,
     onPlayManually: (() -> Unit)? = null,
+    onDownload: (() -> Unit)? = null,
     onRemove: () -> Unit,
 ) {
     if (item == null) return
@@ -96,6 +99,13 @@ fun NuvioContinueWatchingActionSheet(
                     icon = Icons.Default.Replay,
                     title = stringResource(Res.string.cw_action_start_from_beginning),
                     onClick = { dismissAfter(onStartFromBeginning) },
+                )
+            }
+            if (onDownload != null) {
+                NuvioBottomSheetActionRow(
+                    icon = Icons.Default.Download,
+                    title = stringResource(Res.string.hero_download),
+                    onClick = { dismissAfter(onDownload) },
                 )
             }
             NuvioBottomSheetActionRow(

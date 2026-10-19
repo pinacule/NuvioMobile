@@ -187,6 +187,8 @@ internal class PlayerScreenRuntime(
     var showParentalGuide by mutableStateOf(false)
     var parentalGuideHasShown by mutableStateOf(false)
     var playbackStartedForParentalGuide by mutableStateOf(false)
+    /** Identity key of the last playback item evaluated for library auto-add. */
+    var libraryAutoAddEvaluatedKey: String? = null
     var nextEpisodeInfo by mutableStateOf<NextEpisodeInfo?>(null)
     var showNextEpisodeCard by mutableStateOf(false)
     var nextEpisodeCardDismissed by mutableStateOf(false)
@@ -205,6 +207,7 @@ internal class PlayerScreenRuntime(
 
     var showAudioModal by mutableStateOf(false)
     var showSpeedModal by mutableStateOf(false)
+    var showQualityModal by mutableStateOf(false)
     var showSubtitleModal by mutableStateOf(false)
     var showVideoSettingsModal by mutableStateOf(false)
     var showStreamInfo by mutableStateOf(false)

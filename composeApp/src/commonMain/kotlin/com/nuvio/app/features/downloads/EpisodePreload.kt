@@ -1,11 +1,15 @@
 package com.nuvio.app.features.downloads
 
+import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.device.DataSaverRepository
 import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.PlayerScreenRuntime
+import com.nuvio.app.features.player.addonSubtitleRequests
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
 import com.nuvio.app.features.streams.AdaptiveStreamPicker
+import com.nuvio.app.features.streams.StreamItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,7 +43,7 @@ object EpisodePreloadPolicy {
     }
 }
 
-/** One-shot background download of the next episode at the adaptive quality. */
+/** One-shot silent preload of the next episode at the adaptive quality. */
 internal object EpisodePreloader {
     suspend fun preloadNextEpisode(
         contentType: String,
@@ -54,12 +58,17 @@ internal object EpisodePreloader {
         episodeNumber: Int,
         preferredAddonId: String?,
         targetQuality: String,
+        /** Currently playing video id: its cache entry is never evicted. */
+        currentVideoId: String?,
     ) {
         val next = PlayerNextEpisodeRules.resolveNextEpisode(videos, seasonNumber, episodeNumber)
             ?.takeIf { it.available }
             ?: return
         val nextSeason = next.season ?: return
         val nextEpisode = next.episode ?: return
+        // Already silently cached (and still on disk).
+        if (PreloadCache.lookup(next.id) != null) return
+        // Already downloaded for real: the Downloads path owns playback.
         DownloadsRepository.ensureLoaded()
         if (DownloadsRepository.hasActiveOrCompletedDownload(parentMetaId, nextSeason, nextEpisode)) return
         val groups = EpisodeDownloadPlanner.fetchAddonStreams(contentType, next.id, preferredAddonId)
@@ -69,8 +78,7 @@ internal object EpisodePreloader {
             targetQuality,
         ) ?: return
         val template = EpisodeDownloadPlanner.pickBestStreamAtQuality(allStreams, quality) ?: return
-        val manifest = groups.firstOrNull { it.addonId == template.addonId }?.manifest ?: return
-        val result = SeasonDownloads.enqueueVideos(
+        val request = buildPreloadRequest(
             contentType = contentType,
             parentMetaId = parentMetaId,
             parentMetaType = parentMetaType,
@@ -78,21 +86,103 @@ internal object EpisodePreloader {
             logo = logo,
             poster = poster,
             background = background,
-            targets = listOf(next),
-            addon = manifest,
-            template = template,
-            templateVideoId = next.id,
-            isPreload = true,
-        )
-        if (result is SeasonDownloadResult.Queued && result.queued > 0) {
-            EpisodePreloadWatcher.ensureWatching()
+            video = next,
+            stream = template,
+            quality = quality,
+            currentVideoId = currentVideoId,
+        ) ?: return
+        PreloadCacheFetcher.start(request)
+        EpisodePreloadWatcher.ensureWatching()
+    }
+
+    /**
+     * Builds the synthetic [DownloadItem] for the cache fetch. It is never
+     * registered in [DownloadsRepository]: nothing shows in the Downloads UI.
+     * Null when the stream cannot be fetched as a file.
+     */
+    private fun buildPreloadRequest(
+        contentType: String,
+        parentMetaId: String,
+        parentMetaType: String,
+        title: String,
+        logo: String?,
+        poster: String?,
+        background: String?,
+        video: MetaVideo,
+        stream: StreamItem,
+        quality: String,
+        currentVideoId: String?,
+    ): PreloadFetchRequest? {
+        val directUrl = stream.playableDirectUrl
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val torrentSource = if (directUrl == null) stream.torrentDownloadSource() else null
+        if (torrentSource != null) {
+            if (!AppFeaturePolicy.p2pDownloadsEnabled) return null
+            P2pSettingsRepository.ensureLoaded()
+            if (!P2pSettingsRepository.uiState.value.p2pEnabled) return null
+        } else if (directUrl == null) {
+            return null
+        } else if (!directUrl.isSupportedDownloadUrl()) {
+            return null
         }
+        val sourceUrl = directUrl ?: torrentSource!!.magnetUri
+        val extension = if (torrentSource != null) {
+            torrentSource.filenameHint?.mediaFileExtensionOrNull() ?: TORRENT_FALLBACK_EXTENSION
+        } else {
+            sourceUrl.fileExtensionFromUrl()
+        }
+        // No path separators: platform transfers require a bare file name.
+        val fileName = "preload_${video.id.sanitizeFileName()}.$extension"
+        val now = DownloadsClock.nowEpochMs()
+        val item = DownloadItem(
+            id = "preload-$now-${video.id.sanitizeFileName()}",
+            contentType = contentType,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
+            videoId = video.id,
+            title = title,
+            logo = logo,
+            poster = poster,
+            background = background,
+            seasonNumber = video.season,
+            episodeNumber = video.episode,
+            episodeTitle = video.title,
+            episodeThumbnail = video.thumbnail,
+            streamTitle = stream.streamLabel,
+            streamSubtitle = stream.streamSubtitle,
+            providerName = stream.addonName,
+            providerAddonId = stream.addonId,
+            sourceUrl = sourceUrl,
+            sourceKind = if (torrentSource != null) DownloadSourceKind.Torrent else DownloadSourceKind.Http,
+            torrentInfoHash = torrentSource?.infoHash,
+            torrentFileIdx = torrentSource?.fileIdx,
+            torrentTrackers = torrentSource?.trackers.orEmpty(),
+            torrentFilenameHint = torrentSource?.filenameHint,
+            sourceHeaders = sanitizeRequestHeaders(stream.behaviorHints.proxyHeaders?.request),
+            subtitleRequests = addonSubtitleRequests(contentType, video.id),
+            sourceSubtitles = stream.externalSubtitles,
+            fileName = fileName,
+            status = DownloadStatus.Downloading,
+            createdAtEpochMs = now,
+            updatedAtEpochMs = now,
+        )
+        return PreloadFetchRequest(
+            item = item,
+            fileName = fileName,
+            videoId = video.id,
+            parentMetaId = parentMetaId,
+            seasonNumber = video.season,
+            episodeNumber = video.episode,
+            quality = quality,
+            exceptVideoId = currentVideoId,
+        )
     }
 }
 
 /**
- * Pauses active preload downloads when the network turns cellular and resumes
- * them when WiFi returns. Stops itself once no preload download is active.
+ * Pauses the active preload fetch when the network turns cellular and resumes
+ * it when WiFi returns. Stops itself once no fetch is active or paused.
  *
  * NOTE: calls DeviceEnvironment, which is provided by the playback worker's
  * expect/actual (see batch-11 spec); this file only calls it.
@@ -100,34 +190,20 @@ internal object EpisodePreloader {
 internal object EpisodePreloadWatcher {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var watchJob: Job? = null
-    private val pausedByWatcher = mutableSetOf<String>()
 
     fun ensureWatching() {
         if (watchJob?.isActive == true) return
         watchJob = scope.launch {
             while (currentCoroutineContext().isActive) {
                 delay(5_000)
-                DownloadsRepository.ensureLoaded()
-                val active = DownloadsRepository.uiState.value.items
-                    .filter { it.isPreload && (it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Paused) }
-                if (active.isEmpty()) break
                 val cellular = runCatching { DeviceEnvironment.isCellular() }.getOrDefault(false)
                 val wifi = runCatching { DeviceEnvironment.isWifi() }.getOrDefault(false)
                 if (cellular) {
-                    active.filter { it.status == DownloadStatus.Downloading }.forEach {
-                        DownloadsRepository.pauseDownload(it.id)
-                        pausedByWatcher.add(it.id)
-                    }
+                    PreloadCacheFetcher.pause()
                 } else if (wifi) {
-                    pausedByWatcher.toList().forEach { id ->
-                        val item = DownloadsRepository.uiState.value.items.firstOrNull { it.id == id }
-                        if (item != null && item.isPreload && item.status == DownloadStatus.Paused) {
-                            DownloadsRepository.resumeDownload(id)
-                        } else {
-                            pausedByWatcher.remove(id)
-                        }
-                    }
+                    PreloadCacheFetcher.resume()
                 }
+                if (!PreloadCacheFetcher.hasActiveFetch && !PreloadCacheFetcher.hasPausedFetch) break
             }
             watchJob = null
         }
@@ -181,7 +257,23 @@ internal fun PlayerScreenRuntime.maybePreloadNextEpisodeDownload() {
                 episodeNumber = episode,
                 preferredAddonId = activeProviderAddonId,
                 targetQuality = targetQuality,
+                currentVideoId = videoKey,
             )
         }
+    }
+}
+
+/**
+ * Called from [persistPlaybackProgressTick]; drops the silent cache for the
+ * current episode once it counts as watched (>= 80%, same threshold as the
+ * scrobble outbox) so the cache never piles up.
+ */
+internal fun PlayerScreenRuntime.maybeEvictWatchedPreloadCache() {
+    val videoId = activeVideoId?.takeIf { it.isNotBlank() } ?: return
+    val durationMs = playbackSnapshot.durationMs
+    if (durationMs <= 0L) return
+    val fraction = playbackSnapshot.positionMs.toFloat() / durationMs.toFloat()
+    if (fraction >= 0.8f) {
+        PreloadCache.onEpisodeWatched(videoId)
     }
 }

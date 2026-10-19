@@ -18,13 +18,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.device.DataSaverRepository
+import com.nuvio.app.features.downloads.EpisodeDownloadPlanner
 import com.nuvio.app.features.p2p.P2pStreamingState
-import com.nuvio.app.features.party.PartyRepository
 import com.nuvio.app.features.p2p.formatP2pMegabytes
 import com.nuvio.app.features.p2p.formatP2pSpeed
+import com.nuvio.app.features.party.PartyRepository
 import com.nuvio.app.features.player.skip.internalSkipAction
 import com.nuvio.app.features.servers.ServerStreams
 import com.nuvio.app.features.streams.streamAddonInstanceId
+import com.nuvio.app.features.streams.streamResolution
 import com.nuvio.app.isIos
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.*
@@ -366,6 +368,8 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
                 null
             },
             onSourcesClick = if (activeVideoId != null) { { openSourcesPanel() } } else null,
+            onQualityClick = if (activeVideoId != null) { { openQualityModal() } } else null,
+            qualityLabel = activeStream?.streamResolution(),
             onEpisodesClick = if (isSeries) { { openEpisodesPanel() } } else null,
             onOpenInExternalPlayer = args.onOpenInExternalPlayer
                 ?.takeUnless { ServerStreams.isServerSourceId(activeProviderAddonId) }
@@ -540,6 +544,14 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
         onSpeedChanged = { applyUserPlaybackSpeed(it) },
         onMakeDefault = { PlayerSettingsRepository.setDefaultPlaybackSpeed(it) },
         onDismiss = { showSpeedModal = false },
+    )
+    PlayerQualityModal(
+        visible = showQualityModal,
+        currentQuality = activeStream?.streamResolution(),
+        qualities = EpisodeDownloadPlanner.distinctQualities(sourceStreamsState.allStreams),
+        isLoading = sourceStreamsState.isAnyLoading,
+        onQualitySelected = { switchToQuality(it) },
+        onDismiss = { showQualityModal = false },
     )
     PlayerScreenModalHosts(
         pendingP2pSwitch = pendingP2pSwitch,

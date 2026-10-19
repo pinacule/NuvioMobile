@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
@@ -103,6 +104,8 @@ internal fun PlayerControlActions(
     onSubtitleClick: () -> Unit,
     onAudioClick: () -> Unit,
     onSourcesClick: (() -> Unit)?,
+    onQualityClick: (() -> Unit)?,
+    qualityLabel: String?,
     onEpisodesClick: (() -> Unit)?,
     onNextEpisodeClick: (() -> Unit)?,
     onSwitchEngineClick: (() -> Unit)?,
@@ -138,6 +141,19 @@ internal fun PlayerControlActions(
             PlayerControlAction(
                 stringResource(Res.string.compose_player_sources), it,
                 painter = appIconPainter(AppIconResource.PlayerSource),
+            )
+        },
+        onQualityClick?.let {
+            PlayerControlAction(
+                buildString {
+                    append(stringResource(Res.string.downloads_options_quality))
+                    qualityLabel?.takeIf { label -> label.isNotBlank() }?.let { label ->
+                        append(" ")
+                        append(label)
+                    }
+                },
+                it,
+                icon = Icons.Rounded.HighQuality,
             )
         },
         onEpisodesClick?.let {

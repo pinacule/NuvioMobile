@@ -5,19 +5,30 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.features.details.MetaDetailsScreen
 import com.nuvio.app.features.details.PersonDetailScreen
 import com.nuvio.app.features.details.TmdbEntityBrowseScreen
 import com.nuvio.app.features.home.MetaPreview
+import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.p2p.acquireP2pEngineWarmup
+import com.nuvio.app.features.p2p.releaseP2pEngineWarmup
 import com.nuvio.app.features.tmdb.TmdbEntityKind
 import com.nuvio.app.features.tmdb.TmdbService
 import com.nuvio.app.navigation.DetailRoute
 import com.nuvio.app.navigation.EntityBrowseRoute
 import com.nuvio.app.navigation.NuvioNavigator
 import com.nuvio.app.navigation.PersonDetailRoute
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.person_role_creator
 import nuvio.composeapp.generated.resources.person_role_director
@@ -75,6 +86,25 @@ internal fun DetailsDestination(
 ) {
     val onBack = rememberGuardedPopBackStack(navController, route)
     val onOpenMeta = rememberOpenMeta(navController)
+    // Speculative P2P engine warmup: the details screen is where playback starts
+    // from, and auto-play skips the sources list (which used to warm the engine),
+    // so hold a weak warmup lease while the details are open and P2P is enabled.
+    // Engine only — no torrent is added, nothing is downloaded; the lease is
+    // released when the screen is left and never starts the engine at app launch.
+    val p2pSettings by remember {
+        P2pSettingsRepository.ensureLoaded()
+        P2pSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val warmupEngine = P2pSettingsRepository.isVisible && p2pSettings.p2pEnabled
+    LaunchedEffect(warmupEngine) {
+        if (!warmupEngine) return@LaunchedEffect
+        val lease = withContext(Dispatchers.IO) { acquireP2pEngineWarmup() } ?: return@LaunchedEffect
+        try {
+            awaitCancellation()
+        } finally {
+            withContext(NonCancellable) { releaseP2pEngineWarmup(lease) }
+        }
+    }
     val directorRole = stringResource(Res.string.person_role_director)
     val writerRole = stringResource(Res.string.person_role_writer)
     val creatorRole = stringResource(Res.string.person_role_creator)

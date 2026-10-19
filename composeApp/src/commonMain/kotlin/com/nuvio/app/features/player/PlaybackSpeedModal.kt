@@ -5,8 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,8 +34,7 @@ import nuvio.composeapp.generated.resources.player_speed_default_badge
 import nuvio.composeapp.generated.resources.player_speed_make_default
 import org.jetbrains.compose.resources.stringResource
 
-/** Playback speed panel: a 1x–4x slider, one-tap presets and a button to keep the speed as default. */
-@OptIn(ExperimentalLayoutApi::class)
+/** Playback speed panel: a compact 1x–4x slider and a button to keep the speed as default. */
 @Composable
 fun PlaybackSpeedModal(
     visible: Boolean,
@@ -64,31 +61,31 @@ fun PlaybackSpeedModal(
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
-                    .width(minOf(maxWidth - 32.dp, 400.dp))
+                    .width(minOf(maxWidth - 96.dp, 280.dp))
                     .align(Alignment.BottomCenter)
-                    .clip(RoundedCornerShape(20.dp))
+                    .clip(RoundedCornerShape(16.dp))
                     .background(Color.Black.copy(alpha = 0.88f))
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
                     text = stringResource(Res.string.compose_player_speed),
                     color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = formatPlaybackSpeedLabel(shownSpeed),
                         color = Color.White,
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                     )
                     if (shownSpeed == defaultSpeed) {
                         Text(
                             text = stringResource(Res.string.player_speed_default_badge),
                             color = Color.White.copy(alpha = 0.72f),
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(start = 12.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(start = 10.dp),
                         )
                     }
                 }
@@ -104,24 +101,6 @@ fun PlaybackSpeedModal(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                // Presets wrap onto multiple rows so every option is visible —
-                // nothing is clipped off the edge or hidden behind scrolling.
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    PLAYBACK_SPEED_PRESETS.forEach { preset ->
-                        SpeedChip(
-                            label = formatPlaybackSpeedLabel(preset),
-                            selected = preset == shownSpeed,
-                            onClick = {
-                                sliderValue = preset
-                                onSpeedChanged(preset)
-                            },
-                        )
-                    }
-                }
                 if (shownSpeed != defaultSpeed) {
                     SpeedChip(
                         label = stringResource(Res.string.player_speed_make_default),

@@ -135,18 +135,36 @@ fun PosterDownloadCoordinator(
         ready: PosterDownloadUiState.Ready,
         onResult: suspend (SeasonDownloadResult) -> Unit,
     ) {
+        // "Download next X" skips what's already saved: the smart window starts
+        // after max(current episode, highest downloaded episode of the season).
+        val isDownloaded: (Int, Int) -> Boolean = { season, episode ->
+            DownloadsRepository.hasActiveOrCompletedDownload(req.parentMetaId, season, episode)
+        }
         val targets = when {
             !req.isSeries -> listOf(ready.startVideo)
             ready.selectedScope == PosterDownloadScope.REST_OF_SEASON ->
-                EpisodeDownloadPlanner.restOfSeasonVideos(ready.allVideos, ready.startVideo)
+                EpisodeDownloadPlanner.restOfSeasonVideos(ready.allVideos, ready.startVideo, isDownloaded)
             else -> EpisodeDownloadPlanner.nextNVideos(
                 ready.allVideos,
                 ready.startVideo,
                 ready.selectedScope.episodeCount ?: 3,
+                isDownloaded,
             )
         }
         if (targets.isEmpty()) {
-            NuvioToastController.show(noEpisodesText)
+            // Empty because everything is already saved (not because there are
+            // no episodes): keep the "already downloaded" toast for that case.
+            val anythingToDownload = when {
+                !req.isSeries -> true
+                ready.selectedScope == PosterDownloadScope.REST_OF_SEASON ->
+                    EpisodeDownloadPlanner.restOfSeasonVideos(ready.allVideos, ready.startVideo).isNotEmpty()
+                else -> EpisodeDownloadPlanner.nextNVideos(
+                    ready.allVideos,
+                    ready.startVideo,
+                    ready.selectedScope.episodeCount ?: 3,
+                ).isNotEmpty()
+            }
+            NuvioToastController.show(if (anythingToDownload) nothingNewText else noEpisodesText)
             return
         }
         val template = EpisodeDownloadPlanner.pickBestStreamAtQuality(

@@ -1640,6 +1640,18 @@ internal fun MainAppContent(
                         launchExternalPlayer = launchExternalPlayer,
                         openExternalStreamUrl = ::openExternalStreamUrl,
                         onOpenPartyMedia = ::openPartyMedia,
+                        onExitToLibrary = {
+                            // Leaving the player always lands on the Library tab: pop
+                            // everything above the tab root so no stale player/stream
+                            // route can re-initialize playback underneath.
+                            var guard = 0
+                            while (guard++ < 25) {
+                                val current = navController.currentRoute ?: break
+                                if (current is TabsRoute) break
+                                if (!navController.popBackStack()) break
+                            }
+                            activateTab(AppScreenTab.Library)
+                        },
                     )
                 }
                 entry<CatalogRoute> { route ->
@@ -2056,6 +2068,26 @@ internal fun MainAppContent(
                                         ),
                                     )
                                 }
+                                if (!item.isCloudLibraryContinueWatchingItem()) {
+                                    add(
+                                        PosterZoomOverlayAction(
+                                            icon = Icons.Default.Download,
+                                            label = stringResource(Res.string.hero_download),
+                                            onSelected = {
+                                                posterDownloadRequest = PosterDownloadRequest(
+                                                    contentType = item.parentMetaType,
+                                                    parentMetaId = item.parentMetaId,
+                                                    parentMetaType = item.parentMetaType,
+                                                    title = item.title,
+                                                    logo = item.logo,
+                                                    poster = item.poster,
+                                                    background = item.background,
+                                                    isSeries = item.parentMetaType == "series",
+                                                )
+                                            },
+                                        ),
+                                    )
+                                }
                                 add(
                                     PosterZoomOverlayAction(
                                         icon = Icons.Default.DeleteOutline,
@@ -2097,6 +2129,22 @@ internal fun MainAppContent(
                     ?.let { item -> { onContinueWatchingStartFromBeginning(item) } },
                 onPlayManually = selectedContinueWatchingForActions
                     ?.let { item -> { onContinueWatchingPlayManually(item) } },
+                onDownload = selectedContinueWatchingForActions
+                    ?.takeIf { !it.isCloudLibraryContinueWatchingItem() }
+                    ?.let { item ->
+                        {
+                            posterDownloadRequest = PosterDownloadRequest(
+                                contentType = item.parentMetaType,
+                                parentMetaId = item.parentMetaId,
+                                parentMetaType = item.parentMetaType,
+                                title = item.title,
+                                logo = item.logo,
+                                poster = item.poster,
+                                background = item.background,
+                                isSeries = item.parentMetaType == "series",
+                            )
+                        }
+                    },
                 onRemove = {
                     selectedContinueWatchingForActions?.let(onContinueWatchingRemove)
                 },

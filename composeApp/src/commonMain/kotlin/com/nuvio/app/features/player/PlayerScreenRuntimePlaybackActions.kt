@@ -1,6 +1,8 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.features.downloads.maybeEvictWatchedPreloadCache
 import com.nuvio.app.features.downloads.maybePreloadNextEpisodeDownload
+import com.nuvio.app.features.library.maybeAutoAddToLibrary
 import com.nuvio.app.features.servers.ServerItemRef
 import com.nuvio.app.features.servers.ServerStreams
 import com.nuvio.app.features.tmdb.TmdbService
@@ -427,6 +429,8 @@ internal fun PlayerScreenRuntime.persistPlaybackProgressTick() {
         syncRemote = false,
     )
     maybePreloadNextEpisodeDownload()
+    maybeAutoAddToLibrary()
+    maybeEvictWatchedPreloadCache()
 }
 
 internal fun PlayerScreenRuntime.switchPlaybackEngine() {

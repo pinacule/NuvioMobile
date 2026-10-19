@@ -161,4 +161,81 @@ class EpisodeDownloadPlannerTest {
         val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[0], 5)
         assertTrue(next.map { it.id } == listOf("s1e1", "s1e3"))
     }
+
+    @Test
+    fun nextNStartsAfterDownloadedEpisodes() {
+        val videos = (1..8).map { video("s1e$it", 1, it) }
+        val downloaded: (Int, Int) -> Boolean = { _, episode -> episode in 1..3 }
+        // On E1 with E1–E3 saved, "next 3" yields E4, E5, E6.
+        val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[0], 3, downloaded)
+        assertEquals(listOf("s1e4", "s1e5", "s1e6"), next.map { it.id })
+    }
+
+    @Test
+    fun nextNAnchorsOnCurrentEpisodeWhenAheadOfDownloads() {
+        val videos = (1..8).map { video("s1e$it", 1, it) }
+        val downloaded: (Int, Int) -> Boolean = { _, episode -> episode == 2 }
+        // On E5 with only E2 saved, the window starts after the current episode.
+        val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[4], 3, downloaded)
+        assertEquals(listOf("s1e6", "s1e7", "s1e8"), next.map { it.id })
+    }
+
+    @Test
+    fun nextNFiltersDownloadedInsideWindow() {
+        val videos = (1..8).map { video("s1e$it", 1, it) }
+        // Gap before the anchor: E2 saved but E1 (current) not; the window
+        // still starts after the highest downloaded episode (E2).
+        val downloaded: (Int, Int) -> Boolean = { _, episode -> episode == 2 }
+        val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[0], 3, downloaded)
+        assertEquals(listOf("s1e3", "s1e4", "s1e5"), next.map { it.id })
+    }
+
+    @Test
+    fun nextNSkipsDownloadedInsideWindowAcrossSeasons() {
+        val videos = listOf(
+            video("s1e8", 1, 8),
+            video("s2e1", 2, 1), video("s2e2", 2, 2), video("s2e3", 2, 3), video("s2e4", 2, 4),
+        )
+        // S1E8 saved; S2E2 saved inside the cross-season window: it is
+        // filtered out and the take extends to S2E4.
+        val downloaded: (Int, Int) -> Boolean = { season, episode ->
+            (season == 1 && episode == 8) || (season == 2 && episode == 2)
+        }
+        val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[0], 3, downloaded)
+        assertEquals(listOf("s2e1", "s2e3", "s2e4"), next.map { it.id })
+    }
+
+    @Test
+    fun nextNCrossesSeasonAfterDownloadedFinale() {
+        val videos = listOf(
+            video("s1e7", 1, 7), video("s1e8", 1, 8),
+            video("s2e1", 2, 1), video("s2e2", 2, 2), video("s2e3", 2, 3),
+        )
+        val downloaded: (Int, Int) -> Boolean = { season, episode -> season == 1 && episode >= 7 }
+        val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[1], 3, downloaded)
+        assertEquals(listOf("s2e1", "s2e2", "s2e3"), next.map { it.id })
+    }
+
+    @Test
+    fun restOfSeasonExcludesDownloadedEpisodes() {
+        val videos = listOf(
+            video("s1e1", 1, 1), video("s1e2", 1, 2), video("s1e3", 1, 3),
+            video("s2e1", 2, 1),
+        )
+        val downloaded: (Int, Int) -> Boolean = { season, episode -> season == 1 && episode <= 2 }
+        val rest = EpisodeDownloadPlanner.restOfSeasonVideos(videos, videos[0], downloaded)
+        assertEquals(listOf("s1e3"), rest.map { it.id })
+    }
+
+    @Test
+    fun restOfSeasonIsEmptyWhenAllDownloaded() {
+        val videos = listOf(video("s1e1", 1, 1), video("s1e2", 1, 2))
+        val downloaded: (Int, Int) -> Boolean = { _, _ -> true }
+        assertTrue(EpisodeDownloadPlanner.restOfSeasonVideos(videos, videos[0], downloaded).isEmpty())
+        // Without the predicate the legacy behavior is unchanged.
+        assertEquals(
+            listOf("s1e1", "s1e2"),
+            EpisodeDownloadPlanner.restOfSeasonVideos(videos, videos[0]).map { it.id },
+        )
+    }
 }

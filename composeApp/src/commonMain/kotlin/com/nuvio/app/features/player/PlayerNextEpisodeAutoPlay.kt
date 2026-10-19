@@ -10,8 +10,10 @@ import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.downloads.CachedPreload
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.PreloadCache
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
 import com.nuvio.app.features.streams.AdaptiveStreamPicker
@@ -79,6 +81,7 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     settings: PlayerSettingsUiState,
     currentStreamBingeGroup: String?,
     onDownloadedEpisodeSelected: (DownloadItem, MetaVideo) -> Unit,
+    onCachedPreloadSelected: (CachedPreload, MetaVideo) -> Unit,
     onEpisodeStreamSelected: (StreamItem, MetaVideo) -> Unit,
     onManualSelectionRequired: (MetaVideo) -> Unit,
     onSearchingChanged: (Boolean) -> Unit,
@@ -89,6 +92,14 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     val nextVideoId = nextEpisodeInfo?.videoId ?: return null
     val nextVideo = allEpisodes.firstOrNull { video -> video.id == nextVideoId } ?: return null
     if (nextEpisodeInfo.hasAired != true) return null
+
+    // Silent preload cache wins over both downloads and streams: it was fetched
+    // ahead (video + subtitles) for exactly this episode.
+    val cachedPreload = PreloadCache.lookup(nextVideo.id)
+    if (cachedPreload != null) {
+        onCachedPreloadSelected(cachedPreload, nextVideo)
+        return null
+    }
 
     val downloadedNextEpisode = DownloadsRepository.findPlayableDownload(
         parentMetaId = parentMetaId,

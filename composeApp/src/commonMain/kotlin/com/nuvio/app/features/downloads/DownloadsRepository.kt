@@ -498,7 +498,7 @@ private object DownloadsCodec {
         )
 }
 
-private fun sanitizeRequestHeaders(headers: Map<String, String>?): Map<String, String> =
+internal fun sanitizeRequestHeaders(headers: Map<String, String>?): Map<String, String> =
     headers
         .orEmpty()
         .mapNotNull { (key, value) ->
@@ -576,9 +576,9 @@ private fun buildFileName(
 }
 
 // Most torrent releases are Matroska; the real extension replaces this once the engine resolves the file.
-private const val TORRENT_FALLBACK_EXTENSION = "mkv"
+internal const val TORRENT_FALLBACK_EXTENSION = "mkv"
 
-private data class TorrentDownloadSource(
+internal data class TorrentDownloadSource(
     val infoHash: String,
     val fileIdx: Int?,
     val trackers: List<String>,
@@ -586,7 +586,7 @@ private data class TorrentDownloadSource(
     val magnetUri: String,
 )
 
-private fun StreamItem.torrentDownloadSource(): TorrentDownloadSource? {
+internal fun StreamItem.torrentDownloadSource(): TorrentDownloadSource? {
     if (!isTorrentStream) return null
     val rawInfoHash = p2pInfoHash ?: return null
     val infoHash = runCatching { canonicalP2pInfoHash(rawInfoHash) }.getOrNull() ?: return null
@@ -600,10 +600,10 @@ private fun StreamItem.torrentDownloadSource(): TorrentDownloadSource? {
     )
 }
 
-private fun String.sanitizeFileName(): String =
+internal fun String.sanitizeFileName(): String =
     trim().replace(Regex("[^A-Za-z0-9._ -]"), "_")
 
-private fun String.fileExtensionFromUrl(): String {
+internal fun String.fileExtensionFromUrl(): String {
     val withoutQuery = substringBefore('?').substringBefore('#')
     val suffix = withoutQuery.substringAfterLast('.', missingDelimiterValue = "")
         .lowercase()
@@ -616,7 +616,7 @@ private fun String.fileExtensionFromUrl(): String {
     }
 }
 
-private fun String.isSupportedDownloadUrl(): Boolean {
+internal fun String.isSupportedDownloadUrl(): Boolean {
     val normalized = trim().lowercase()
     if (normalized.startsWith("magnet:")) return false
     if (normalized.endsWith(".m3u8") || normalized.contains(".m3u8?")) return false

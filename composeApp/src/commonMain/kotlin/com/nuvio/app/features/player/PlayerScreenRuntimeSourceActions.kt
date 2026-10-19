@@ -8,9 +8,11 @@ import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.downloads.CachedPreload
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadSubtitles
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.EpisodeDownloadPlanner
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.servers.ServerPlayback
@@ -444,6 +446,62 @@ internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: Downloa
     controlsVisible = true
 }
 
+/**
+ * Starts the next episode from the silent preload cache (video + subtitles
+ * were fetched ahead at 60% of the previous episode). Mirrors
+ * [switchToDownloadedEpisode] but sources everything from [CachedPreload].
+ */
+internal fun PlayerScreenRuntime.switchToCachedPreloadEpisode(cached: CachedPreload, episode: MetaVideo) {
+    resetEpisodePanelAndNextEpisodeState()
+    flushWatchProgress()
+    stopActiveP2pStream()
+
+    val fallbackVideoId = buildPlaybackVideoId(
+        parentMetaId = parentMetaId,
+        seasonNumber = episode.season,
+        episodeNumber = episode.episode,
+        fallbackVideoId = episode.id,
+    )
+    val resolvedVideoId = episode.id.takeIf { it.isNotBlank() } ?: fallbackVideoId
+    val epEntry = WatchProgressRepository.progressForVideo(
+        videoId = resolvedVideoId,
+        parentMetaId = parentMetaId,
+        seasonNumber = episode.season,
+        episodeNumber = episode.episode,
+    )
+        ?.takeIf { !it.isCompleted }
+    val epResumeFraction = epEntry?.progressPercent
+        ?.takeIf { it > 0f }
+        ?.let { (it / 100f).coerceIn(0f, 1f) }
+    val epResumePositionMs = epEntry?.lastPositionMs?.takeIf { it > 0L } ?: 0L
+
+    externalSubtitles = DownloadSubtitles.localSubtitles(cached.localFileUri)
+    activeSourceUrl = cached.localFileUri
+    activeSourceAudioUrl = null
+    activeSourceHeaders = emptyMap()
+    activeSourceResponseHeaders = emptyMap()
+    activeStreamType = null
+    activeSourceIdentityKey = null
+    activeSourceFilename = null
+    activeStreamTitle = cached.streamTitle.ifBlank {
+        episode.title.ifBlank { title }
+    }
+    activeStreamSubtitle = cached.streamSubtitle
+    activeProviderName = cached.providerName.ifBlank { downloadedLabel }
+    activeProviderAddonId = cached.providerAddonId
+    activeStream = null
+    currentStreamBingeGroup = null
+    activeSeasonNumber = episode.season
+    activeEpisodeNumber = episode.episode
+    activeEpisodeTitle = episode.title
+    activeEpisodeThumbnail = episode.thumbnail
+    activePauseDescription = episode.overview
+    activeVideoId = resolvedVideoId
+    activeInitialPositionMs = epResumePositionMs
+    activeInitialProgressFraction = epResumeFraction
+    controlsVisible = true
+}
+
 internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
     if (nextEpisodeAutoPlaySearching || nextEpisodeAutoPlayCountdown != null) return
     // "Up next" auto-play is WiFi-only: on mobile data or with data saver on, the
@@ -475,6 +533,9 @@ internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
         currentStreamBingeGroup = currentStreamBingeGroup,
         onDownloadedEpisodeSelected = { item, episode ->
             if (isCurrentRequest()) switchToDownloadedEpisode(item, episode)
+        },
+        onCachedPreloadSelected = { cached, episode ->
+            if (isCurrentRequest()) switchToCachedPreloadEpisode(cached, episode)
         },
         onEpisodeStreamSelected = { stream, episode ->
             if (isCurrentRequest()) switchToEpisodeStream(stream, episode)
@@ -517,6 +578,31 @@ internal fun PlayerScreenRuntime.openSourcesPanel() {
     showSourcesPanel = true
     showEpisodesPanel = false
     controlsVisible = false
+}
+
+/**
+ * Opens the quality switcher popup. Loads the episode's streams first so the
+ * quality options reflect what's actually available, then shows the modal.
+ */
+internal fun PlayerScreenRuntime.openQualityModal() {
+    val vid = activeVideoId ?: return
+    PlayerStreamsRepository.loadSources(
+        type = contentType ?: parentMetaType,
+        videoId = vid,
+        season = activeSeasonNumber,
+        episode = activeEpisodeNumber,
+    )
+    showQualityModal = true
+}
+
+/** Switches playback to the best stream at [quality], keeping the position. No-op if already on it. */
+internal fun PlayerScreenRuntime.switchToQuality(quality: String) {
+    val target = EpisodeDownloadPlanner.pickBestStreamAtQuality(sourceStreamsState.allStreams, quality)
+        ?: return
+    val targetIdentityKey = target.playerSourceIdentityKey()
+    if (targetIdentityKey != null && targetIdentityKey == activeSourceIdentityKey) return
+    showQualityModal = false
+    switchToSource(target)
 }
 
 internal fun PlayerScreenRuntime.openEpisodesPanel() {

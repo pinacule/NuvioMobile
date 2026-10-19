@@ -28,12 +28,12 @@ internal fun PlayerDestination(
     launchExternalPlayer: (ExternalPlayerIntentResult.Success) -> Boolean,
     openExternalStreamUrl: (String) -> Boolean,
     onOpenPartyMedia: (PartyMedia) -> Unit,
+    onExitToLibrary: () -> Unit,
 ) {
-    val onBack = rememberGuardedPopBackStack(navController, route)
     val launch = remember(route.launchId) { PlayerLaunchStore.get(route.launchId) }
     if (launch == null) {
         LaunchedEffect(route.launchId) {
-            onBack()
+            onExitToLibrary()
         }
         Box(modifier = Modifier.fillMaxSize())
         return
@@ -77,7 +77,7 @@ internal fun PlayerDestination(
         launchId = route.launchId,
         sourceFilename = launch.sourceFilename,
         stream = launch.stream,
-        onBack = onBack,
+        onBack = onExitToLibrary,
         onOpenInExternalPlayer = { request ->
             val playerLaunch = PlayerLaunch(
                 profileId = launch.profileId,
@@ -114,7 +114,7 @@ internal fun PlayerDestination(
                     if (!launched) {
                         NuvioToastController.show(externalPlayerFailedText)
                     } else if (externalPlayerId == "infuse") {
-                        onBack()
+                        onExitToLibrary()
                     }
                 }
                 ExternalPlayerIntentResult.NotConfigured -> {
