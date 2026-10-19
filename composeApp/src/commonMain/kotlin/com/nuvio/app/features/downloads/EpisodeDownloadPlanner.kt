@@ -5,6 +5,7 @@ import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaVideo
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.streamAddonInstanceId
 import com.nuvio.app.features.streams.streamResolution
@@ -121,6 +122,23 @@ internal object EpisodeDownloadPlanner {
             .toList()
     }
 
+    /**
+     * Explicit episode selection for the custom download picker: resolves checked
+     * (season, episode) pairs to [MetaVideo]s in canonical release order.
+     * Additive seam for the custom picker — the stream-picking path stays shared:
+     * the caller still picks the template via [pickBestStreamAtQuality] and hands
+     * the result to [SeasonDownloads.enqueueVideos], exactly like the presets.
+     */
+    fun explicitVideos(
+        videos: List<MetaVideo>,
+        selected: Set<Pair<Int, Int>>,
+    ): List<MetaVideo> =
+        videos.filter { video ->
+            val s = video.season
+            val e = video.episode
+            s != null && e != null && video.available && selected.contains(s to e)
+        }.sortedWith(compareBy({ it.season!! }, { it.episode!! }))
+
     /** Distinct stream resolutions, best quality first. */
     fun distinctQualities(streams: List<StreamItem>): List<String> =
         streams.mapNotNull { it.streamResolution() }
@@ -136,13 +154,22 @@ internal object EpisodeDownloadPlanner {
     }
 
     /**
-     * Best stream at [quality]: torrent streams first (they carry the P2P path the
-     * download manager prefers), addon ordering breaks ties.
+     * Best stream at [quality]: English-audio first (dub over sub, always — when
+     * [preferEnglishAudio]), then torrent streams (they carry the P2P path the
+     * download manager prefers), then best-seeded. Addon ordering breaks ties.
      */
-    fun pickBestStreamAtQuality(streams: List<StreamItem>, quality: String): StreamItem? {
+    fun pickBestStreamAtQuality(
+        streams: List<StreamItem>,
+        quality: String,
+        preferEnglishAudio: Boolean = false,
+    ): StreamItem? {
         val pool = streams.filter { it.streamResolution() == quality }
         if (pool.isEmpty()) return null
-        return pool.sortedByDescending { it.isTorrentStream }.firstOrNull()
+        return pool.sortedWith(
+            compareBy<StreamItem> { if (preferEnglishAudio && AdaptiveStreamPicker.hasEnglishAudio(it)) 0 else 1 }
+                .thenByDescending { it.isTorrentStream }
+                .thenByDescending { AdaptiveStreamPicker.parseSeeders(it) ?: -1 },
+        ).firstOrNull()
     }
 
     /**

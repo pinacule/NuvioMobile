@@ -228,7 +228,14 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
                 val bingeCandidates = preferredBingeGroup?.takeIf { it.isNotEmpty() }?.let { group ->
                     streams.filter { it.behaviorHints.bingeGroup == group }.takeIf { it.isNotEmpty() }
                 }
-                AdaptiveStreamPicker.pickBestSeeded(bingeCandidates ?: streams, target)
+                AdaptiveStreamPicker.pickBestSeeded(
+                    bingeCandidates ?: streams,
+                    target,
+                    preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                        settings.preferredAudioLanguage,
+                    ),
+                    requireHdrSeeders = true,
+                )
             } else {
                 StreamAutoPlaySelector.selectAutoPlayStream(
                     streams = streams,
@@ -243,6 +250,10 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
                     bingeGroupOnly = bingeGroupOnlyManualMode,
                     debridEnabled = debridSettings.canResolvePlayableLinks,
                     activeResolverProviderId = debridSettings.activeResolverProviderId,
+                    preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                        settings.preferredAudioLanguage,
+                    ),
+                    requireHdrSeeders = true,
                 )
             }
 
@@ -262,6 +273,10 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
                 bingeGroupOnly = true,
                 debridEnabled = debridSettings.canResolvePlayableLinks,
                 activeResolverProviderId = debridSettings.activeResolverProviderId,
+                preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                    settings.preferredAudioLanguage,
+                ),
+                requireHdrSeeders = true,
             )
         }
 

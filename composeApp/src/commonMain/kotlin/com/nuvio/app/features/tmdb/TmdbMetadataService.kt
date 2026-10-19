@@ -868,6 +868,14 @@ object TmdbMetadataService {
                             } else {
                                 video.thumbnail
                             },
+                            // Always retain the TMDB still, even when the primary thumbnail is
+                            // non-null: the primary is often a dead metahub URL, and the UI
+                            // falls back to this per-episode still before the show art.
+                            tmdbStillUrl = if (settings.useEpisodes) {
+                                enrichmentForEpisode.thumbnail
+                            } else {
+                                video.tmdbStillUrl
+                            },
                             seasonPoster = if (settings.useSeasonPosters) {
                                 enrichmentForEpisode.seasonPoster ?: video.seasonPoster
                             } else {

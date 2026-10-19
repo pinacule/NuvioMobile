@@ -135,13 +135,18 @@ internal fun PluginRuntimeResult.toStreamItem(
     )
 }
 
-internal fun List<StreamItem>.sortedForGroupedDisplay(): List<StreamItem> =
+internal fun List<StreamItem>.sortedForGroupedDisplay(
+    preferEnglishAudio: Boolean = false,
+): List<StreamItem> =
     sortedWith(
-        compareBy<StreamItem>(
-            { it.sourceName.orEmpty().lowercase() },
-            { it.streamLabel.lowercase() },
-            { it.streamSubtitle.orEmpty().lowercase() },
-        ),
+        compareBy<StreamItem> { it.sourceName.orEmpty().lowercase() }
+            // Dub over sub, always: English-audio streams first (when the user prefers English).
+            .thenBy { stream -> if (preferEnglishAudio && AdaptiveStreamPicker.hasEnglishAudio(stream)) 0 else 1 }
+            // Best-seeded first; unknown counts last. The sort is stable,
+            // so the addon's own order breaks remaining ties.
+            .thenByDescending { AdaptiveStreamPicker.parseSeeders(it) ?: -1 }
+            .thenBy { it.streamLabel.lowercase() }
+            .thenBy { it.streamSubtitle.orEmpty().lowercase() },
     )
 
 private fun String.fallbackRepositoryLabel(): String {

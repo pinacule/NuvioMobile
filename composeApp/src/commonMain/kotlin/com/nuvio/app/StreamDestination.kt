@@ -798,7 +798,14 @@ internal fun StreamDestination(
             batteryPercent = DeviceEnvironment.batteryPercent(),
             dataSaverActive = DataSaverRepository.isActiveNow(),
         )
-        val pick = AdaptiveStreamPicker.pickBestSeeded(candidates, targetQuality)
+        val pick = AdaptiveStreamPicker.pickBestSeeded(
+            candidates,
+            targetQuality,
+            preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                playerSettings.preferredAudioLanguage,
+            ),
+            requireHdrSeeders = true,
+        )
             ?: return@LaunchedEffect
         openSelectedStream(
             stream = pick,

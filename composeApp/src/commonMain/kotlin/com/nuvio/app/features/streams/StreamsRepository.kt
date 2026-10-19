@@ -265,6 +265,10 @@ object StreamsRepository {
                     bingeGroupOnly = bingeGroupOnly,
                     debridEnabled = debridSettings.canResolvePlayableLinks,
                     activeResolverProviderId = debridSettings.activeResolverProviderId,
+                    preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                        playerSettings.preferredAudioLanguage,
+                    ),
+                    requireHdrSeeders = true,
                 )
 
             fun settleAutoPlay(evaluation: StreamAutoPlayEvaluation) {
@@ -536,7 +540,11 @@ object StreamsRepository {
                                         val mergedStreams = if (completion.streams.isEmpty()) {
                                             group.streams
                                         } else {
-                                            (group.streams + completion.streams).sortedForGroupedDisplay()
+                                            (group.streams + completion.streams).sortedForGroupedDisplay(
+                                                preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                                                    playerSettings.preferredAudioLanguage,
+                                                ),
+                                            )
                                         }
                                         val stillLoading = remaining > 0
                                         val finalError = if (mergedStreams.isEmpty() && !stillLoading) {

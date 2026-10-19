@@ -144,6 +144,7 @@ private val PosterZoomMenuSpring = spring<Float>(
 fun NuvioPosterZoomActionOverlay(
     imageUrl: String?,
     fallbackImageUrl: String? = null,
+    tmdbStillUrl: String? = null,
     title: String,
     subtitle: String?,
     isWatched: Boolean = false,
@@ -177,14 +178,15 @@ fun NuvioPosterZoomActionOverlay(
     var showFallback by remember { mutableStateOf(source == null) }
 
     // Episode stills rot: route the zoom image through the Coil fallback interceptor so a
-    // dead still URL retries with the show art instead of rendering a dark empty box.
-    // Other zoom callers (posters, continue-watching) leave fallbackImageUrl null and their
-    // model collapses back to the plain URL, exactly as before.
+    // dead still URL retries with the TMDB still, then the show art, instead of rendering
+    // a dark empty box. Other zoom callers (posters, continue-watching) leave the fallback
+    // params null and their model collapses back to the plain URL, exactly as before.
     val zoomImageModel = rememberEpisodeImageModel(
         thumbnail = imageUrl,
+        tmdbStillUrl = tmdbStillUrl,
         fallbackUrl = fallbackImageUrl,
     )
-    var zoomImageFailed by remember(imageUrl, fallbackImageUrl) { mutableStateOf(false) }
+    var zoomImageFailed by remember(imageUrl, tmdbStillUrl, fallbackImageUrl) { mutableStateOf(false) }
 
     var rootOrigin by remember { mutableStateOf(Offset.Zero) }
     var slotBounds by remember { mutableStateOf<Rect?>(null) }

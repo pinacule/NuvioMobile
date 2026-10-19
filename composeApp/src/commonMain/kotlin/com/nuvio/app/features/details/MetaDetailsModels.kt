@@ -100,6 +100,12 @@ data class MetaVideo(
     val runtime: Int? = null,
     val rating: Double? = null,
     val streams: List<StreamItem> = emptyList(),
+    /**
+     * TMDB episode still URL retained by TMDB enrichment even when [thumbnail] is non-null.
+     * Used as the middle tier of the episode-image fallback chain: primary still (often a
+     * dead Cinemeta/metahub URL) -> this TMDB still -> show background/poster.
+     */
+    val tmdbStillUrl: String? = null,
 )
 
 data class MetaDetailsUiState(

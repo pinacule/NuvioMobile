@@ -6,6 +6,7 @@ import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.PlayerScreenRuntime
+import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.player.addonSubtitleRequests
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
 import com.nuvio.app.features.streams.AdaptiveStreamPicker
@@ -77,7 +78,16 @@ internal object EpisodePreloader {
             EpisodeDownloadPlanner.distinctQualities(allStreams),
             targetQuality,
         ) ?: return
-        val template = EpisodeDownloadPlanner.pickBestStreamAtQuality(allStreams, quality) ?: return
+        // Dub over sub, always: prefer an English-audio release at the chosen quality.
+        runCatching { PlayerSettingsRepository.ensureLoaded() }
+        val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+            PlayerSettingsRepository.uiState.value.preferredAudioLanguage,
+        )
+        val template = EpisodeDownloadPlanner.pickBestStreamAtQuality(
+            allStreams,
+            quality,
+            preferEnglishAudio = preferEnglishAudio,
+        ) ?: return
         val request = buildPreloadRequest(
             contentType = contentType,
             parentMetaId = parentMetaId,

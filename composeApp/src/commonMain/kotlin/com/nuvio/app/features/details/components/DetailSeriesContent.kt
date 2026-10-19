@@ -321,8 +321,8 @@ internal fun EpisodeGridCell(
     // Dead episode-still URLs (e.g. rotted Cinemeta stills) are non-null, so the Elvis above
     // never engages: route the load through the fallback interceptor so a 404 retries with
     // the show art instead of rendering a black card.
-    val imageModel = rememberEpisodeImageModel(video.thumbnail, fallbackImage)
-    var imageLoadFailed by remember(video.thumbnail, fallbackImage) { mutableStateOf(false) }
+    val imageModel = rememberEpisodeImageModel(video.thumbnail, video.tmdbStillUrl, fallbackImage)
+    var imageLoadFailed by remember(video.thumbnail, video.tmdbStillUrl, fallbackImage) { mutableStateOf(false) }
     val shouldBlurArtwork = blurUnwatchedEpisodes && !isWatched
     val visibleProgressEntry = progressEntry?.takeIf { it.durationMs > 0L && !it.isCompleted }
     val ratingLabel = remember(imdbRating, episodeRatingsVisibility, isWatched) {
@@ -962,8 +962,8 @@ private fun EpisodeHorizontalCard(
     val imageUrl = video.thumbnail?.takeIf { it.isNotBlank() } ?: fallbackImage
     // Dead episode-still URLs are non-null, so the Elvis above never engages: route the load
     // through the fallback interceptor so a 404 retries with the show art.
-    val imageModel = rememberEpisodeImageModel(video.thumbnail, fallbackImage)
-    var imageLoadFailed by remember(video.thumbnail, fallbackImage) { mutableStateOf(false) }
+    val imageModel = rememberEpisodeImageModel(video.thumbnail, video.tmdbStillUrl, fallbackImage)
+    var imageLoadFailed by remember(video.thumbnail, video.tmdbStillUrl, fallbackImage) { mutableStateOf(false) }
     val visibleProgressEntry = progressEntry?.takeIf { it.durationMs > 0L && !it.isCompleted }
     val progressBarHeight = 4.dp
     val progressBarContentSpacing = 6.dp
@@ -1380,8 +1380,8 @@ private fun EpisodeListCard(
             ) {
                 // Dead episode-still URLs are non-null, so a plain Elvis never engages: route
                 // the load through the fallback interceptor so a 404 retries with the show art.
-                val imageModel = rememberEpisodeImageModel(video.thumbnail, fallbackImage)
-                var imageLoadFailed by remember(video.thumbnail, fallbackImage) { mutableStateOf(false) }
+                val imageModel = rememberEpisodeImageModel(video.thumbnail, video.tmdbStillUrl, fallbackImage)
+                var imageLoadFailed by remember(video.thumbnail, video.tmdbStillUrl, fallbackImage) { mutableStateOf(false) }
                 val shouldBlurArtwork = blurUnwatchedEpisodes && !isWatched
                 if (imageModel != null && !imageLoadFailed) {
                     AsyncImage(

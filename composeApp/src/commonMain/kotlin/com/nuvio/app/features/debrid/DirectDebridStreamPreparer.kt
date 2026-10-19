@@ -2,6 +2,7 @@ package com.nuvio.app.features.debrid
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.player.PlayerSettingsUiState
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import com.nuvio.app.features.streams.AddonStreamGroup
 import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlaySelector
@@ -88,6 +89,10 @@ object DirectDebridStreamPreparer {
             installedAddonNames = installedAddonNames,
             selectedAddons = playerSettings.streamAutoPlaySelectedAddons,
             selectedPlugins = playerSettings.streamAutoPlaySelectedPlugins,
+            preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                playerSettings.preferredAudioLanguage,
+            ),
+            requireHdrSeeders = true,
         )
         if (autoPlaySelection?.let { it.isAddonDebridCandidate && (it.isDirectDebridStream || it.isCachedDebridTorrentStream) } == true) {
             candidates.firstOrNull { it.preparationKey() == autoPlaySelection.preparationKey() }

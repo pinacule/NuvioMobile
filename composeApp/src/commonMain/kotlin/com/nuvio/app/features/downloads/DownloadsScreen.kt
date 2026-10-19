@@ -648,11 +648,12 @@ private fun ActionIcon(
 }
 
 @Composable
-private fun Artwork(url: String?, fallbackUrl: String? = null, width: Dp, aspectRatio: Float) {
+private fun Artwork(url: String?, fallbackUrl: String? = null, tmdbStillUrl: String? = null, width: Dp, aspectRatio: Float) {
     // Dead episode-still URLs are non-null, so a plain Elvis never engages: route the load
-    // through the fallback interceptor so a 404 retries with the show art.
-    val imageModel = rememberEpisodeImageModel(url, fallbackUrl)
-    var loadFailed by remember(url, fallbackUrl) { mutableStateOf(false) }
+    // through the fallback interceptor so a 404 retries with the TMDB still (when available),
+    // then the show art.
+    val imageModel = rememberEpisodeImageModel(url, tmdbStillUrl, fallbackUrl)
+    var loadFailed by remember(url, tmdbStillUrl, fallbackUrl) { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .width(width)

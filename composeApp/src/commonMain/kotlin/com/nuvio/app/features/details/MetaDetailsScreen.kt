@@ -1680,6 +1680,7 @@ fun MetaDetailsScreen(
             NuvioPosterZoomActionOverlay(
                 imageUrl = zoomAnchor.imageUrl ?: selectedEpisode.thumbnail,
                 fallbackImageUrl = meta.background ?: meta.poster,
+                tmdbStillUrl = selectedEpisode.tmdbStillUrl,
                 title = selectedEpisode.title,
                 subtitle = localizedSeasonEpisodeCode(selectedEpisode.season, selectedEpisode.episode) ?: seasonLabel,
                 isWatched = isSelectedEpisodeWatched,

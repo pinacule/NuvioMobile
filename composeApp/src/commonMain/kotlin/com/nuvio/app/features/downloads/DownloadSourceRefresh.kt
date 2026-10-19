@@ -1,6 +1,8 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.features.addons.AddonRepository
+import com.nuvio.app.features.player.PlayerSettingsRepository
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import com.nuvio.app.features.streams.streamResolution
 import kotlinx.coroutines.CancellationException
 
@@ -33,6 +35,12 @@ internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem
     // Idempotent: makes the automatic retry work even when the process was
     // started in the background (JobScheduler/WorkManager) without the UI.
     runCatching { AddonRepository.initialize() }
+    runCatching { PlayerSettingsRepository.ensureLoaded() }
+    // Dub over sub, always: when re-resolving a dead link, English-audio
+    // releases outrank everything else, regardless of quality tier.
+    val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+        PlayerSettingsRepository.uiState.value.preferredAudioLanguage,
+    )
     val targetQuality = item.downloadQuality?.trim()?.takeIf { it.isNotBlank() }
     val candidates = try {
         EpisodeDownloadPlanner.fetchAddonStreams(
@@ -54,25 +62,35 @@ internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem
         }
     if (usable.isEmpty()) return null
     val qualities = EpisodeDownloadPlanner.distinctQualities(usable.map { it.second })
-    for (quality in orderQualitiesByCloseness(qualities, targetQuality)) {
-        for ((group, stream) in usable) {
-            if (stream.streamResolution() != quality) continue
-            val resolved = SeasonDownloads.resolvePlayable(stream, item.seasonNumber ?: 0, item.episodeNumber)
-                ?: continue
-            val freshUrl = resolved.playableDirectUrl?.trim()
-                ?.takeIf { it.isSupportedDownloadUrl() && it != deadUrl }
-                ?: continue
-            return item.copy(
-                sourceUrl = freshUrl,
-                sourceHeaders = sanitizeRequestHeaders(resolved.behaviorHints.proxyHeaders?.request),
-                sourceResponseHeaders = sanitizeResponseHeaders(resolved.behaviorHints.proxyHeaders?.response),
-                providerName = group.addonName,
-                providerAddonId = group.addonId,
-                streamTitle = resolved.streamLabel,
-                streamSubtitle = resolved.streamSubtitle,
-                sourceSubtitles = resolved.externalSubtitles,
-                downloadQuality = quality,
-            )
+    // English-audio releases first (all qualities, closest-first), then the rest —
+    // a 480p dub outranks a 1080p sub-only release when the user prefers English.
+    val partitions = if (preferEnglishAudio) {
+        val (english, rest) = usable.partition { (_, stream) -> AdaptiveStreamPicker.hasEnglishAudio(stream) }
+        listOf(english, rest).filter { it.isNotEmpty() }
+    } else {
+        listOf(usable)
+    }
+    for (partition in partitions) {
+        for (quality in orderQualitiesByCloseness(qualities, targetQuality)) {
+            for ((group, stream) in partition) {
+                if (stream.streamResolution() != quality) continue
+                val resolved = SeasonDownloads.resolvePlayable(stream, item.seasonNumber ?: 0, item.episodeNumber)
+                    ?: continue
+                val freshUrl = resolved.playableDirectUrl?.trim()
+                    ?.takeIf { it.isSupportedDownloadUrl() && it != deadUrl }
+                    ?: continue
+                return item.copy(
+                    sourceUrl = freshUrl,
+                    sourceHeaders = sanitizeRequestHeaders(resolved.behaviorHints.proxyHeaders?.request),
+                    sourceResponseHeaders = sanitizeResponseHeaders(resolved.behaviorHints.proxyHeaders?.response),
+                    providerName = group.addonName,
+                    providerAddonId = group.addonId,
+                    streamTitle = resolved.streamLabel,
+                    streamSubtitle = resolved.streamSubtitle,
+                    sourceSubtitles = resolved.externalSubtitles,
+                    downloadQuality = quality,
+                )
+            }
         }
     }
     return null

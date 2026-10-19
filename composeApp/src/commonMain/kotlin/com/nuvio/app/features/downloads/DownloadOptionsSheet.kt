@@ -9,16 +9,23 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,8 +38,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioBottomSheetDivider
 import com.nuvio.app.core.ui.NuvioModalBottomSheet
@@ -44,6 +53,8 @@ import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.player.PlayerSettingsRepository
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -100,6 +111,8 @@ private sealed interface PosterDownloadUiState {
         val qualities: List<String>,
         val selectedQuality: String,
         val selectedScope: PosterDownloadScope,
+        val customMode: Boolean = false,
+        val customSelected: Set<Pair<Int, Int>> = emptySet(),
     ) : PosterDownloadUiState
 }
 
@@ -128,6 +141,8 @@ fun PosterDownloadCoordinator(
     val unsupportedText = stringResource(Res.string.season_download_unsupported)
     val nothingNewText = stringResource(Res.string.season_download_nothing_new)
     val startedText = stringResource(Res.string.season_download_started)
+    val nothingSelectedText = stringResource(Res.string.downloads_options_custom_nothing_selected)
+    val unavailableSelectedText = stringResource(Res.string.downloads_options_custom_unavailable)
 
     // Local functions are declared before their call sites (Kotlin requirement).
     fun enqueueReady(
@@ -142,6 +157,8 @@ fun PosterDownloadCoordinator(
         }
         val targets = when {
             !req.isSeries -> listOf(ready.startVideo)
+            ready.customMode ->
+                EpisodeDownloadPlanner.explicitVideos(ready.allVideos, ready.customSelected)
             ready.selectedScope == PosterDownloadScope.REST_OF_SEASON ->
                 EpisodeDownloadPlanner.restOfSeasonVideos(ready.allVideos, ready.startVideo, isDownloaded)
             else -> EpisodeDownloadPlanner.nextNVideos(
@@ -152,6 +169,13 @@ fun PosterDownloadCoordinator(
             )
         }
         if (targets.isEmpty()) {
+            if (req.isSeries && ready.customMode) {
+                // Custom mode: distinguish "nothing checked" from "checked but unavailable".
+                NuvioToastController.show(
+                    if (ready.customSelected.isEmpty()) nothingSelectedText else unavailableSelectedText
+                )
+                return
+            }
             // Empty because everything is already saved (not because there are
             // no episodes): keep the "already downloaded" toast for that case.
             val anythingToDownload = when {
@@ -167,9 +191,15 @@ fun PosterDownloadCoordinator(
             NuvioToastController.show(if (anythingToDownload) nothingNewText else noEpisodesText)
             return
         }
+        // Dub over sub, always: prefer an English-audio release at the chosen quality.
+        runCatching { PlayerSettingsRepository.ensureLoaded() }
+        val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+            PlayerSettingsRepository.uiState.value.preferredAudioLanguage,
+        )
         val template = EpisodeDownloadPlanner.pickBestStreamAtQuality(
             ready.groups.flatMap { it.streams },
             ready.selectedQuality,
+            preferEnglishAudio = preferEnglishAudio,
         )
         val manifest = ready.groups.firstOrNull { it.addonId == template?.addonId }?.manifest
         if (template == null || manifest == null) {
@@ -406,8 +436,15 @@ private fun DownloadOptionsContent(
                 ) {
                     DownloadOptionChip(
                         label = stringResource(Res.string.downloads_options_scope_rest_of_season),
-                        selected = state.selectedScope == PosterDownloadScope.REST_OF_SEASON,
-                        onClick = { onStateChange(state.copy(selectedScope = PosterDownloadScope.REST_OF_SEASON)) },
+                        selected = !state.customMode && state.selectedScope == PosterDownloadScope.REST_OF_SEASON,
+                        onClick = {
+                            onStateChange(
+                                state.copy(
+                                    selectedScope = PosterDownloadScope.REST_OF_SEASON,
+                                    customMode = false,
+                                ),
+                            )
+                        },
                     )
                     PosterDownloadScope.entries
                         .filter { it != PosterDownloadScope.REST_OF_SEASON }
@@ -417,13 +454,28 @@ private fun DownloadOptionsContent(
                                     Res.string.downloads_options_scope_next_episodes,
                                     scope.episodeCount ?: 0,
                                 ),
-                                selected = state.selectedScope == scope,
-                                onClick = { onStateChange(state.copy(selectedScope = scope)) },
+                                selected = !state.customMode && state.selectedScope == scope,
+                                onClick = {
+                                    onStateChange(state.copy(selectedScope = scope, customMode = false))
+                                },
                             )
                         }
+                    DownloadOptionChip(
+                        label = stringResource(Res.string.downloads_options_scope_custom),
+                        selected = state.customMode,
+                        onClick = { onStateChange(state.copy(customMode = true)) },
+                    )
                 }
             }
             NuvioBottomSheetDivider()
+            if (state.customMode) {
+                CustomEpisodePicker(
+                    request = request,
+                    state = state,
+                    onStateChange = onStateChange,
+                )
+                NuvioBottomSheetDivider()
+            }
         }
         Column(
             modifier = Modifier
@@ -471,6 +523,252 @@ private fun DownloadOptionsContent(
             )
         }
     }
+}
+
+/**
+ * Manual episode picker for the "Custom" download scope: every season of the
+ * show with per-episode checkboxes, Downloaded/Watched/"You're here" badges,
+ * and a per-season whole-season toggle. The checked set lives in
+ * [PosterDownloadUiState.Ready.customSelected]; the existing quality selector
+ * and the pinned Download button keep working unchanged.
+ */
+@Composable
+private fun CustomEpisodePicker(
+    request: PosterDownloadRequest,
+    state: PosterDownloadUiState.Ready,
+    onStateChange: (PosterDownloadUiState.Ready) -> Unit,
+) {
+    // Same repository the Library Continue Watching section reads.
+    val entries = remember { WatchProgressRepository.uiState.value.entries }
+    val anchor = remember(request.parentMetaId) {
+        EpisodeDownloadPlanner.latestAnchor(entries, request.parentMetaId)
+    }
+    val watchedSet = remember(entries, request.parentMetaId) {
+        entries
+            .filter { it.parentMetaId == request.parentMetaId && it.isCompleted }
+            .mapNotNull { entry ->
+                val s = entry.seasonNumber
+                val e = entry.episodeNumber
+                if (s != null && e != null) s to e else null
+            }
+            .toSet()
+    }
+    val isDownloaded: (Int, Int) -> Boolean = remember(request.parentMetaId) {
+        { season, episode ->
+            DownloadsRepository.hasActiveOrCompletedDownload(request.parentMetaId, season, episode)
+        }
+    }
+    val seasons = remember(state.allVideos) {
+        state.allVideos
+            .filter { it.season != null && it.episode != null && it.available }
+            .groupBy { it.season!! }
+            .toSortedMap()
+    }
+
+    // Local functions are declared before their call sites (Kotlin requirement).
+    fun toggleEpisode(season: Int, episode: Int) {
+        val key = season to episode
+        val next = if (state.customSelected.contains(key)) {
+            state.customSelected - key
+        } else {
+            state.customSelected + key
+        }
+        onStateChange(state.copy(customSelected = next))
+    }
+
+    fun toggleSeason(season: Int, check: Boolean) {
+        val keys = seasons[season].orEmpty().mapNotNull { video ->
+            val episode = video.episode
+            if (episode != null) season to episode else null
+        }.toSet()
+        val next = if (check) state.customSelected + keys else state.customSelected - keys
+        onStateChange(state.copy(customSelected = next))
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 340.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        seasons.forEach { (season, videos) ->
+            CustomSeasonSection(
+                season = season,
+                videos = videos.sortedBy { it.episode },
+                selected = state.customSelected,
+                anchor = anchor,
+                watchedSet = watchedSet,
+                isDownloaded = isDownloaded,
+                onToggleEpisode = ::toggleEpisode,
+                onToggleSeason = ::toggleSeason,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CustomSeasonSection(
+    season: Int,
+    videos: List<MetaVideo>,
+    selected: Set<Pair<Int, Int>>,
+    anchor: EpisodeAnchor?,
+    watchedSet: Set<Pair<Int, Int>>,
+    isDownloaded: (Int, Int) -> Boolean,
+    onToggleEpisode: (Int, Int) -> Unit,
+    onToggleSeason: (Int, Boolean) -> Unit,
+) {
+    val seasonLabel = if (season == 0) {
+        stringResource(Res.string.downloads_options_custom_specials)
+    } else {
+        stringResource(Res.string.downloads_options_custom_season, season)
+    }
+    val downloadedCount = videos.count { isDownloaded(season, it.episode ?: 0) }
+    val checkedCount = videos.count { video -> selected.contains(season to (video.episode ?: 0)) }
+    val triState = when {
+        videos.isNotEmpty() && checkedCount >= videos.size -> ToggleableState.On
+        checkedCount == 0 -> ToggleableState.Off
+        else -> ToggleableState.Indeterminate
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onToggleSeason(season, triState != ToggleableState.On) }
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = seasonLabel,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.nuvio.colors.textPrimary,
+                )
+                Text(
+                    text = stringResource(
+                        Res.string.downloads_options_custom_downloaded_count,
+                        downloadedCount,
+                        videos.size,
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.nuvio.colors.textSecondary,
+                )
+            }
+            Text(
+                text = stringResource(Res.string.downloads_options_custom_whole_season),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.nuvio.colors.textSecondary,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+            TriStateCheckbox(
+                state = triState,
+                onClick = { onToggleSeason(season, triState != ToggleableState.On) },
+                colors = CheckboxDefaults.colors(
+                    checkedColor = MaterialTheme.nuvio.colors.accent,
+                    checkmarkColor = MaterialTheme.nuvio.colors.onAccent,
+                ),
+            )
+        }
+        videos.forEach { video ->
+            val episode = video.episode ?: return@forEach
+            CustomEpisodeRow(
+                video = video,
+                checked = selected.contains(season to episode),
+                downloaded = isDownloaded(season, episode),
+                watched = watchedSet.contains(season to episode),
+                isAnchor = anchor?.season == season && anchor?.episode == episode,
+                onToggle = { onToggleEpisode(season, episode) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun CustomEpisodeRow(
+    video: MetaVideo,
+    checked: Boolean,
+    downloaded: Boolean,
+    watched: Boolean,
+    isAnchor: Boolean,
+    onToggle: () -> Unit,
+) {
+    val episode = video.episode ?: return
+    val title = video.title.takeIf { it.isNotBlank() } ?: "E$episode"
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = { onToggle() },
+            colors = CheckboxDefaults.colors(
+                checkedColor = MaterialTheme.nuvio.colors.accent,
+                checkmarkColor = MaterialTheme.nuvio.colors.onAccent,
+            ),
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp),
+        ) {
+            Text(
+                text = "E$episode · $title",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.nuvio.colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (downloaded || watched || isAnchor) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    if (isAnchor) {
+                        MiniBadge(
+                            text = stringResource(Res.string.downloads_options_custom_youre_here),
+                            highlighted = true,
+                        )
+                    }
+                    if (downloaded) {
+                        MiniBadge(
+                            text = stringResource(Res.string.downloads_options_custom_downloaded),
+                            highlighted = false,
+                        )
+                    }
+                    if (watched) {
+                        MiniBadge(
+                            text = stringResource(Res.string.downloads_options_custom_watched),
+                            highlighted = false,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MiniBadge(
+    text: String,
+    highlighted: Boolean,
+) {
+    val tokens = MaterialTheme.nuvio
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (highlighted) tokens.colors.onAccent else tokens.colors.textSecondary,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (highlighted) tokens.colors.accent else Color.White.copy(alpha = 0.10f))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    )
 }
 
 @Composable

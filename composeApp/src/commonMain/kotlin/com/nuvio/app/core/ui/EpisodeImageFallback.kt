@@ -7,39 +7,47 @@ import coil3.request.ImageRequest
 import com.nuvio.app.core.poster.CustomPosterFallbackInterceptor
 
 /**
- * Builds a Coil model for an episode still that automatically retries with [fallbackUrl]
- * when the still URL is dead (HTTP 404, host gone, etc.). The retry is handled by
- * [CustomPosterFallbackInterceptor], which is registered on the app-wide Coil ImageLoader
- * and reads the fallback URL from [ImageRequest.memoryCacheKeyExtras].
+ * Builds a Coil model for an episode still with an ordered fallback chain:
+ * primary still -> TMDB still -> show art.
  *
  * This exists because metadata sources (e.g. Cinemeta) routinely serve episode-still URLs
  * that later rot: the URL string is non-null, so a plain `thumbnail ?: fallback` Elvis never
- * engages and the card renders black. Routing the load through the interceptor fixes every
- * call site at once.
+ * engages and the card renders black. Worse, falling straight back to the show art gives
+ * every episode of an affected show the SAME image. TMDB is the upstream source for most
+ * of these stills, so its per-episode still is the natural middle tier.
  *
- * Returns null when neither URL is usable so callers can render a placeholder instead of
+ * Failure is detected at load time by Coil itself (via [CustomPosterFallbackInterceptor],
+ * which is registered on the app-wide Coil ImageLoader and reads the ordered queue from
+ * [ImageRequest.memoryCacheKeyExtras]): no per-card network probes, no UI-thread work.
+ *
+ * Returns null when no URL is usable so callers can render a placeholder instead of
  * an empty image box.
  */
 @Composable
 fun rememberEpisodeImageModel(
     thumbnail: String?,
+    tmdbStillUrl: String?,
     fallbackUrl: String?,
 ): Any? {
     val platformContext = LocalPlatformContext.current
-    val cleanThumbnail = thumbnail?.trim()?.takeIf { it.isNotBlank() }
-    val cleanFallback = fallbackUrl?.trim()?.takeIf { it.isNotBlank() }
-    return remember(cleanThumbnail, cleanFallback, platformContext) {
+    return remember(thumbnail, tmdbStillUrl, fallbackUrl, platformContext) {
+        val queue = listOfNotNull(
+            thumbnail?.trim()?.takeIf { it.isNotBlank() },
+            tmdbStillUrl?.trim()?.takeIf { it.isNotBlank() },
+            fallbackUrl?.trim()?.takeIf { it.isNotBlank() },
+        ).distinct()
         when {
-            cleanThumbnail != null && cleanFallback != null && cleanFallback != cleanThumbnail ->
-                ImageRequest.Builder(platformContext)
-                    .data(cleanThumbnail)
-                    .memoryCacheKeyExtras(
-                        mapOf(CustomPosterFallbackInterceptor.FALLBACK_URL_KEY to cleanFallback)
+            queue.isEmpty() -> null
+            queue.size == 1 -> queue.first()
+            else -> ImageRequest.Builder(platformContext)
+                .data(queue.first())
+                .memoryCacheKeyExtras(
+                    mapOf(
+                        CustomPosterFallbackInterceptor.FALLBACK_URLS_KEY to
+                            queue.drop(1).joinToString("\n")
                     )
-                    .build()
-            cleanThumbnail != null -> cleanThumbnail
-            cleanFallback != null -> cleanFallback
-            else -> null
+                )
+                .build()
         }
     }
 }

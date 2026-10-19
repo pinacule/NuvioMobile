@@ -15,6 +15,7 @@ import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.PluginsUiState
 import com.nuvio.app.features.plugins.pluginContentId
 import com.nuvio.app.features.servers.ServerStreams
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import com.nuvio.app.features.streams.AddonStreamGroup
 import com.nuvio.app.features.streams.InstalledStreamAddonTarget
 import com.nuvio.app.features.streams.StreamAutoPlaySelector
@@ -480,7 +481,11 @@ object PlayerStreamsRepository {
                                         val mergedStreams = if (completion.streams.isEmpty()) {
                                             group.streams
                                         } else {
-                                            (group.streams + completion.streams).sortedForGroupedDisplay()
+                                            (group.streams + completion.streams).sortedForGroupedDisplay(
+                                                preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                                                    playerSettings.preferredAudioLanguage,
+                                                ),
+                                            )
                                         }
                                         val stillLoading = remaining > 0
                                         val finalError = if (mergedStreams.isEmpty() && !stillLoading) {

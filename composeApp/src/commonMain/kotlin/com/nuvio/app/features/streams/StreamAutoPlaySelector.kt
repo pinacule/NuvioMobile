@@ -50,6 +50,8 @@ object StreamAutoPlaySelector {
         bingeGroupOnly: Boolean = false,
         debridEnabled: Boolean = true,
         activeResolverProviderId: String? = null,
+        preferEnglishAudio: Boolean = false,
+        requireHdrSeeders: Boolean = false,
     ): StreamItem? =
         evaluateAutoPlayStream(
             streams = streams,
@@ -64,6 +66,8 @@ object StreamAutoPlaySelector {
             bingeGroupOnly = bingeGroupOnly,
             debridEnabled = debridEnabled,
             activeResolverProviderId = activeResolverProviderId,
+            preferEnglishAudio = preferEnglishAudio,
+            requireHdrSeeders = requireHdrSeeders,
         ).stream
 
     fun evaluateAutoPlayStream(
@@ -79,6 +83,8 @@ object StreamAutoPlaySelector {
         bingeGroupOnly: Boolean = false,
         debridEnabled: Boolean = true,
         activeResolverProviderId: String? = null,
+        preferEnglishAudio: Boolean = false,
+        requireHdrSeeders: Boolean = false,
     ): StreamAutoPlayEvaluation {
         if (streams.isEmpty()) return StreamAutoPlayEvaluation()
 
@@ -187,16 +193,33 @@ object StreamAutoPlaySelector {
                 .filterNot { it == preferredStream }
                 .forEach(::add)
         }
-        val selected = readyStreams.firstOrNull()
+        // Dub over sub, always: English-audio releases outrank everything else.
+        // HDR needs enough seeders for smooth playback; the gate falls back to
+        // the ungated list when nothing qualifies so we never pick nothing.
+        // Both sorts are stable, so the remaining order is preserved.
+        val rankedReadyStreams = readyStreams
+            .let { list ->
+                if (!requireHdrSeeders) list
+                else list.filter { stream ->
+                    !AdaptiveStreamPicker.isHdrStream(stream) ||
+                        (AdaptiveStreamPicker.parseSeeders(stream) ?: -1) >=
+                        AdaptiveStreamPicker.MIN_SEEDERS_FOR_HDR_AUTOPLAY
+                }.ifEmpty { list }
+            }
+            .let { list ->
+                if (!preferEnglishAudio) list
+                else list.sortedWith(compareByDescending { AdaptiveStreamPicker.hasEnglishAudio(it) })
+            }
+        val selected = rankedReadyStreams.firstOrNull()
         if (selected != null) {
             return StreamAutoPlayEvaluation(
                 stream = selected,
-                readyStreams = readyStreams,
+                readyStreams = rankedReadyStreams,
             )
         }
 
         return StreamAutoPlayEvaluation(
-            readyStreams = readyStreams,
+            readyStreams = rankedReadyStreams,
             hasPendingDebridCandidate = matchingStreams.any {
                 it.isPendingDebridAutoPlay(debridEnabled, activeResolverProviderId)
             },

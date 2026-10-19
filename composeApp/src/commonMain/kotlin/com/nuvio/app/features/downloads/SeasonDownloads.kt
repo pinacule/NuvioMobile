@@ -11,6 +11,8 @@ import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.player.PlayerSettingsRepository
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamParser
 import com.nuvio.app.features.streams.streamAddonInstanceId
@@ -162,6 +164,12 @@ object SeasonDownloads {
         templateVideoId: String,
     ): SeasonDownloadResult {
         DownloadsRepository.ensureLoaded()
+        runCatching { PlayerSettingsRepository.ensureLoaded() }
+        // Dub over sub, always: when matching other episodes to the template,
+        // prefer English-audio releases at the template's quality.
+        val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+            PlayerSettingsRepository.uiState.value.preferredAudioLanguage,
+        )
         val (alreadyDownloaded, wanted) = targets.partition { video ->
             DownloadsRepository.hasActiveOrCompletedDownload(parentMetaId, video.season, video.episode)
         }
@@ -174,7 +182,7 @@ object SeasonDownloads {
                             template
                         } else {
                             val candidates = fetchEpisodeStreams(addon, contentType, video.id, template)
-                            pickMatchingEpisodeStream(template, candidates)
+                            pickMatchingEpisodeStream(template, candidates, preferEnglishAudio)
                         }
                         video to stream?.let { resolvePlayable(it, video.season ?: 0, video.episode) }
                     }
@@ -283,7 +291,11 @@ object SeasonDownloads {
  * Picks the episode stream that best matches [template]: the same torrent (a season pack) first,
  * otherwise a stream of the same kind and resolution whose release name is closest.
  */
-internal fun pickMatchingEpisodeStream(template: StreamItem, candidates: List<StreamItem>): StreamItem? {
+internal fun pickMatchingEpisodeStream(
+    template: StreamItem,
+    candidates: List<StreamItem>,
+    preferEnglishAudio: Boolean = false,
+): StreamItem? {
     val templateHash = template.p2pInfoHash?.lowercase()
     if (templateHash != null) {
         candidates.firstOrNull { it.p2pInfoHash?.lowercase() == templateHash }?.let { return it }
@@ -293,9 +305,16 @@ internal fun pickMatchingEpisodeStream(template: StreamItem, candidates: List<St
         .filter { it.isTorrentStream == template.isTorrentStream }
         .filter { templateResolution == null || it.streamResolution() == templateResolution }
     if (pool.isEmpty()) return null
+    // Dub over sub: prefer English-audio releases at the template's quality.
+    val rankedPool = if (preferEnglishAudio) {
+        val english = pool.filter { AdaptiveStreamPicker.hasEnglishAudio(it) }
+        if (english.isNotEmpty()) english else pool
+    } else {
+        pool
+    }
     val templateTokens = template.releaseTokens()
     // maxByOrNull keeps the first of equal scores, so the addon's own ordering breaks ties.
-    return pool.maxByOrNull { jaccard(templateTokens, it.releaseTokens()) }
+    return rankedPool.maxByOrNull { jaccard(templateTokens, it.releaseTokens()) }
 }
 
 private val episodeMarker = Regex("\\bs\\d{1,2}\\s*e\\d{1,3}\\b|\\b\\d{1,2}x\\d{1,3}\\b|\\be(p(isode)?)?\\s*\\d{1,3}\\b")

@@ -556,8 +556,15 @@ fun StreamsScreen(
                     selectedQuality = selectedQuality,
                     onQualitySelected = { seasonQualitySelected = it },
                     onConfirm = {
+                        // Dub over sub, always: prefer an English-audio release at the chosen quality.
                         val template =
-                            EpisodeDownloadPlanner.pickBestStreamAtQuality(allStreams, selectedQuality) ?: target
+                            EpisodeDownloadPlanner.pickBestStreamAtQuality(
+                                allStreams,
+                                selectedQuality,
+                                preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                                    playerSettings.preferredAudioLanguage,
+                                ),
+                            ) ?: target
                         seasonQualityTarget = null
                         seasonQualitySelected = null
                         startSeasonDownload(template)
