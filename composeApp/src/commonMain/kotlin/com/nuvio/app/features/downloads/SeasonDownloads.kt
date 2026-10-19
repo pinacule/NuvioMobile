@@ -160,6 +160,7 @@ object SeasonDownloads {
         addon: AddonManifest,
         template: StreamItem,
         templateVideoId: String,
+        isPreload: Boolean = false,
     ): SeasonDownloadResult {
         DownloadsRepository.ensureLoaded()
         val (alreadyDownloaded, wanted) = targets.partition { video ->
@@ -201,6 +202,7 @@ object SeasonDownloads {
                     episodeTitle = video.title.takeIf(String::isNotBlank),
                     episodeThumbnail = video.thumbnail,
                     stream = it,
+                    isPreload = isPreload,
                 )
             }
             if (result == DownloadEnqueueResult.Started || result == DownloadEnqueueResult.Replaced) {

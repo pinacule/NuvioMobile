@@ -1,9 +1,11 @@
 package com.nuvio.app.features.downloads
 
+import com.nuvio.app.core.device.DataSaverRepository
 import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.player.PlayerScreenRuntime
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,7 +39,7 @@ object EpisodePreloadPolicy {
     }
 }
 
-/** One-shot background download of the next episode at the default quality. */
+/** One-shot background download of the next episode at the adaptive quality. */
 internal object EpisodePreloader {
     suspend fun preloadNextEpisode(
         contentType: String,
@@ -51,6 +53,7 @@ internal object EpisodePreloader {
         seasonNumber: Int,
         episodeNumber: Int,
         preferredAddonId: String?,
+        targetQuality: String,
     ) {
         val next = PlayerNextEpisodeRules.resolveNextEpisode(videos, seasonNumber, episodeNumber)
             ?.takeIf { it.available }
@@ -63,7 +66,7 @@ internal object EpisodePreloader {
         val allStreams = groups.flatMap { it.streams }
         val quality = EpisodeDownloadPlanner.closestQuality(
             EpisodeDownloadPlanner.distinctQualities(allStreams),
-            EpisodeDownloadPlanner.DEFAULT_QUALITY,
+            targetQuality,
         ) ?: return
         val template = EpisodeDownloadPlanner.pickBestStreamAtQuality(allStreams, quality) ?: return
         val manifest = groups.firstOrNull { it.addonId == template.addonId }?.manifest ?: return
@@ -79,6 +82,7 @@ internal object EpisodePreloader {
             addon = manifest,
             template = template,
             templateVideoId = next.id,
+            isPreload = true,
         )
         if (result is SeasonDownloadResult.Queued && result.queued > 0) {
             EpisodePreloadWatcher.ensureWatching()
@@ -156,6 +160,12 @@ internal fun PlayerScreenRuntime.maybePreloadNextEpisodeDownload() {
         )
     ) return
     nextEpisodeDownloadPreloadVideoId = videoKey
+    val dataSaverActive = runCatching { DataSaverRepository.isActiveNow() }.getOrDefault(false)
+    val targetQuality = AdaptiveStreamPicker.targetQuality(
+        isCellular = cellular,
+        batteryPercent = battery,
+        dataSaverActive = dataSaverActive,
+    )
     scope.launch {
         runCatching {
             EpisodePreloader.preloadNextEpisode(
@@ -170,6 +180,7 @@ internal fun PlayerScreenRuntime.maybePreloadNextEpisodeDownload() {
                 seasonNumber = season,
                 episodeNumber = episode,
                 preferredAddonId = activeProviderAddonId,
+                targetQuality = targetQuality,
             )
         }
     }

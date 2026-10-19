@@ -367,6 +367,7 @@ private fun HomeContinueWatchingSectionContent(
                 when (style) {
                     ContinueWatchingSectionStyle.Card -> ContinueWatchingCard(
                         item = item,
+                        cardWidth = layout.wideCardWidth,
                         useEpisodeThumbnails = useEpisodeThumbnails,
                         blurNextUp = blurNextUp,
                         onClick = onClick,
@@ -672,6 +673,7 @@ private fun continueWatchingLandscapeCardMetrics(
 @Composable
 private fun ContinueWatchingCard(
     item: ContinueWatchingItem,
+    cardWidth: Dp,
     useEpisodeThumbnails: Boolean,
     blurNextUp: Boolean,
     onClick: (() -> Unit)?,
@@ -712,7 +714,7 @@ private fun ContinueWatchingCard(
 
     Box(
         modifier = Modifier
-            .width(cardMetrics.width)
+            .width(cardWidth)
             .aspectRatio(PosterLandscapeAspectRatio)
             .clip(RoundedCornerShape(cardMetrics.cornerRadius))
             .background(MaterialTheme.colorScheme.surfaceVariant)
