@@ -63,19 +63,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.downloads_options_close
-import nuvio.composeapp.generated.resources.downloads_options_custom_downloaded
-import nuvio.composeapp.generated.resources.downloads_options_custom_downloaded_count
-import nuvio.composeapp.generated.resources.downloads_options_custom_nothing_selected
-import nuvio.composeapp.generated.resources.downloads_options_custom_season
-import nuvio.composeapp.generated.resources.downloads_options_custom_specials
-import nuvio.composeapp.generated.resources.downloads_options_custom_unavailable
-import nuvio.composeapp.generated.resources.downloads_options_custom_watched
-import nuvio.composeapp.generated.resources.downloads_options_custom_whole_season
-import nuvio.composeapp.generated.resources.downloads_options_custom_youre_here
 import nuvio.composeapp.generated.resources.downloads_options_load_failed
 import nuvio.composeapp.generated.resources.downloads_options_no_streams
 import nuvio.composeapp.generated.resources.downloads_options_quality
-import nuvio.composeapp.generated.resources.downloads_options_scope_custom
 import nuvio.composeapp.generated.resources.downloads_options_scope_next_episodes
 import nuvio.composeapp.generated.resources.downloads_options_scope_rest_of_season
 import nuvio.composeapp.generated.resources.downloads_options_title
@@ -151,8 +141,11 @@ fun PosterDownloadCoordinator(
     val unsupportedText = stringResource(Res.string.season_download_unsupported)
     val nothingNewText = stringResource(Res.string.season_download_nothing_new)
     val startedText = stringResource(Res.string.season_download_started)
-    val nothingSelectedText = stringResource(Res.downloads_options_custom_nothing_selected)
-    val unavailableSelectedText = stringResource(Res.downloads_options_custom_unavailable)
+    // TODO: migrate custom-download strings back to string resources once the
+    // generated Res class picks up new strings.xml entries (runs #33-#36:
+    // Res.string.* unresolved for strings added in batch-16; hardcoded as workaround).
+    val nothingSelectedText = "Select episodes to download"
+    val unavailableSelectedText = "Selected episodes are not available for download"
 
     // Local functions are declared before their call sites (Kotlin requirement).
     fun enqueueReady(
@@ -471,7 +464,7 @@ private fun DownloadOptionsContent(
                             )
                         }
                     DownloadOptionChip(
-                        label = stringResource(Res.downloads_options_scope_custom),
+                        label = "Custom",
                         selected = state.customMode,
                         onClick = { onStateChange(state.copy(customMode = true)) },
                     )
@@ -630,9 +623,9 @@ private fun CustomSeasonSection(
     onToggleSeason: (Int, Boolean) -> Unit,
 ) {
     val seasonLabel = if (season == 0) {
-        stringResource(Res.downloads_options_custom_specials)
+        "Specials"
     } else {
-        stringResource(Res.downloads_options_custom_season, season)
+        "Season $season"
     }
     val downloadedCount = videos.count { isDownloaded(season, it.episode ?: 0) }
     val checkedCount = videos.count { video -> selected.contains(season to (video.episode ?: 0)) }
@@ -658,17 +651,13 @@ private fun CustomSeasonSection(
                     color = MaterialTheme.nuvio.colors.textPrimary,
                 )
                 Text(
-                    text = stringResource(
-                        Res.downloads_options_custom_downloaded_count,
-                        downloadedCount,
-                        videos.size,
-                    ),
+                    text = "$downloadedCount of ${videos.size} downloaded",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.nuvio.colors.textSecondary,
                 )
             }
             Text(
-                text = stringResource(Res.downloads_options_custom_whole_season),
+                text = "Whole season",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.nuvio.colors.textSecondary,
                 modifier = Modifier.padding(end = 8.dp),
@@ -742,19 +731,19 @@ private fun CustomEpisodeRow(
                 ) {
                     if (isAnchor) {
                         MiniBadge(
-                            text = stringResource(Res.downloads_options_custom_youre_here),
+                            text = "You're here",
                             highlighted = true,
                         )
                     }
                     if (downloaded) {
                         MiniBadge(
-                            text = stringResource(Res.downloads_options_custom_downloaded),
+                            text = "Downloaded",
                             highlighted = false,
                         )
                     }
                     if (watched) {
                         MiniBadge(
-                            text = stringResource(Res.downloads_options_custom_watched),
+                            text = "Watched",
                             highlighted = false,
                         )
                     }
