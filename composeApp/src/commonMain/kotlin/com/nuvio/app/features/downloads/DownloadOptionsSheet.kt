@@ -151,8 +151,8 @@ fun PosterDownloadCoordinator(
     val unsupportedText = stringResource(Res.string.season_download_unsupported)
     val nothingNewText = stringResource(Res.string.season_download_nothing_new)
     val startedText = stringResource(Res.string.season_download_started)
-    val nothingSelectedText = stringResource(downloads_options_custom_nothing_selected)
-    val unavailableSelectedText = stringResource(downloads_options_custom_unavailable)
+    val nothingSelectedText = stringResource(Res.downloads_options_custom_nothing_selected)
+    val unavailableSelectedText = stringResource(Res.downloads_options_custom_unavailable)
 
     // Local functions are declared before their call sites (Kotlin requirement).
     fun enqueueReady(
@@ -471,7 +471,7 @@ private fun DownloadOptionsContent(
                             )
                         }
                     DownloadOptionChip(
-                        label = stringResource(downloads_options_scope_custom),
+                        label = stringResource(Res.downloads_options_scope_custom),
                         selected = state.customMode,
                         onClick = { onStateChange(state.copy(customMode = true)) },
                     )
@@ -630,9 +630,9 @@ private fun CustomSeasonSection(
     onToggleSeason: (Int, Boolean) -> Unit,
 ) {
     val seasonLabel = if (season == 0) {
-        stringResource(downloads_options_custom_specials)
+        stringResource(Res.downloads_options_custom_specials)
     } else {
-        stringResource(downloads_options_custom_season, season)
+        stringResource(Res.downloads_options_custom_season, season)
     }
     val downloadedCount = videos.count { isDownloaded(season, it.episode ?: 0) }
     val checkedCount = videos.count { video -> selected.contains(season to (video.episode ?: 0)) }
@@ -659,7 +659,7 @@ private fun CustomSeasonSection(
                 )
                 Text(
                     text = stringResource(
-                        downloads_options_custom_downloaded_count,
+                        Res.downloads_options_custom_downloaded_count,
                         downloadedCount,
                         videos.size,
                     ),
@@ -668,7 +668,7 @@ private fun CustomSeasonSection(
                 )
             }
             Text(
-                text = stringResource(downloads_options_custom_whole_season),
+                text = stringResource(Res.downloads_options_custom_whole_season),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.nuvio.colors.textSecondary,
                 modifier = Modifier.padding(end = 8.dp),
@@ -742,19 +742,19 @@ private fun CustomEpisodeRow(
                 ) {
                     if (isAnchor) {
                         MiniBadge(
-                            text = stringResource(downloads_options_custom_youre_here),
+                            text = stringResource(Res.downloads_options_custom_youre_here),
                             highlighted = true,
                         )
                     }
                     if (downloaded) {
                         MiniBadge(
-                            text = stringResource(downloads_options_custom_downloaded),
+                            text = stringResource(Res.downloads_options_custom_downloaded),
                             highlighted = false,
                         )
                     }
                     if (watched) {
                         MiniBadge(
-                            text = stringResource(downloads_options_custom_watched),
+                            text = stringResource(Res.downloads_options_custom_watched),
                             highlighted = false,
                         )
                     }
