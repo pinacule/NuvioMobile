@@ -40,6 +40,9 @@ class PluginSyncTest {
         SettingsInitializer().create(context)
         PluginStorage.initialize(context)
         AddonStorage.initialize(context)
+        // This test exercises addon sync logic, not the pre-installed addons seeding:
+        // mark seeding as done so the async Torrentio/Cinemeta install doesn't interfere.
+        AddonStorage.savePreinstalledAddonsSeeded(1, true)
         ServerConfigurationStorage.initialize(context)
         PluginRepository.clearLocalState()
         AddonRepository.clearLocalState()

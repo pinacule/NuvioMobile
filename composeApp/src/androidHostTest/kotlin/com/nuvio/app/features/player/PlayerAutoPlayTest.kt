@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
+import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.details.MetaDetailsUiState
 import com.nuvio.app.features.details.MetaVideo
@@ -51,6 +52,7 @@ class PlayerAutoPlayTest {
         compose.waitForIdle()
         scope.cancel()
         WatchProgressRepository.clearLocalState()
+        DeviceEnvironment.testWifiOverride = null
         RuntimeEnvironment.getApplication()
             .getSharedPreferences("nuvio_watch_progress", Context.MODE_PRIVATE)
             .edit().clear().commit()
@@ -329,6 +331,9 @@ class PlayerAutoPlayTest {
     private fun startRuntime(settings: PlayerSettingsUiState? = null): PlayerScreenRuntime {
         WatchProgressStorage.initialize(RuntimeEnvironment.getApplication())
         WatchProgressRepository.clearLocalState()
+        // The auto-play tests predate the WiFi-only gate for automatic up-next: simulate WiFi
+        // so the auto-play state machine under test is exercised. Reset in cleanup().
+        DeviceEnvironment.testWifiOverride = true
         val runtime = runtime()
         if (settings != null) runtime.playerSettingsUiState = settings
         compose.setContent { if (playerVisible.value) runtime.BindPlayerRuntimeEffects() }

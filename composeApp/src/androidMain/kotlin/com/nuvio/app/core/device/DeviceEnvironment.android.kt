@@ -13,7 +13,14 @@ actual object DeviceEnvironment {
         appContext = context.applicationContext
     }
 
-    actual fun isWifi(): Boolean = activeTransport() == NetworkCapabilities.TRANSPORT_WIFI
+    /**
+     * Test-only override for [isWifi]. When non-null, [isWifi] returns this value instead of
+     * querying the ConnectivityManager. Robolectric tests have no real network and never call
+     * [initialize], so they set this to simulate WiFi. Always null in production.
+     */
+    internal var testWifiOverride: Boolean? = null
+
+    actual fun isWifi(): Boolean = testWifiOverride ?: (activeTransport() == NetworkCapabilities.TRANSPORT_WIFI)
 
     actual fun isCellular(): Boolean = activeTransport() == NetworkCapabilities.TRANSPORT_CELLULAR
 
