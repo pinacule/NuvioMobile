@@ -19,7 +19,6 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Flag
-import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Lock
@@ -65,17 +64,22 @@ internal fun PlayerToolbar(
     onLockToggle: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
-    onPartyClick: (() -> Unit)? = null,
-    partyActive: Boolean = false,
+    onQualityClick: (() -> Unit)? = null,
+    qualityLabel: String? = null,
 ) {
     Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Spacer(Modifier.weight(1f))
-        if (onPartyClick != null) {
+        if (onQualityClick != null) {
             PlayerAction(
-                description = stringResource(Res.string.party_title),
-                icon = Icons.Rounded.Groups,
-                onClick = onPartyClick,
-                tint = if (partyActive) MaterialTheme.colorScheme.primary else Color.White,
+                description = buildString {
+                    append(stringResource(Res.string.downloads_options_quality))
+                    qualityLabel?.takeIf { label -> label.isNotBlank() }?.let { label ->
+                        append(" ")
+                        append(label)
+                    }
+                },
+                icon = Icons.Rounded.HighQuality,
+                onClick = onQualityClick,
             )
         }
         PlayerAction(
@@ -107,8 +111,6 @@ internal fun PlayerControlActions(
     onSubtitleClick: () -> Unit,
     onAudioClick: () -> Unit,
     onSourcesClick: (() -> Unit)?,
-    onQualityClick: (() -> Unit)?,
-    qualityLabel: String?,
     onEpisodesClick: (() -> Unit)?,
     onNextEpisodeClick: (() -> Unit)?,
     onSwitchEngineClick: (() -> Unit)?,
@@ -146,19 +148,6 @@ internal fun PlayerControlActions(
             PlayerControlAction(
                 stringResource(Res.string.compose_player_sources), it,
                 painter = appIconPainter(AppIconResource.PlayerSource),
-            )
-        },
-        onQualityClick?.let {
-            PlayerControlAction(
-                buildString {
-                    append(stringResource(Res.string.downloads_options_quality))
-                    qualityLabel?.takeIf { label -> label.isNotBlank() }?.let { label ->
-                        append(" ")
-                        append(label)
-                    }
-                },
-                it,
-                icon = Icons.Rounded.HighQuality,
             )
         },
         onEpisodesClick?.let {

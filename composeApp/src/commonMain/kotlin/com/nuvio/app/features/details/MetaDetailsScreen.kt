@@ -1678,7 +1678,8 @@ fun MetaDetailsScreen(
                 stringResource(Res.string.episodes_season, it)
             } ?: stringResource(Res.string.episodes_specials)
             NuvioPosterZoomActionOverlay(
-                imageUrl = zoomAnchor.imageUrl ?: selectedEpisode.thumbnail ?: meta.background ?: meta.poster,
+                imageUrl = zoomAnchor.imageUrl ?: selectedEpisode.thumbnail,
+                fallbackImageUrl = meta.background ?: meta.poster,
                 title = selectedEpisode.title,
                 subtitle = localizedSeasonEpisodeCode(selectedEpisode.season, selectedEpisode.episode) ?: seasonLabel,
                 isWatched = isSelectedEpisodeWatched,

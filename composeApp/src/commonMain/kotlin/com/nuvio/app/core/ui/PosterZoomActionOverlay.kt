@@ -143,6 +143,7 @@ private val PosterZoomMenuSpring = spring<Float>(
 @Composable
 fun NuvioPosterZoomActionOverlay(
     imageUrl: String?,
+    fallbackImageUrl: String? = null,
     title: String,
     subtitle: String?,
     isWatched: Boolean = false,
@@ -174,6 +175,16 @@ fun NuvioPosterZoomActionOverlay(
     var returnBounds by remember { mutableStateOf<Rect?>(null) }
     var lifted by remember { mutableStateOf(false) }
     var showFallback by remember { mutableStateOf(source == null) }
+
+    // Episode stills rot: route the zoom image through the Coil fallback interceptor so a
+    // dead still URL retries with the show art instead of rendering a dark empty box.
+    // Other zoom callers (posters, continue-watching) leave fallbackImageUrl null and their
+    // model collapses back to the plain URL, exactly as before.
+    val zoomImageModel = rememberEpisodeImageModel(
+        thumbnail = imageUrl,
+        fallbackUrl = fallbackImageUrl,
+    )
+    var zoomImageFailed by remember(imageUrl, fallbackImageUrl) { mutableStateOf(false) }
 
     var rootOrigin by remember { mutableStateOf(Offset.Zero) }
     var slotBounds by remember { mutableStateOf<Rect?>(null) }
@@ -445,9 +456,10 @@ fun NuvioPosterZoomActionOverlay(
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (imageUrl != null) {
+                        if (zoomImageModel != null && !zoomImageFailed) {
                             AsyncImage(
-                                model = imageUrl,
+                                model = zoomImageModel,
+                                onError = { zoomImageFailed = true },
                                 contentDescription = title,
                                 modifier = Modifier
                                     .fillMaxSize()

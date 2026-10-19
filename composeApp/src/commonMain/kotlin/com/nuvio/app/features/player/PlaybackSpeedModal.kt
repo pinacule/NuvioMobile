@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -80,7 +81,7 @@ fun PlaybackSpeedModal(
                 .fillMaxSize()
                 .onGloballyPositioned { containerOriginPx = it.boundsInRoot().topLeft },
         ) {
-            val popupWidth = minOf(maxWidth - 32.dp, 208.dp)
+            val popupWidth = minOf(maxWidth - 32.dp, 264.dp)
             // (x offset from container start, lift above container bottom) for the anchored
             // position, or null when there is no anchor (fall back to bottom-center).
             val anchorPlacement = remember(anchorBounds, containerOriginPx, maxWidth, maxHeight) {
@@ -150,29 +151,39 @@ fun PlaybackSpeedModal(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                if (shownSpeed != defaultSpeed) {
-                    SpeedChip(
-                        label = stringResource(Res.string.player_speed_make_default),
-                        selected = false,
-                        onClick = { onMakeDefault(shownSpeed) },
-                    )
-                }
+                // The chip keeps its space even at the default speed (invisible and
+                // non-interactive) so the popup height never changes while dragging:
+                // otherwise passing the default speed (e.g. 3.0x) makes the whole
+                // popup visibly jump as the chip appears/disappears.
+                SpeedChip(
+                    label = stringResource(Res.string.player_speed_make_default),
+                    selected = false,
+                    onClick = { onMakeDefault(shownSpeed) },
+                    modifier = Modifier.alpha(if (shownSpeed != defaultSpeed) 1f else 0f),
+                    enabled = shownSpeed != defaultSpeed,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun SpeedChip(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun SpeedChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
     val tokens = MaterialTheme.nuvio
     Text(
         text = label,
         color = if (selected) tokens.colors.onAccent else Color.White,
         style = MaterialTheme.typography.labelMedium,
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(if (selected) tokens.colors.accent else Color.White.copy(alpha = 0.14f))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
     )
 }

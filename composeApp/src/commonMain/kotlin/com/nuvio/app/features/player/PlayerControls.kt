@@ -29,7 +29,7 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Flag
-import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
@@ -104,8 +104,8 @@ internal fun PlayerControlsShell(
     showPlaybackControls: Boolean = true,
     onLockToggle: () -> Unit,
     onBack: () -> Unit,
-    onPartyClick: (() -> Unit)? = null,
-    partyActive: Boolean = false,
+    onQualityClick: (() -> Unit)? = null,
+    qualityLabel: String? = null,
     onTogglePlayback: () -> Unit,
     onSeekBack: () -> Unit,
     onSeekForward: () -> Unit,
@@ -193,8 +193,8 @@ internal fun PlayerControlsShell(
                     onLockToggle = onLockToggle,
                     onVideoSettingsClick = onVideoSettingsClick,
                     onOpenInExternalPlayer = onOpenInExternalPlayer,
-                    onPartyClick = onPartyClick,
-                    partyActive = partyActive,
+                    onQualityClick = onQualityClick,
+                    qualityLabel = qualityLabel,
                     onBack = onBack,
                     dataSaverActive = dataSaverActive,
                     modifier = Modifier
@@ -213,8 +213,8 @@ internal fun PlayerControlsShell(
                         isLocked = isLocked,
                         onLockToggle = onLockToggle,
                         onBack = onBack,
-                        onPartyClick = onPartyClick,
-                        partyActive = partyActive,
+                        onQualityClick = onQualityClick,
+                        qualityLabel = qualityLabel,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
@@ -320,8 +320,6 @@ internal fun PlayerControlsShell(
                         onSubtitleClick = onSubtitleClick,
                         onAudioClick = onAudioClick,
                         onSourcesClick = onSourcesClick,
-                        onQualityClick = onQualityClick,
-                        qualityLabel = qualityLabel,
                         onEpisodesClick = onEpisodesClick,
                         onNextEpisodeClick = onNextEpisodeClick,
                         onSwitchEngineClick = onSwitchEngineClick,
@@ -358,8 +356,8 @@ private fun PlayerHeader(
     onLockToggle: () -> Unit,
     onVideoSettingsClick: (() -> Unit)?,
     onOpenInExternalPlayer: (() -> Unit)?,
-    onPartyClick: (() -> Unit)?,
-    partyActive: Boolean,
+    onQualityClick: (() -> Unit)?,
+    qualityLabel: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     dataSaverActive: Boolean = false,
@@ -473,14 +471,19 @@ private fun PlayerHeader(
                             onClick = onOpenInExternalPlayer,
                         )
                     }
-                    if (onPartyClick != null) {
+                    if (onQualityClick != null) {
                         PlayerHeaderIconButton(
-                            icon = Icons.Rounded.Groups,
-                            contentDescription = stringResource(Res.string.party_title),
+                            icon = Icons.Rounded.HighQuality,
+                            contentDescription = buildString {
+                                append(stringResource(Res.string.downloads_options_quality))
+                                qualityLabel?.takeIf { label -> label.isNotBlank() }?.let { label ->
+                                    append(" ")
+                                    append(label)
+                                }
+                            },
                             buttonSize = metrics.headerIconSize + 16.dp,
                             iconSize = metrics.headerIconSize,
-                            onClick = onPartyClick,
-                            tint = if (partyActive) MaterialTheme.colorScheme.primary else Color.White,
+                            onClick = onQualityClick,
                         )
                     }
                     PlayerHeaderIconButton(

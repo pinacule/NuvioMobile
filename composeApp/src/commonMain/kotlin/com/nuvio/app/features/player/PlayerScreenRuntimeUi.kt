@@ -23,7 +23,6 @@ import com.nuvio.app.features.downloads.EpisodeDownloadPlanner
 import com.nuvio.app.features.p2p.P2pStreamingState
 import com.nuvio.app.features.p2p.formatP2pMegabytes
 import com.nuvio.app.features.p2p.formatP2pSpeed
-import com.nuvio.app.features.party.PartyRepository
 import com.nuvio.app.features.player.skip.internalSkipAction
 import com.nuvio.app.features.servers.ServerStreams
 import com.nuvio.app.features.streams.streamAddonInstanceId
@@ -309,8 +308,6 @@ private fun PlayerScreenRuntime.RenderPlayerControls(
     onSpeedButtonPlaced: ((Rect) -> Unit)? = null,
 ) {
     val isInPip = rememberIsInPictureInPicture()
-    val partyState by PartyRepository.state.collectAsStateWithLifecycle()
-    val partyActive = partyState.party != null
     val dataSaverActive = remember {
         DataSaverRepository.ensureLoaded()
         DataSaverRepository.isActiveNow()
@@ -351,15 +348,6 @@ private fun PlayerScreenRuntime.RenderPlayerControls(
                 flushWatchProgress()
                 args.onBack()
             },
-            onPartyClick = if (PartyRepository.available.collectAsStateWithLifecycle().value) {
-                {
-                    showPartyPanel = true
-                    controlsVisible = false
-                }
-            } else {
-                null
-            },
-            partyActive = partyActive,
             onTogglePlayback = { togglePlayback() },
             onSeekBack = { seekBy(-10_000L) },
             onSeekForward = { seekBy(10_000L) },

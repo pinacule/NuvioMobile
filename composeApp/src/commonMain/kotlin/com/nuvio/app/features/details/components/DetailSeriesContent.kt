@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
+import com.nuvio.app.core.ui.rememberEpisodeImageModel
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -316,7 +317,12 @@ internal fun EpisodeGridCell(
 ) {
     val cornerRadius = rememberPosterCardStyleUiState().cornerRadiusDp.dp
     val cardShape = RoundedCornerShape(cornerRadius)
-    val imageUrl = video.thumbnail ?: fallbackImage
+    val imageUrl = video.thumbnail?.takeIf { it.isNotBlank() } ?: fallbackImage
+    // Dead episode-still URLs (e.g. rotted Cinemeta stills) are non-null, so the Elvis above
+    // never engages: route the load through the fallback interceptor so a 404 retries with
+    // the show art instead of rendering a black card.
+    val imageModel = rememberEpisodeImageModel(video.thumbnail, fallbackImage)
+    var imageLoadFailed by remember(video.thumbnail, fallbackImage) { mutableStateOf(false) }
     val shouldBlurArtwork = blurUnwatchedEpisodes && !isWatched
     val visibleProgressEntry = progressEntry?.takeIf { it.durationMs > 0L && !it.isCompleted }
     val ratingLabel = remember(imdbRating, episodeRatingsVisibility, isWatched) {
@@ -340,10 +346,11 @@ internal fun EpisodeGridCell(
                 zoomCornerRadius = cornerRadius,
             ),
     ) {
-        if (imageUrl != null) {
+        if (imageModel != null && !imageLoadFailed) {
             AsyncImage(
-                model = imageUrl,
+                model = imageModel,
                 contentDescription = video.title,
+                onError = { imageLoadFailed = true },
                 modifier = Modifier
                     .fillMaxSize()
                     .then(if (shouldBlurArtwork) Modifier.blur(18.dp) else Modifier),
@@ -952,7 +959,11 @@ private fun EpisodeHorizontalCard(
     }
     val formattedDate = remember(video.released) { video.released?.let { formatReleaseDateForDisplay(it) } }
     val runtimeLabel = remember(video.runtime) { video.runtime?.takeIf { it > 0 }?.let(::formatEpisodeRuntime) }
-    val imageUrl = video.thumbnail ?: fallbackImage
+    val imageUrl = video.thumbnail?.takeIf { it.isNotBlank() } ?: fallbackImage
+    // Dead episode-still URLs are non-null, so the Elvis above never engages: route the load
+    // through the fallback interceptor so a 404 retries with the show art.
+    val imageModel = rememberEpisodeImageModel(video.thumbnail, fallbackImage)
+    var imageLoadFailed by remember(video.thumbnail, fallbackImage) { mutableStateOf(false) }
     val visibleProgressEntry = progressEntry?.takeIf { it.durationMs > 0L && !it.isCompleted }
     val progressBarHeight = 4.dp
     val progressBarContentSpacing = 6.dp
@@ -981,10 +992,11 @@ private fun EpisodeHorizontalCard(
             ),
     ) {
         val shouldBlurArtwork = blurUnwatchedEpisodes && !isWatched
-        if (imageUrl != null) {
+        if (imageModel != null && !imageLoadFailed) {
             AsyncImage(
-                model = imageUrl,
+                model = imageModel,
                 contentDescription = video.title,
+                onError = { imageLoadFailed = true },
                 modifier = Modifier
                     .fillMaxSize()
                     .then(if (shouldBlurArtwork) Modifier.blur(18.dp) else Modifier),
@@ -1366,12 +1378,16 @@ private fun EpisodeListCard(
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(topStart = cornerRadius, bottomStart = cornerRadius)),
             ) {
-                val imageUrl = video.thumbnail ?: fallbackImage
+                // Dead episode-still URLs are non-null, so a plain Elvis never engages: route
+                // the load through the fallback interceptor so a 404 retries with the show art.
+                val imageModel = rememberEpisodeImageModel(video.thumbnail, fallbackImage)
+                var imageLoadFailed by remember(video.thumbnail, fallbackImage) { mutableStateOf(false) }
                 val shouldBlurArtwork = blurUnwatchedEpisodes && !isWatched
-                if (imageUrl != null) {
+                if (imageModel != null && !imageLoadFailed) {
                     AsyncImage(
-                        model = imageUrl,
+                        model = imageModel,
                         contentDescription = video.title,
+                        onError = { imageLoadFailed = true },
                         modifier = Modifier
                             .fillMaxSize()
                             .then(if (shouldBlurArtwork) Modifier.blur(18.dp) else Modifier),

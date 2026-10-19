@@ -244,7 +244,7 @@ internal object MetaDetailsParser {
                 title = title,
                 released = video.string("released"),
                 available = video.boolean("available") ?: true,
-                thumbnail = video.string("thumbnail"),
+                thumbnail = video.string("thumbnail")?.takeIf { it.isNotBlank() },
                 seasonPoster = video.string("seasonPoster") ?: video.string("season_poster_path"),
                 season = video.int("season"),
                 episode = video.int("episode"),

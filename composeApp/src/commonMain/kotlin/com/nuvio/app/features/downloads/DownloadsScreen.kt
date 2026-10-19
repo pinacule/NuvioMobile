@@ -55,6 +55,7 @@ import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioScreenHeader
 import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.NuvioToastController
+import com.nuvio.app.core.ui.rememberEpisodeImageModel
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.formatP2pSpeed
 import nuvio.composeapp.generated.resources.*
@@ -356,7 +357,8 @@ private fun ActiveDownloadCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(contentAlignment = Alignment.Center) {
                     Artwork(
-                        url = item.episodeThumbnail ?: item.background ?: item.poster,
+                        url = item.episodeThumbnail,
+                        fallbackUrl = item.background ?: item.poster,
                         width = 112.dp,
                         aspectRatio = 16f / 9f,
                     )
@@ -550,7 +552,8 @@ private fun EpisodeCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Artwork(
-                url = item.episodeThumbnail ?: item.background ?: item.poster,
+                url = item.episodeThumbnail,
+                fallbackUrl = item.background ?: item.poster,
                 width = 120.dp,
                 aspectRatio = 16f / 9f,
             )
@@ -645,7 +648,11 @@ private fun ActionIcon(
 }
 
 @Composable
-private fun Artwork(url: String?, width: Dp, aspectRatio: Float) {
+private fun Artwork(url: String?, fallbackUrl: String? = null, width: Dp, aspectRatio: Float) {
+    // Dead episode-still URLs are non-null, so a plain Elvis never engages: route the load
+    // through the fallback interceptor so a 404 retries with the show art.
+    val imageModel = rememberEpisodeImageModel(url, fallbackUrl)
+    var loadFailed by remember(url, fallbackUrl) { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .width(width)
@@ -654,19 +661,20 @@ private fun Artwork(url: String?, width: Dp, aspectRatio: Float) {
             .background(MaterialTheme.colorScheme.surfaceContainerHighest),
         contentAlignment = Alignment.Center,
     ) {
-        if (url.isNullOrBlank()) {
+        if (imageModel != null && !loadFailed) {
+            AsyncImage(
+                model = imageModel,
+                contentDescription = null,
+                onError = { loadFailed = true },
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
             Icon(
                 imageVector = Icons.Rounded.Movie,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(24.dp),
-            )
-        } else {
-            AsyncImage(
-                model = url,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
             )
         }
     }
