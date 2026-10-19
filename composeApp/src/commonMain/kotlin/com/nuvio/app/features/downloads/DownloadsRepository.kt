@@ -10,6 +10,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +24,10 @@ import kotlinx.serialization.json.Json
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
 
+/** Matches "HTTP 403" / "HTTP 404" / "HTTP 410" inside a plain-text failure message. */
+private val staleHttpCodeInMessage =
+    Regex("""HTTP\s+(${STALE_HTTP_STATUS_CODES.joinToString("|")})\b""")
+
 object DownloadsRepository {
     private val _uiState = MutableStateFlow(DownloadsUiState())
     val uiState: StateFlow<DownloadsUiState> = _uiState.asStateFlow()
@@ -31,6 +36,17 @@ object DownloadsRepository {
     val hasUnseenCompleted: StateFlow<Boolean> = _hasUnseenCompleted.asStateFlow()
 
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
+    /**
+     * Stream-preparation retry budget per download id, mirroring
+     * shouldRetryAndroidDownload's 4 retries for transient engine collisions.
+     */
+    private val torrentPrepRetryCounts = mutableMapOf<String, Int>()
+
+    /** How many times a torrent download retries a transient stream-preparation collision. */
+    private const val MAX_TORRENT_PREP_RETRIES = 4
+    /** Base backoff between preparation-collision retries; multiplied by the attempt number. */
+    private const val TORRENT_PREP_RETRY_BASE_DELAY_MS = 5_000L
+
     private var hasLoaded = false
     private var nextDownloadOrdinal = 0L
     /** Background source-URL refreshes for manual retries; never blocks the UI. */
@@ -64,6 +80,7 @@ object DownloadsRepository {
     fun clearLocalState() {
         activeHandles.values.forEach(DownloadsTaskHandle::cancel)
         activeHandles.clear()
+        torrentPrepRetryCounts.clear()
         stashedReplacements.clear()
         hasLoaded = false
         _hasUnseenCompleted.value = false
@@ -447,6 +464,55 @@ object DownloadsRepository {
     private fun isSettleableDownload(downloadId: String): Boolean =
         _uiState.value.items.firstOrNull { it.id == downloadId }?.status == DownloadStatus.Downloading
 
+    /**
+     * Humanizes a terminal download failure message that arrived as a plain string:
+     * never park a raw engine message or a bare HTTP code on the download. Mirrors
+     * AndroidDownloadScheduler.humanDownloadError's mapping (which works from the
+     * exception type); this string-based version covers the paths that only carry
+     * the message text.
+     */
+    private fun humanizeDownloadFailureMessage(message: String): String = runBlocking {
+        when {
+            message.contains("stream preparation", ignoreCase = true) ->
+                getString(Res.string.download_failed)
+            staleHttpCodeInMessage.containsMatchIn(message) ->
+                getString(Res.string.download_failed_link_expired)
+            else -> message.ifBlank { getString(Res.string.download_failed) }
+        }
+    }
+
+    /**
+     * True when a torrent download failed on a transient stream-preparation
+     * collision (e.g. "stream preparation already pending") and still has retry
+     * budget left. Mirrors shouldRetryAndroidDownload: up to 4 retries.
+     */
+    private fun shouldRetryTorrentPreparationFailure(item: DownloadItem, message: String): Boolean {
+        if (!item.isTorrent) return false
+        if (!message.contains("stream preparation", ignoreCase = true)) return false
+        return torrentPrepRetryCounts.getOrDefault(item.id, 0) < MAX_TORRENT_PREP_RETRIES
+    }
+
+    /**
+     * Backs off and restarts a torrent download after a transient
+     * stream-preparation collision. The item stays Downloading; the humanized
+     * terminal message is only parked once the retry budget is exhausted.
+     */
+    private fun scheduleTorrentPreparationRetry(item: DownloadItem) {
+        val attempt = torrentPrepRetryCounts.getOrDefault(item.id, 0) + 1
+        torrentPrepRetryCounts[item.id] = attempt
+        refreshScope.launch {
+            delay(TORRENT_PREP_RETRY_BASE_DELAY_MS * attempt)
+            val current = _uiState.value.items.firstOrNull { it.id == item.id }
+            // The user may have paused, cancelled or deleted the download while
+            // we were backing off: only restart if it's still Downloading.
+            if (current?.status == DownloadStatus.Downloading) {
+                startDownload(current)
+            } else {
+                torrentPrepRetryCounts.remove(item.id)
+            }
+        }
+    }
+
     private fun startDownload(item: DownloadItem, resetValidator: Boolean = false) {
         val request = DownloadPlatformRequest(item, resetValidator)
 
@@ -468,6 +534,7 @@ object DownloadsRepository {
             },
             onSuccess = { localFileUri, totalBytes ->
                 activeHandles.remove(item.id)
+                torrentPrepRetryCounts.remove(item.id)
                 if (isSettleableDownload(item.id)) {
                     // The replacement proved good: delete the superseded finished file.
                     stashedReplacements.remove(item.id)?.fileUri?.let {
@@ -492,30 +559,38 @@ object DownloadsRepository {
             },
             onFailure = { message ->
                 activeHandles.remove(item.id)
-                val stashed = if (isSettleableDownload(item.id)) {
-                    stashedReplacements.remove(item.id)
+                // Transient engine preparation collisions (e.g. "stream preparation
+                // already pending"): back off and retry instead of parking a terminal
+                // failure, mirroring shouldRetryAndroidDownload's budget of 4.
+                if (shouldRetryTorrentPreparationFailure(item, message)) {
+                    scheduleTorrentPreparationRetry(item)
                 } else {
-                    null
-                }
-                if (stashed != null) {
-                    // The replacement failed: restore the superseded finished episode and
-                    // drop the failed attempt entirely.
-                    DownloadsPlatformDownloader.removePartialFile(item.fileName)
-                    val restored = _uiState.value.items.toMutableList()
-                    restored.removeAll { it.id == item.id }
-                    restored.add(0, stashed.item)
-                    publish(restored)
-                    persist()
-                } else {
-                    mutateItem(item.id) { current ->
-                        if (current.status != DownloadStatus.Downloading) {
-                            current
-                        } else {
-                            current.copy(
-                                status = DownloadStatus.Failed,
-                                errorMessage = message.ifBlank { runBlocking { getString(Res.string.download_failed) } },
-                                updatedAtEpochMs = DownloadsClock.nowEpochMs(),
-                            )
+                    torrentPrepRetryCounts.remove(item.id)
+                    val stashed = if (isSettleableDownload(item.id)) {
+                        stashedReplacements.remove(item.id)
+                    } else {
+                        null
+                    }
+                    if (stashed != null) {
+                        // The replacement failed: restore the superseded finished episode and
+                        // drop the failed attempt entirely.
+                        DownloadsPlatformDownloader.removePartialFile(item.fileName)
+                        val restored = _uiState.value.items.toMutableList()
+                        restored.removeAll { it.id == item.id }
+                        restored.add(0, stashed.item)
+                        publish(restored)
+                        persist()
+                    } else {
+                        mutateItem(item.id) { current ->
+                            if (current.status != DownloadStatus.Downloading) {
+                                current
+                            } else {
+                                current.copy(
+                                    status = DownloadStatus.Failed,
+                                    errorMessage = humanizeDownloadFailureMessage(message),
+                                    updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+                                )
+                            }
                         }
                     }
                 }
