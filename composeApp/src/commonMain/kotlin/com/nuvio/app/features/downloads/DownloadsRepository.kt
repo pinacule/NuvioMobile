@@ -29,6 +29,18 @@ object DownloadsRepository {
     private var hasLoaded = false
     private var nextDownloadOrdinal = 0L
 
+    /**
+     * Finished downloads kept on disk while their replacement is in flight, keyed by the
+     * replacement's download id. The old file is deleted only after the replacement succeeds;
+     * on failure (or cancel) the stashed snapshot is restored so the episode stays playable.
+     */
+    private val stashedReplacements = mutableMapOf<String, StashedReplacement>()
+
+    private data class StashedReplacement(
+        val item: DownloadItem,
+        val fileUri: String?,
+    )
+
     fun ensureLoaded() {
         if (hasLoaded) return
         loadFromDisk()
@@ -45,6 +57,7 @@ object DownloadsRepository {
     fun clearLocalState() {
         activeHandles.values.forEach(DownloadsTaskHandle::cancel)
         activeHandles.clear()
+        stashedReplacements.clear()
         hasLoaded = false
         _hasUnseenCompleted.value = false
         _uiState.value = DownloadsUiState()
@@ -160,17 +173,33 @@ object DownloadsRepository {
         )
 
         var replacedExisting = false
+        var pendingStash: StashedReplacement? = null
         val currentItems = _uiState.value.items.toMutableList()
         val existing = currentItems.firstOrNull { it.logicalContentKey == logicalKey }
         if (existing != null) {
             replacedExisting = true
             activeHandles.remove(existing.id)?.cancel()
-            DownloadsPlatformDownloader.removeFile(playableLocalFileUri(existing) ?: existing.localFileUri)
-            DownloadsPlatformDownloader.removePartialFile(existing.fileName)
+            // If the replaced item is itself an in-flight replacement, its stash moves to the
+            // new download so the original finished file is still settled either way.
+            val carriedStash = stashedReplacements.remove(existing.id)
+            if (existing.status == DownloadStatus.Completed) {
+                // Delete-late: keep the finished file on disk until the replacement proves
+                // good. Safe to defer because buildFileName includes the downloadId, so the
+                // new download writes to a different file.
+                val oldFileUri = playableLocalFileUri(existing) ?: existing.localFileUri
+                val normalizedExisting =
+                    _uiState.value.items.firstOrNull { it.id == existing.id } ?: existing
+                pendingStash = StashedReplacement(item = normalizedExisting, fileUri = oldFileUri)
+            } else {
+                DownloadsPlatformDownloader.removeFile(playableLocalFileUri(existing) ?: existing.localFileUri)
+                DownloadsPlatformDownloader.removePartialFile(existing.fileName)
+                pendingStash = carriedStash
+            }
             currentItems.removeAll { it.id == existing.id }
         }
 
         val downloadId = nextDownloadId(now)
+        pendingStash?.let { stashedReplacements[downloadId] = it }
         val fileName = buildFileName(
             title = title,
             seasonNumber = seasonNumber,
@@ -294,11 +323,22 @@ object DownloadsRepository {
         val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
 
         activeHandles.remove(downloadId)?.cancel()
-        DownloadsPlatformDownloader.removeFile(playableLocalFileUri(item) ?: item.localFileUri)
-        DownloadsPlatformDownloader.removePartialFile(item.fileName)
+        val stashed = stashedReplacements.remove(downloadId)
+        if (stashed != null) {
+            // Cancelling a replacement: give back the superseded finished episode.
+            DownloadsPlatformDownloader.removePartialFile(item.fileName)
+            val restored = _uiState.value.items.toMutableList()
+            restored.removeAll { it.id == downloadId }
+            restored.add(0, stashed.item)
+            publish(restored)
+            persist()
+        } else {
+            DownloadsPlatformDownloader.removeFile(playableLocalFileUri(item) ?: item.localFileUri)
+            DownloadsPlatformDownloader.removePartialFile(item.fileName)
 
-        publish(_uiState.value.items.filterNot { it.id == downloadId })
-        persist()
+            publish(_uiState.value.items.filterNot { it.id == downloadId })
+            persist()
+        }
     }
 
     private fun loadFromDisk() {
@@ -332,6 +372,10 @@ object DownloadsRepository {
             .forEach(::startDownload)
     }
 
+    /** True when the item is still an in-flight download the callbacks should settle. */
+    private fun isSettleableDownload(downloadId: String): Boolean =
+        _uiState.value.items.firstOrNull { it.id == downloadId }?.status == DownloadStatus.Downloading
+
     private fun startDownload(item: DownloadItem) {
         val request = DownloadPlatformRequest(item)
 
@@ -353,6 +397,12 @@ object DownloadsRepository {
             },
             onSuccess = { localFileUri, totalBytes ->
                 activeHandles.remove(item.id)
+                if (isSettleableDownload(item.id)) {
+                    // The replacement proved good: delete the superseded finished file.
+                    stashedReplacements.remove(item.id)?.fileUri?.let {
+                        DownloadsPlatformDownloader.removeFile(it)
+                    }
+                }
                 mutateItem(item.id) { current ->
                     if (current.status != DownloadStatus.Downloading) return@mutateItem current
                     current.copy(
@@ -371,15 +421,31 @@ object DownloadsRepository {
             },
             onFailure = { message ->
                 activeHandles.remove(item.id)
-                mutateItem(item.id) { current ->
-                    if (current.status != DownloadStatus.Downloading) {
-                        current
-                    } else {
-                        current.copy(
-                            status = DownloadStatus.Failed,
-                            errorMessage = message.ifBlank { runBlocking { getString(Res.string.download_failed) } },
-                            updatedAtEpochMs = DownloadsClock.nowEpochMs(),
-                        )
+                val stashed = if (isSettleableDownload(item.id)) {
+                    stashedReplacements.remove(item.id)
+                } else {
+                    null
+                }
+                if (stashed != null) {
+                    // The replacement failed: restore the superseded finished episode and
+                    // drop the failed attempt entirely.
+                    DownloadsPlatformDownloader.removePartialFile(item.fileName)
+                    val restored = _uiState.value.items.toMutableList()
+                    restored.removeAll { it.id == item.id }
+                    restored.add(0, stashed.item)
+                    publish(restored)
+                    persist()
+                } else {
+                    mutateItem(item.id) { current ->
+                        if (current.status != DownloadStatus.Downloading) {
+                            current
+                        } else {
+                            current.copy(
+                                status = DownloadStatus.Failed,
+                                errorMessage = message.ifBlank { runBlocking { getString(Res.string.download_failed) } },
+                                updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+                            )
+                        }
                     }
                 }
             },
