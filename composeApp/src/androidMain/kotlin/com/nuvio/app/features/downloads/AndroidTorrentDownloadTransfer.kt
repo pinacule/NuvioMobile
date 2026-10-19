@@ -39,6 +39,14 @@ private const val SPEED_WINDOW_SAMPLES = 5
 private const val STALL_TIMEOUT_MS = 10L * 60L * 1_000L
 private const val LOOPBACK_RETRIES_WITHOUT_PROGRESS = 3
 private const val LOOPBACK_RETRY_DELAY_MS = 2_000L
+/**
+ * How many times a stale loopback stream (HTTP 403/404/410: the engine dropped the
+ * session mid-transfer) is re-prepared via prepareStream before giving up.
+ * Mirrors the HTTP download source-refresh budget (MAX_DOWNLOAD_SOURCE_REFRESHES).
+ * Playback re-prepares on every play; downloads must do the same when the stream
+ * goes stale, instead of retrying the dead URL.
+ */
+private const val MAX_LOOPBACK_STREAM_REFRESHES = 2
 
 /**
  * Torrent downloads share one engine and one connection budget; running a whole season at once would
@@ -167,7 +175,10 @@ internal suspend fun transferTorrentDownload(
                 // the native engine fails a second concurrent preparation with
                 // "stream preparation already pending". This covers both queued
                 // downloads and the silent preload, which share this function.
-                val stream = try {
+                // `var`: the loopback URL can go stale mid-transfer (engine dropped
+                // the session → HTTP 404); the retry loop below re-prepares to get
+                // a fresh URL instead of retrying the dead one.
+                var stream = try {
                     NuvioEngineHost.withPrepareStreamLock {
                         activeEngine.prepareStream(
                             torrentId = lease.torrentId,
@@ -181,10 +192,11 @@ internal suspend fun transferTorrentDownload(
                     throw IOException("Timed out waiting for stream preparation", timeout)
                 }
                 streamId = stream.id
-                val fileSize = stream.fileSize.takeIf { it > 0L }
+                var fileSize = stream.fileSize.takeIf { it > 0L }
                 onResolvedFile(item.torrentOutputFileName(resolveFileExtension(activeEngine, lease, stream.fileIndex)))
                 val partial = File(directory, "${item.fileName}.part")
                 var failuresWithoutProgress = 0
+                var streamRefreshCount = 0
                 while (true) {
                     val bytesBefore = partial.length()
                     try {
@@ -204,6 +216,57 @@ internal suspend fun transferTorrentDownload(
                         // A dropped loopback read is resumed in place while the stream and peers stay up;
                         // only repeated failures without progress go back to the job's retry backoff.
                         ensureActive()
+                        // Stale stream: the engine dropped the session mid-transfer (HTTP 403/404/410 on the
+                        // loopback URL). Retrying the dead URL is futile; re-prepare through the engine
+                        // for a fresh URL, exactly as playback does on every play. Same torrent/file, so
+                        // the partial remains valid and the download resumes instead of restarting.
+                        // Budget mirrors the HTTP source-refresh (MAX_LOOPBACK_STREAM_REFRESHES).
+                        if (error is DownloadHttpException &&
+                            error.statusCode in STALE_HTTP_STATUS_CODES &&
+                            streamRefreshCount < MAX_LOOPBACK_STREAM_REFRESHES
+                        ) {
+                            streamRefreshCount++
+                            Log.w(TAG, "Torrent loopback stream stale (HTTP ${error.statusCode}); re-preparing ($streamRefreshCount/$MAX_LOOPBACK_STREAM_REFRESHES)", error)
+                            val refreshed = try {
+                                streamId?.let { id ->
+                                    try {
+                                        activeEngine.stopStream(id)
+                                    } catch (stopError: Exception) {
+                                        Log.w(TAG, "Error stopping stale torrent stream", stopError)
+                                    }
+                                }
+                                NuvioEngineHost.withPrepareStreamLock {
+                                    activeEngine.prepareStream(
+                                        torrentId = lease.torrentId,
+                                        fileIndex = item.torrentFileIdx,
+                                        filenameHint = item.torrentFilenameHint,
+                                    )
+                                }
+                            } catch (refreshError: Exception) {
+                                // Genuine cancellation propagates; a lock timeout is NOT
+                                // cancellation — withPrepareStreamLock's contract requires
+                                // translating it into a retryable failure, never surfacing
+                                // it raw (the scheduler treats CancellationException as
+                                // "cancelled, no retry"). Fall through to the normal
+                                // retry/backoff path below, like the initial prepare does.
+                                if (refreshError is CancellationException &&
+                                    refreshError !is TimeoutCancellationException
+                                ) {
+                                    throw refreshError
+                                }
+                                Log.w(TAG, "Torrent stream re-preparation failed", refreshError)
+                                null
+                            }
+                            if (refreshed != null) {
+                                streamId = refreshed.id
+                                stream = refreshed
+                                fileSize = refreshed.fileSize.takeIf { it > 0L }
+                                failuresWithoutProgress = 0
+                                delay(LOOPBACK_RETRY_DELAY_MS)
+                                continue
+                            }
+                            // Re-preparation failed: fall through to the normal retry/backoff path below.
+                        }
                         failuresWithoutProgress = if (partial.length() > bytesBefore) 0 else failuresWithoutProgress + 1
                         if (failuresWithoutProgress >= LOOPBACK_RETRIES_WITHOUT_PROGRESS) throw error
                         Log.w(TAG, "Torrent loopback read interrupted; resuming", error)
