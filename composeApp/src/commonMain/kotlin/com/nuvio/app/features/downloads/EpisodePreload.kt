@@ -264,16 +264,18 @@ internal fun PlayerScreenRuntime.maybePreloadNextEpisodeDownload() {
 }
 
 /**
- * Called from [persistPlaybackProgressTick]; drops the silent cache for the
- * current episode once it counts as watched (>= 80%, same threshold as the
- * scrobble outbox) so the cache never piles up.
+ * Called from [persistPlaybackProgressTick]; marks the silent cache for the
+ * current episode as eligible for eviction once it counts as watched (>= 80%,
+ * same threshold as the scrobble outbox). The file is NOT deleted here — it is
+ * deleted when the episode is left/replaced (see [evictEligibleExcept]), never
+ * while it is still playing, so seeking back in the last 20% keeps working.
  */
-internal fun PlayerScreenRuntime.maybeEvictWatchedPreloadCache() {
+internal fun PlayerScreenRuntime.maybeMarkWatchedPreloadCacheEligible() {
     val videoId = activeVideoId?.takeIf { it.isNotBlank() } ?: return
     val durationMs = playbackSnapshot.durationMs
     if (durationMs <= 0L) return
     val fraction = playbackSnapshot.positionMs.toFloat() / durationMs.toFloat()
     if (fraction >= 0.8f) {
-        PreloadCache.onEpisodeWatched(videoId)
+        scope.launch { PreloadCache.markWatchedEligible(videoId) }
     }
 }

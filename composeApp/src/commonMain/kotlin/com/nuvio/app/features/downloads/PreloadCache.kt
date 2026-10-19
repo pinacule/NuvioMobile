@@ -6,6 +6,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.Volatile
 
 /**
  * Platform side of the silent next-episode preload cache.
@@ -29,6 +32,12 @@ internal expect object PreloadCachePlatform {
     /** Deletes a cached media file (not its sidecar subtitles). */
     fun deleteCachedFile(localFileUri: String)
 
+    /**
+     * Deletes the partial `.part` file for [fileName], if any — e.g. when a
+     * fetch is superseded by a different file and will never resume.
+     */
+    fun deletePartialFile(fileName: String)
+
     /** Drops everything in the preload cache dir. */
     fun clearCache()
 }
@@ -51,42 +60,78 @@ internal data class CachedPreload(
 /**
  * Registry of silently preloaded episodes. One-episode lookahead only: starting
  * a new preload evicts the previous entry (never the episode currently playing).
+ *
+ * Threading: reads go through a lock-free volatile snapshot (safe from any
+ * thread); all mutations are serialized through [mutex].
  */
 internal object PreloadCache {
-    private val entries = mutableMapOf<String, CachedPreload>()
+    private val mutex = Mutex()
+    private val mutableEntries = mutableMapOf<String, CachedPreload>()
+    private val mutableEligible = mutableSetOf<String>()
 
-    /** Returns the cached episode for [videoId], or null when absent or gone from disk. */
+    @Volatile
+    private var snapshot: Map<String, CachedPreload> = emptyMap()
+
+    /**
+     * Returns the cached episode for [videoId], or null when absent or gone
+     * from disk. Lock-free; safe to call from any thread.
+     */
     fun lookup(videoId: String): CachedPreload? {
-        val entry = entries[videoId] ?: return null
+        val entry = snapshot[videoId] ?: return null
         return if (PreloadCachePlatform.cachedFileExists(entry.localFileUri)) {
             entry
         } else {
-            entries.remove(videoId)
             null
         }
     }
 
-    fun record(entry: CachedPreload) {
-        entries[entry.videoId] = entry
-    }
-
-    /** Evicts every cached episode except [exceptVideoId] (never delete what's playing). */
-    fun evictAllExcept(exceptVideoId: String?) {
-        val iterator = entries.entries.iterator()
-        while (iterator.hasNext()) {
-            val (videoId, entry) = iterator.next()
-            if (videoId == exceptVideoId) continue
-            deleteEntry(entry)
-            iterator.remove()
+    suspend fun record(entry: CachedPreload) {
+        mutex.withLock {
+            mutableEntries[entry.videoId] = entry
+            mutableEligible.remove(entry.videoId)
+            snapshot = mutableEntries.toMap()
         }
     }
 
-    /** Drops the cache for [videoId] once it has been watched (>= 80%). */
-    fun onEpisodeWatched(videoId: String) {
-        entries.remove(videoId)?.let(::deleteEntry)
+    /** Evicts every cached episode except [exceptVideoId] (never delete what's playing). */
+    suspend fun evictAllExcept(exceptVideoId: String?) {
+        val evicted = mutex.withLock {
+            val doomed = mutableEntries.filterKeys { it != exceptVideoId }
+            doomed.keys.forEach { mutableEntries.remove(it) }
+            mutableEligible.removeAll(doomed.keys)
+            snapshot = mutableEntries.toMap()
+            doomed.values.toList()
+        }
+        evicted.forEach(::deleteEntry)
     }
 
-    fun clear() {
+    /**
+     * Marks a cached episode as watched enough (>= 80%) to be evicted once it
+     * is no longer playing. Never deletes anything by itself.
+     */
+    suspend fun markWatchedEligible(videoId: String) {
+        mutex.withLock {
+            if (mutableEntries.containsKey(videoId)) mutableEligible.add(videoId)
+        }
+    }
+
+    /**
+     * Deletes watched-eligible entries, but never [currentVideoId] — the file
+     * of the episode still playing must not be unlinked mid-playback. Call
+     * when an episode is replaced or when the player exits (pass null then).
+     */
+    suspend fun evictEligibleExcept(currentVideoId: String?) {
+        val evicted = mutex.withLock {
+            val doomed = mutableEligible.filter { it != currentVideoId }
+            mutableEligible.removeAll(doomed.toSet())
+            val entries = doomed.mapNotNull { mutableEntries.remove(it) }
+            snapshot = mutableEntries.toMap()
+            entries
+        }
+        evicted.forEach(::deleteEntry)
+    }
+
+    suspend fun clear() {
         evictAllExcept(exceptVideoId = null)
     }
 
@@ -127,16 +172,22 @@ internal object PreloadCacheFetcher {
 
     /** Starts a fetch, evicting any previous cached preload first (one-episode lookahead). */
     fun start(request: PreloadFetchRequest) {
+        // Requests dropped here will never resume: delete their partial files now
+        // (pause keeps its own partial for resume).
+        val droppedPartials = listOfNotNull(activeRequest, pausedRequest)
+            .filter { it.fileName != request.fileName }
+            .map { it.fileName }
+            .distinct()
         cancelActive()
         pausedRequest = null
-        PreloadCache.evictAllExcept(request.exceptVideoId)
         activeRequest = request
         fetchJob = scope.launch {
             try {
+                PreloadCache.evictAllExcept(request.exceptVideoId)
+                droppedPartials.forEach { PreloadCachePlatform.deletePartialFile(it) }
                 val uri = PreloadCachePlatform.fetchMedia(request.item, request.fileName)
                 if (uri != null) {
-                    // Subtitles are fetched now so the cached episode plays fully offline.
-                    DownloadSubtitles.prepare(request.item, uri)
+                    // Record FIRST: a subtitle failure must not orphan the video file.
                     PreloadCache.record(
                         CachedPreload(
                             videoId = request.videoId,
@@ -152,6 +203,8 @@ internal object PreloadCacheFetcher {
                             cachedAtEpochMs = DownloadsClock.nowEpochMs(),
                         ),
                     )
+                    // Subtitles are fetched now so the cached episode plays fully offline.
+                    DownloadSubtitles.prepare(request.item, uri)
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation

@@ -1,6 +1,7 @@
 package com.nuvio.app.features.library
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.player.PlayerScreenRuntime
 import com.nuvio.app.features.player.activePlaybackIdentity
 import com.nuvio.app.features.watched.WatchedRepository
@@ -40,25 +41,31 @@ internal fun PlayerScreenRuntime.maybeAutoAddToLibrary() {
     }
     if (!shouldAdd) return
 
-    val item = LibraryItem(
-        id = itemId,
-        type = itemType,
-        name = title,
-        poster = poster,
-        banner = background,
-        logo = logo,
-        imdbId = itemId.takeIf { it.startsWith("tt") },
-        savedAtEpochMs = 0L,
-    )
     // Same call pattern as the details-screen + button (Main scope; the
     // repository handles its own threading).
     scope.launch {
         runCatching {
-            if (!LibraryRepository.isSaved(item.id, item.type)) {
+            if (!LibraryRepository.isSaved(itemId, itemType)) {
+                // Enrich with full metadata (description, release info, genres,
+                // ratings) via the details repository, mirroring the + button's
+                // MetaDetails.toLibraryItem(); falls back to the sparse player
+                // args if the fetch fails so the add still happens.
+                val item = MetaDetailsRepository.fetch(itemType, itemId)
+                    ?.toLibraryItem(savedAtEpochMs = 0L)
+                    ?: LibraryItem(
+                        id = itemId,
+                        type = itemType,
+                        name = title,
+                        poster = poster,
+                        banner = background,
+                        logo = logo,
+                        imdbId = itemId.takeIf { it.startsWith("tt") },
+                        savedAtEpochMs = 0L,
+                    )
                 LibraryRepository.toggleSaved(item)
             }
         }.onFailure { error ->
-            log.w(error) { "Auto-add to library failed id=${item.id} type=${item.type}" }
+            log.w(error) { "Auto-add to library failed id=$itemId type=$itemType" }
         }
     }
 }

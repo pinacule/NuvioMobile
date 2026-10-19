@@ -42,6 +42,12 @@ internal actual object PreloadCachePlatform {
 
     actual suspend fun fetchMedia(item: DownloadItem, fileName: String): String? {
         if (item.isTorrent) return null
+        if (!startupSweepDone) {
+            // The registry is in-memory only: anything on disk from a previous
+            // run is orphaned. One-episode lookahead, so a sweep is safe.
+            startupSweepDone = true
+            clearCache()
+        }
         val dir = cacheDir().apply { mkdirs() }
         val destFile = File(dir, fileName)
         val partFile = File(dir, "$fileName.part")
@@ -50,6 +56,14 @@ internal actual object PreloadCachePlatform {
             val response: HttpResponse = client.get(item.sourceUrl) {
                 item.sourceHeaders.forEach { (key, value) -> header(key, value) }
                 if (resumeFrom > 0L) header(HttpHeaders.Range, "bytes=$resumeFrom-")
+            }
+            if (resumeFrom > 0L && response.status.value != 206) {
+                // The server ignored our Range request: appending its full
+                // response to the partial file would corrupt it. Discard the
+                // partial and restart from zero (resumeFrom is 0 then, so this
+                // cannot recurse).
+                partFile.delete()
+                return@withContext fetchMedia(item, fileName)
             }
             if (!response.status.isSuccess()) return@withContext null
             val channel = response.bodyAsChannel()
@@ -82,7 +96,14 @@ internal actual object PreloadCachePlatform {
         File(file.parentFile, "${file.name}.part").delete()
     }
 
+    actual fun deletePartialFile(fileName: String) {
+        if (fileName.contains('/') || fileName.contains('\\')) return
+        File(cacheDir(), "$fileName.part").delete()
+    }
+
     actual fun clearCache() {
         cacheDir().takeIf { it.isDirectory }?.listFiles()?.forEach { it.deleteRecursively() }
     }
+
+    private var startupSweepDone = false
 }

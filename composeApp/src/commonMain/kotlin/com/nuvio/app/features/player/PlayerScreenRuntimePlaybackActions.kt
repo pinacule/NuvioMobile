@@ -1,6 +1,6 @@
 package com.nuvio.app.features.player
 
-import com.nuvio.app.features.downloads.maybeEvictWatchedPreloadCache
+import com.nuvio.app.features.downloads.maybeMarkWatchedPreloadCacheEligible
 import com.nuvio.app.features.downloads.maybePreloadNextEpisodeDownload
 import com.nuvio.app.features.library.maybeAutoAddToLibrary
 import com.nuvio.app.features.servers.ServerItemRef
@@ -430,7 +430,7 @@ internal fun PlayerScreenRuntime.persistPlaybackProgressTick() {
     )
     maybePreloadNextEpisodeDownload()
     maybeAutoAddToLibrary()
-    maybeEvictWatchedPreloadCache()
+    maybeMarkWatchedPreloadCacheEligible()
 }
 
 internal fun PlayerScreenRuntime.switchPlaybackEngine() {

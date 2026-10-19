@@ -12,7 +12,7 @@ import com.nuvio.app.features.downloads.CachedPreload
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadSubtitles
 import com.nuvio.app.features.downloads.DownloadsRepository
-import com.nuvio.app.features.downloads.EpisodeDownloadPlanner
+import com.nuvio.app.features.downloads.PreloadCache
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.servers.ServerPlayback
@@ -20,6 +20,7 @@ import com.nuvio.app.features.servers.serverPlaybackMessage
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.YouTubeStreamResolver
+import com.nuvio.app.features.streams.streamResolution
 import com.nuvio.app.features.watchprogress.WatchProgressEntry
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
@@ -444,6 +445,9 @@ internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: Downloa
     activeInitialPositionMs = epResumePositionMs
     activeInitialProgressFraction = epResumeFraction
     controlsVisible = true
+    // The previous episode (if any) is now replaced: its watched-eligible
+    // preload cache can be deleted. The new episode is excluded by the guard.
+    scope.launch { PreloadCache.evictEligibleExcept(activeVideoId) }
 }
 
 /**
@@ -500,6 +504,9 @@ internal fun PlayerScreenRuntime.switchToCachedPreloadEpisode(cached: CachedPrel
     activeInitialPositionMs = epResumePositionMs
     activeInitialProgressFraction = epResumeFraction
     controlsVisible = true
+    // The previous episode (if any) is now replaced: its watched-eligible
+    // preload cache can be deleted. The new episode is excluded by the guard.
+    scope.launch { PreloadCache.evictEligibleExcept(activeVideoId) }
 }
 
 internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
@@ -597,7 +604,14 @@ internal fun PlayerScreenRuntime.openQualityModal() {
 
 /** Switches playback to the best stream at [quality], keeping the position. No-op if already on it. */
 internal fun PlayerScreenRuntime.switchToQuality(quality: String) {
-    val target = EpisodeDownloadPlanner.pickBestStreamAtQuality(sourceStreamsState.allStreams, quality)
+    val pool = sourceStreamsState.allStreams.filter { it.streamResolution() == quality }
+    if (pool.isEmpty()) return
+    // Prefer the transport the user is already on: a debrid/direct watcher tapping
+    // a quality chip shouldn't be silently moved onto a torrent (which starts the
+    // P2P engine and uses torrent data unannounced). Falls back to the other kind
+    // when nothing at this quality matches the current transport.
+    val preferTorrent = activeStream?.isTorrentStream == true
+    val target = pool.sortedByDescending { it.isTorrentStream == preferTorrent }.firstOrNull()
         ?: return
     val targetIdentityKey = target.playerSourceIdentityKey()
     if (targetIdentityKey != null && targetIdentityKey == activeSourceIdentityKey) return
@@ -676,6 +690,9 @@ private fun PlayerScreenRuntime.applyEpisodeStreamMetadata(
     activeInitialPositionMs = resume.positionMs
     activeInitialProgressFraction = resume.fraction
     controlsVisible = true
+    // The previous episode (if any) is now replaced: its watched-eligible
+    // preload cache can be deleted. The new episode is excluded by the guard.
+    scope.launch { PreloadCache.evictEligibleExcept(activeVideoId) }
 }
 
 private fun PlayerScreenRuntime.saveDirectStreamForReuse(

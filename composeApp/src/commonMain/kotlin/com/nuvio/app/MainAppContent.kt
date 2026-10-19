@@ -109,6 +109,7 @@ import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.EpisodeDownloadPlanner
 import com.nuvio.app.features.downloads.PosterDownloadCoordinator
 import com.nuvio.app.features.downloads.PosterDownloadRequest
+import com.nuvio.app.features.downloads.PreloadCache
 import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeRepository
@@ -173,6 +174,7 @@ import com.nuvio.app.features.updater.rememberAppUpdaterController
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watching.application.WatchingActions
 import com.nuvio.app.features.watching.application.WatchingState
+import com.nuvio.app.features.watching.domain.isSeriesLikeWatchingContentType
 import com.nuvio.app.features.watchprogress.ContinueWatchingItem
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
 import com.nuvio.app.features.watchprogress.ResumePromptRepository
@@ -1028,6 +1030,43 @@ internal fun MainAppContent(
             val targetResumeProgressFraction = if (startFromBeginning) null else resumeProgressFraction
 
             if (!manualSelection) {
+                // Silent preload cache wins over both downloads and streams: it was
+                // fetched ahead (video + subtitles) for exactly this episode.
+                PreloadCache.lookup(videoId)?.let { cached ->
+                    val playerLaunch = PlayerLaunch(
+                        profileId = activePlaybackProfileId,
+                        title = title,
+                        sourceUrl = cached.localFileUri,
+                        sourceHeaders = emptyMap(),
+                        sourceResponseHeaders = emptyMap(),
+                        externalSubtitles = DownloadSubtitles.localSubtitles(cached.localFileUri),
+                        logo = logo,
+                        poster = poster,
+                        background = background,
+                        seasonNumber = seasonNumber,
+                        episodeNumber = episodeNumber,
+                        episodeTitle = episodeTitle,
+                        episodeThumbnail = episodeThumbnail,
+                        streamTitle = cached.streamTitle.ifBlank { title },
+                        streamSubtitle = cached.streamSubtitle,
+                        pauseDescription = pauseDescription,
+                        providerName = cached.providerName.ifBlank { downloadedProviderLabel },
+                        providerAddonId = cached.providerAddonId,
+                        contentType = type,
+                        videoId = videoId,
+                        parentMetaId = parentMetaId,
+                        parentMetaType = parentMetaType,
+                        initialPositionMs = targetResumePositionMs,
+                        initialProgressFraction = targetResumeProgressFraction,
+                    )
+                    if (playerSettingsUiState.externalPlayerEnabled) {
+                        coroutineScope.launch { openExternalPlayback(playerLaunch) }
+                        return
+                    }
+                    val launchId = PlayerLaunchStore.put(playerLaunch)
+                    navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
+                    return
+                }
                 val downloadedItem = DownloadsRepository.findPlayableDownload(
                     parentMetaId = parentMetaId,
                     seasonNumber = seasonNumber,
@@ -1644,12 +1683,31 @@ internal fun MainAppContent(
                             // Leaving the player always lands on the Library tab: pop
                             // everything above the tab root so no stale player/stream
                             // route can re-initialize playback underneath.
+                            var reachedTabs = false
                             var guard = 0
                             while (guard++ < 25) {
                                 val current = navController.currentRoute ?: break
-                                if (current is TabsRoute) break
+                                if (current is TabsRoute) {
+                                    reachedTabs = true
+                                    break
+                                }
                                 if (!navController.popBackStack()) break
                             }
+                            if (!reachedTabs) {
+                                // TabsRoute wasn't reachable by popping (e.g. the player
+                                // is the only route on the stack): swap the player route
+                                // out for the tab root so the player is actually
+                                // dismissed instead of lingering underneath.
+                                navController.navigate(TabsRoute) {
+                                    popUpTo<PlayerRoute> { inclusive = true }
+                                }
+                            }
+                            // The player is gone: nothing is playing anymore, so any
+                            // watched-eligible preload cache can be deleted now.
+                            coroutineScope.launch { PreloadCache.evictEligibleExcept(null) }
+                            // The tab switch is the source of truth on every platform:
+                            // with native navigation it drives the host tab controller,
+                            // otherwise it flips the local selected tab.
                             activateTab(AppScreenTab.Library)
                         },
                     )
@@ -2082,7 +2140,7 @@ internal fun MainAppContent(
                                                     logo = item.logo,
                                                     poster = item.poster,
                                                     background = item.background,
-                                                    isSeries = item.parentMetaType == "series",
+                                                    isSeries = item.parentMetaType.isSeriesLikeWatchingContentType(),
                                                 )
                                             },
                                         ),
@@ -2141,7 +2199,7 @@ internal fun MainAppContent(
                                 logo = item.logo,
                                 poster = item.poster,
                                 background = item.background,
-                                isSeries = item.parentMetaType == "series",
+                                isSeries = item.parentMetaType.isSeriesLikeWatchingContentType(),
                             )
                         }
                     },

@@ -3,12 +3,14 @@ package com.nuvio.app.features.downloads
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.suspendCancellableCoroutine
 import platform.Foundation.NSCachesDirectory
+import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSHomeDirectory
 import platform.Foundation.NSMutableURLRequest
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLRequestReloadIgnoringLocalCacheData
 import platform.Foundation.NSURLSession
+import platform.Foundation.NSURLSessionDownloadTask
 import platform.Foundation.NSUserDomainMask
 import kotlin.coroutines.resume
 
@@ -19,6 +21,13 @@ import kotlin.coroutines.resume
  */
 @OptIn(ExperimentalForeignApi::class)
 internal actual object PreloadCachePlatform {
+
+    /**
+     * Resume data captured when a download task is cancelled (e.g. on pause),
+     * keyed by file name so a later fetch for the same episode can continue.
+     */
+    private val resumeDataByFile = mutableMapOf<String, NSData>()
+    private var startupSweepDone = false
 
     private fun cacheDir(): String {
         val urls = NSFileManager.defaultManager.URLsForDirectory(NSCachesDirectory, NSUserDomainMask)
@@ -35,21 +44,38 @@ internal actual object PreloadCachePlatform {
 
     actual suspend fun fetchMedia(item: DownloadItem, fileName: String): String? {
         if (item.isTorrent) return null
+        if (!startupSweepDone) {
+            // The registry is in-memory only: anything on disk from a previous
+            // run is orphaned. One-episode lookahead, so a sweep is safe.
+            startupSweepDone = true
+            clearCache()
+        }
         val destPath = "${cacheDir()}/$fileName"
+        val resumeData = resumeDataByFile.remove(fileName)
         val location: NSURL? = suspendCancellableCoroutine { cont ->
-            val nativeRequest = NSMutableURLRequest(
-                uRL = NSURL(string = item.sourceUrl),
-                cachePolicy = NSURLRequestReloadIgnoringLocalCacheData,
-                timeoutInterval = 60.0,
-            )
-            nativeRequest.setHTTPMethod("GET")
-            item.sourceHeaders.forEach { (key, value) ->
-                nativeRequest.setValue(value, forHTTPHeaderField = key)
+            val task: NSURLSessionDownloadTask = if (resumeData != null) {
+                NSURLSession.sharedSession.downloadTaskWithResumeData(resumeData) { loc, _, error ->
+                    if (error != null) cont.resume(null) else cont.resume(loc)
+                }
+            } else {
+                val nativeRequest = NSMutableURLRequest(
+                    uRL = NSURL(string = item.sourceUrl),
+                    cachePolicy = NSURLRequestReloadIgnoringLocalCacheData,
+                    timeoutInterval = 60.0,
+                )
+                nativeRequest.setHTTPMethod("GET")
+                item.sourceHeaders.forEach { (key, value) ->
+                    nativeRequest.setValue(value, forHTTPHeaderField = key)
+                }
+                NSURLSession.sharedSession.downloadTaskWithRequest(nativeRequest) { loc, _, error ->
+                    if (error != null) cont.resume(null) else cont.resume(loc)
+                }
             }
-            val task = NSURLSession.sharedSession.downloadTaskWithRequest(nativeRequest) { loc, _, error ->
-                if (error != null) cont.resume(null) else cont.resume(loc)
+            cont.invokeOnCancellation {
+                task.cancelByProducingResumeData { data ->
+                    if (data != null) resumeDataByFile[fileName] = data
+                }
             }
-            cont.invokeOnCancellation { task.cancel() }
             task.resume()
         } ?: return null
         val moved = NSFileManager.defaultManager.moveItemAtURL(
@@ -71,6 +97,13 @@ internal actual object PreloadCachePlatform {
         // Only touch files inside our own cache dir.
         if (!path.startsWith(cacheDir())) return
         NSFileManager.defaultManager.removeItemAtPath(path, null)
+    }
+
+    actual fun deletePartialFile(fileName: String) {
+        // iOS downloads go to a system temp location (no .part files); there is
+        // nothing to delete, but drop any stale resume data for the file.
+        if (fileName.contains("/") || fileName.contains("\\")) return
+        resumeDataByFile.remove(fileName)
     }
 
     actual fun clearCache() {

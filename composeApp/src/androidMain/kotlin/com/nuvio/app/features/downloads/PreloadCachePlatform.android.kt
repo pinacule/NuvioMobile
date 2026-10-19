@@ -23,6 +23,10 @@ internal actual object PreloadCachePlatform {
         appContext = context.applicationContext
         P2pSettingsStorage.initialize(context.applicationContext)
         NuvioEngineHost.initialize(context.applicationContext)
+        // The registry is in-memory only: anything left on disk from a previous
+        // run is orphaned. This cache is one-episode lookahead, so a full sweep
+        // on startup is safe and keeps it from leaking gigabytes.
+        Thread { clearCache() }.start()
     }
 
     private fun cacheDir(): File {
@@ -71,6 +75,13 @@ internal actual object PreloadCachePlatform {
         if (!file.canonicalPath.startsWith(dir.canonicalPath)) return
         file.delete()
         File(file.parentFile, "${file.name}.part").delete()
+    }
+
+    actual fun deletePartialFile(fileName: String) {
+        val dir = cacheDirOrNull() ?: return
+        // Only touch files inside our own cache dir; no path separators allowed.
+        if (fileName.contains('/') || fileName.contains('\\')) return
+        File(dir, "$fileName.part").delete()
     }
 
     actual fun clearCache() {
