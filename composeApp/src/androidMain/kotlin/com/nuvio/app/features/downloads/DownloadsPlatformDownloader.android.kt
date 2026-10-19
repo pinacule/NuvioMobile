@@ -48,7 +48,7 @@ internal actual object DownloadsPlatformDownloader {
         onPaused: () -> Unit,
     ): DownloadsTaskHandle {
         val scheduler = checkNotNull(downloadScheduler) { "Downloads are not initialized" }
-        val transfer = scheduler.enqueue(request.item)
+        val transfer = scheduler.enqueue(request.item, request.resetValidator)
         val observer = observerScope.launch {
             scheduler.store.transfers.map { it[request.destinationFileName] }
                 .distinctUntilChanged()
@@ -84,6 +84,14 @@ internal actual object DownloadsPlatformDownloader {
         val scheduler = downloadScheduler ?: return false
         scheduler.remove(destinationFileName)
         return true
+    }
+
+    actual fun deletePartialFileNow(destinationFileName: String): Boolean {
+        val scheduler = downloadScheduler ?: return false
+        val safeName = File(destinationFileName).name
+        if (safeName.isBlank()) return false
+        val partFile = File(scheduler.directory, "$safeName.part")
+        return !partFile.exists() || runCatching { partFile.delete() }.getOrDefault(false)
     }
 
     actual fun resolveLocalFileUri(localFileUri: String?, destinationFileName: String): String? {

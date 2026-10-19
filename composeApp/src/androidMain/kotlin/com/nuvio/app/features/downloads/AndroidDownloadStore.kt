@@ -17,6 +17,8 @@ internal data class AndroidDownloadTransfer(
     val generation: String,
     val validator: String? = null,
     val retryCount: Int = 0,
+    /** How many times a dead HTTP link was swapped for a freshly resolved one. */
+    val sourceRefreshCount: Int = 0,
     /** Final file name when it differs from [DownloadItem.fileName], e.g. a torrent's real extension. */
     val outputFileName: String? = null,
 )
@@ -29,14 +31,16 @@ internal class AndroidDownloadStore(private val directory: File) {
 
     fun get(fileName: String): AndroidDownloadTransfer? = state.value[fileName]
 
-    fun begin(item: DownloadItem): AndroidDownloadTransfer = synchronized(lock) {
+    fun begin(item: DownloadItem, resetValidator: Boolean = false): AndroidDownloadTransfer = synchronized(lock) {
         val previous = get(item.fileName)?.takeIf { it.item.id == item.id }
         if (previous?.item?.status == DownloadStatus.Downloading) return@synchronized previous
         val transfer = AndroidDownloadTransfer(
             item = item.copy(status = DownloadStatus.Downloading, errorMessage = null, localFileUri = null),
             jobId = previous?.jobId ?: ((state.value.values.maxOfOrNull { it.jobId } ?: 0) + 1),
             generation = UUID.randomUUID().toString(),
-            validator = previous?.validator,
+            // A swapped-in source URL must never reuse the previous link's
+            // ETag validator (If-Range) against a different URL.
+            validator = if (resetValidator) null else previous?.validator,
             outputFileName = previous?.outputFileName,
         )
         save(transfer)

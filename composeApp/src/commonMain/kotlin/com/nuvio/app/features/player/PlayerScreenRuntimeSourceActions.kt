@@ -614,8 +614,8 @@ internal fun PlayerScreenRuntime.switchToQuality(quality: String) {
     val target = pool.sortedByDescending { it.isTorrentStream == preferTorrent }.firstOrNull()
         ?: return
     val targetIdentityKey = target.playerSourceIdentityKey()
-    if (targetIdentityKey != null && targetIdentityKey == activeSourceIdentityKey) return
     showQualityModal = false
+    if (targetIdentityKey != null && targetIdentityKey == activeSourceIdentityKey) return
     switchToSource(target)
 }
 

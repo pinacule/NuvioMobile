@@ -51,6 +51,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -108,6 +111,7 @@ internal fun PlayerControlsShell(
     onSeekForward: () -> Unit,
     onResizeModeClick: () -> Unit,
     onSpeedClick: () -> Unit,
+    onSpeedButtonPlaced: ((Rect) -> Unit)? = null,
     onSubtitleClick: () -> Unit,
     onAudioClick: () -> Unit,
     onVideoSettingsClick: (() -> Unit)? = null,
@@ -262,6 +266,7 @@ internal fun PlayerControlsShell(
                     onScrubFinished = onScrubFinished,
                     onResizeModeClick = onResizeModeClick,
                     onSpeedClick = onSpeedClick,
+                    onSpeedButtonPlaced = onSpeedButtonPlaced,
                     onSubtitleClick = onSubtitleClick,
                     onAudioClick = onAudioClick,
                     onSourcesClick = onSourcesClick,
@@ -321,6 +326,7 @@ internal fun PlayerControlsShell(
                         onNextEpisodeClick = onNextEpisodeClick,
                         onSwitchEngineClick = onSwitchEngineClick,
                         onSpeedClick = onSpeedClick,
+                        onSpeedButtonPlaced = onSpeedButtonPlaced,
                         onResizeModeClick = onResizeModeClick,
                         onVideoSettingsClick = onVideoSettingsClick,
                         onOpenInExternalPlayer = onOpenInExternalPlayer,
@@ -642,6 +648,7 @@ private fun ProgressControls(
     onScrubFinished: (Long) -> Unit,
     onResizeModeClick: () -> Unit,
     onSpeedClick: () -> Unit,
+    onSpeedButtonPlaced: ((Rect) -> Unit)? = null,
     onSubtitleClick: () -> Unit,
     onAudioClick: () -> Unit,
     onSourcesClick: (() -> Unit)? = null,
@@ -689,6 +696,13 @@ private fun ProgressControls(
                         label = formatPlaybackSpeedLabel(playbackSnapshot.playbackSpeed),
                         icon = Icons.Filled.Speed,
                         onClick = onSpeedClick,
+                        modifier = if (onSpeedButtonPlaced != null) {
+                            Modifier.onGloballyPositioned { coordinates ->
+                                onSpeedButtonPlaced(coordinates.boundsInRoot())
+                            }
+                        } else {
+                            Modifier
+                        },
                     )
                     PlayerActionPillButton(
                         label = stringResource(Res.string.compose_player_subs),
@@ -933,9 +947,10 @@ private fun PlayerActionPillButton(
     onClick: () -> Unit,
     icon: ImageVector? = null,
     painter: Painter? = null,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(22.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp),

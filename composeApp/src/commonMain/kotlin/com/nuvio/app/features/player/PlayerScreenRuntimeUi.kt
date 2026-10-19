@@ -15,6 +15,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.device.DataSaverRepository
@@ -37,6 +38,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val isInPip = rememberIsInPictureInPicture()
     val displayedPositionMs = scrubbingPositionMs ?: playbackSnapshot.positionMs
     val isEpisode = activeSeasonNumber != null && activeEpisodeNumber != null
+    // Last-known speed-button bounds in root coordinates, used to anchor the speed popup above it.
+    val speedButtonAnchorBounds = remember { mutableStateOf<Rect?>(null) }
     val currentGestureFeedback = liveGestureFeedback ?: gestureFeedback
     val isP2pPlaybackActive = activeTorrentInfoHash != null
     val p2pConnecting = p2pStreamingState as? P2pStreamingState.Connecting
@@ -253,7 +256,11 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             )
         }
 
-        RenderPlayerControls(displayedPositionMs = displayedPositionMs, isEpisode = isEpisode)
+        RenderPlayerControls(
+            displayedPositionMs = displayedPositionMs,
+            isEpisode = isEpisode,
+            onSpeedButtonPlaced = { speedButtonAnchorBounds.value = it },
+        )
         RenderPlaybackOverlays(
             runtime = runtime,
             displayedPositionMs = displayedPositionMs,
@@ -264,7 +271,10 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             p2pRebufferMessage = p2pRebufferMessage,
             p2pRebufferProgress = p2pRebufferProgress,
         )
-        RenderPlayerModals(displayedPositionMs = displayedPositionMs)
+        RenderPlayerModals(
+            displayedPositionMs = displayedPositionMs,
+            speedButtonAnchor = speedButtonAnchorBounds.value,
+        )
         RenderParty(runtime = runtime)
     }
 }
@@ -293,7 +303,11 @@ private fun PlayerScreenRuntime.currentInitialPositionRequestKey(): String? {
 }
 
 @Composable
-private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, isEpisode: Boolean) {
+private fun PlayerScreenRuntime.RenderPlayerControls(
+    displayedPositionMs: Long,
+    isEpisode: Boolean,
+    onSpeedButtonPlaced: ((Rect) -> Unit)? = null,
+) {
     val isInPip = rememberIsInPictureInPicture()
     val partyState by PartyRepository.state.collectAsStateWithLifecycle()
     val partyActive = partyState.party != null
@@ -351,6 +365,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             onSeekForward = { seekBy(10_000L) },
             onResizeModeClick = { cycleResizeMode() },
             onSpeedClick = { openPlaybackSpeedModal() },
+            onSpeedButtonPlaced = onSpeedButtonPlaced,
             onSubtitleClick = {
                 refreshTracks()
                 showSubtitleModal = true
@@ -536,7 +551,7 @@ private fun BoxScope.RenderPlaybackOverlays(
 }
 
 @Composable
-private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
+private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long, speedButtonAnchor: Rect? = null) {
     PlaybackSpeedModal(
         visible = showSpeedModal,
         speed = playbackSnapshot.playbackSpeed,
@@ -544,6 +559,7 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
         onSpeedChanged = { applyUserPlaybackSpeed(it) },
         onMakeDefault = { PlayerSettingsRepository.setDefaultPlaybackSpeed(it) },
         onDismiss = { showSpeedModal = false },
+        anchorBounds = speedButtonAnchor,
     )
     PlayerQualityModal(
         visible = showQualityModal,

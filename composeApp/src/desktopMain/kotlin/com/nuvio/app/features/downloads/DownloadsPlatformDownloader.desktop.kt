@@ -124,6 +124,9 @@ internal actual object DownloadsPlatformDownloader {
         return !partFile.exists() || runCatching { partFile.delete() }.getOrDefault(false)
     }
 
+    actual fun deletePartialFileNow(destinationFileName: String): Boolean =
+        removePartialFile(destinationFileName)
+
     actual fun resolveLocalFileUri(localFileUri: String?, destinationFileName: String): String? {
         localFileUri
             ?.toLocalFileOrNull()

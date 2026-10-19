@@ -45,6 +45,8 @@ data class DownloadItem(
     val streamSubtitle: String? = null,
     val providerName: String,
     val providerAddonId: String? = null,
+    /** Quality the stream was picked at (e.g. "720p"): used to re-pick a fresh URL when the link dies. */
+    val downloadQuality: String? = null,
     val sourceUrl: String,
     val sourceKind: DownloadSourceKind = DownloadSourceKind.Http,
     val torrentInfoHash: String? = null,

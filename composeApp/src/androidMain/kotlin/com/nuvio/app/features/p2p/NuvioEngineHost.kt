@@ -22,11 +22,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 private const val HOST_TAG = "NuvioEngineHost"
 
 /** Keeps an unused engine (and its peers) alive briefly so retries and quick resumes reuse the swarm. */
 private const val IDLE_SHUTDOWN_DELAY_MS = 60_000L
+
+/**
+ * Bound on waiting for the stream-preparation lock. A preparation that never
+ * returns must not wedge every later download, preload or playback forever:
+ * the waiter gives up and the normal retry/backoff path takes over.
+ */
+private const val PREPARE_STREAM_LOCK_TIMEOUT_MS = 60_000L
 
 /**
  * Owns the single Nuvio Engine instance shared by playback and torrent downloads.
@@ -74,6 +82,15 @@ internal object NuvioEngineHost {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val engineMutex = Mutex()
     private val torrentMutex = Mutex()
+    /**
+     * Serializes stream preparation across the whole app. The native engine
+     * rejects a second concurrent preparation with "stream preparation already
+     * pending", and torrent downloads (max 2 concurrent slots), the silent
+     * preload and playback can all ask for one at the same time. Waiters are
+     * served FIFO; the wait is bounded by [PREPARE_STREAM_LOCK_TIMEOUT_MS] so
+     * one stuck preparation cannot wedge the queue forever.
+     */
+    private val prepareStreamMutex = Mutex()
     private val stateLock = Any()
 
     @Volatile
@@ -240,6 +257,19 @@ internal object NuvioEngineHost {
         engineOwners += owner
         _owners.value = engineOwners.toSet()
     }
+
+    /**
+     * Runs [block] with the stream-preparation lock held: only one
+     * `NuvioEngine.prepareStream` call app-wide at a time (downloads, silent
+     * preload and playback all go through here). Throws
+     * [kotlinx.coroutines.TimeoutCancellationException] when the wait exceeds
+     * [PREPARE_STREAM_LOCK_TIMEOUT_MS]; callers should translate that into a
+     * retryable, human-readable failure, never surface it raw.
+     */
+    suspend fun <T> withPrepareStreamLock(block: suspend () -> T): T =
+        withTimeout(PREPARE_STREAM_LOCK_TIMEOUT_MS) {
+            prepareStreamMutex.withLock { block() }
+        }
 
     private fun createEngine(key: ConfigurationKey): NuvioEngine {
         val context = appContext ?: throw P2pStreamingException("P2P streaming engine is not initialized")

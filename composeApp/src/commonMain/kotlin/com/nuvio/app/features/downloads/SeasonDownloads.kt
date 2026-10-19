@@ -201,6 +201,7 @@ object SeasonDownloads {
                     episodeTitle = video.title.takeIf(String::isNotBlank),
                     episodeThumbnail = video.thumbnail,
                     stream = it,
+                    downloadQuality = template.streamResolution(),
                 )
             }
             if (result == DownloadEnqueueResult.Started || result == DownloadEnqueueResult.Replaced) {
@@ -261,7 +262,12 @@ object SeasonDownloads {
         emptyList()
     }
 
-    private suspend fun resolvePlayable(stream: StreamItem, season: Int, episode: Int?): StreamItem? =
+    /**
+     * Resolves debrid streams to playable HTTP URLs, mirroring the enqueue
+     * path. Internal so the stale-link refresh can reuse the exact same
+     * resolution for a re-picked stream.
+     */
+    internal suspend fun resolvePlayable(stream: StreamItem, season: Int, episode: Int?): StreamItem? =
         when (val resolved = DirectDebridPlaybackResolver.resolveToPlayableStream(stream, season, episode)) {
             is DirectDebridPlayableResult.Success -> resolved.stream
             else -> null

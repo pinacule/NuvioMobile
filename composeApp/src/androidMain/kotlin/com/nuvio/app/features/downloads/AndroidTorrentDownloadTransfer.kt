@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -162,11 +163,23 @@ internal suspend fun transferTorrentDownload(
             }
             val swarm = launch { sampleSwarm(item.id, attempt, activeEngine, writtenBytes) }
             try {
-                val stream = activeEngine.prepareStream(
-                    torrentId = lease.torrentId,
-                    fileIndex = item.torrentFileIdx,
-                    filenameHint = item.torrentFilenameHint,
-                )
+                // Serialized app-wide (see NuvioEngineHost.withPrepareStreamLock):
+                // the native engine fails a second concurrent preparation with
+                // "stream preparation already pending". This covers both queued
+                // downloads and the silent preload, which share this function.
+                val stream = try {
+                    NuvioEngineHost.withPrepareStreamLock {
+                        activeEngine.prepareStream(
+                            torrentId = lease.torrentId,
+                            fileIndex = item.torrentFileIdx,
+                            filenameHint = item.torrentFilenameHint,
+                        )
+                    }
+                } catch (timeout: TimeoutCancellationException) {
+                    // Retryable (IOException): the job backs off and tries again
+                    // instead of surfacing the raw engine message.
+                    throw IOException("Timed out waiting for stream preparation", timeout)
+                }
                 streamId = stream.id
                 val fileSize = stream.fileSize.takeIf { it > 0L }
                 onResolvedFile(item.torrentOutputFileName(resolveFileExtension(activeEngine, lease, stream.fileIndex)))

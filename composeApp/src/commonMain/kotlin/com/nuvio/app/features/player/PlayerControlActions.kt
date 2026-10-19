@@ -40,9 +40,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
@@ -110,6 +113,7 @@ internal fun PlayerControlActions(
     onNextEpisodeClick: (() -> Unit)?,
     onSwitchEngineClick: (() -> Unit)?,
     onSpeedClick: () -> Unit,
+    onSpeedButtonPlaced: ((Rect) -> Unit)? = null,
     onResizeModeClick: () -> Unit,
     onVideoSettingsClick: (() -> Unit)?,
     onOpenInExternalPlayer: (() -> Unit)?,
@@ -136,6 +140,7 @@ internal fun PlayerControlActions(
         PlayerControlAction(
             "${stringResource(Res.string.compose_player_speed)} ${formatPlaybackSpeedLabel(playbackSnapshot.playbackSpeed)}",
             onSpeedClick, icon = Icons.Rounded.Speed,
+            isSpeedAction = true,
         ),
         onSourcesClick?.let {
             PlayerControlAction(
@@ -222,6 +227,13 @@ internal fun PlayerControlActions(
                         icon = action.icon,
                         painter = action.painter,
                         iconSize = action.iconSize,
+                        modifier = if (action.isSpeedAction && onSpeedButtonPlaced != null) {
+                            Modifier.onGloballyPositioned { coordinates ->
+                                onSpeedButtonPlaced(coordinates.boundsInRoot())
+                            }
+                        } else {
+                            Modifier
+                        },
                     )
                 }
                 if (hasOverflow) {
@@ -269,8 +281,9 @@ private fun PlayerAction(
     painter: Painter? = null,
     iconSize: Dp = 24.dp,
     tint: Color = Color.White,
+    modifier: Modifier = Modifier,
 ) {
-    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+    IconButton(onClick = onClick, modifier = modifier.size(48.dp)) {
         if (painter != null) {
             Icon(painter, description, tint = tint, modifier = Modifier.size(iconSize))
         } else if (icon != null) {
@@ -285,4 +298,5 @@ private data class PlayerControlAction(
     val icon: ImageVector? = null,
     val painter: Painter? = null,
     val iconSize: Dp = 24.dp,
+    val isSpeedAction: Boolean = false,
 )

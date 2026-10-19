@@ -29,10 +29,15 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.download_failed
+import nuvio.composeapp.generated.resources.download_failed_link_expired
 import okhttp3.ConnectionPool
+import org.jetbrains.compose.resources.getString
 
 internal class AndroidDownloadScheduler(val context: Context) {
     val store = AndroidDownloadStore(File(context.filesDir, "download-transfers"))
@@ -40,9 +45,9 @@ internal class AndroidDownloadScheduler(val context: Context) {
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    fun enqueue(item: DownloadItem): AndroidDownloadTransfer {
+    fun enqueue(item: DownloadItem, resetValidator: Boolean = false): AndroidDownloadTransfer {
         val previous = store.get(item.fileName)
-        val transfer = store.begin(item)
+        val transfer = store.begin(item, resetValidator)
         val existing = previous?.generation == transfer.generation
         if (existing && Build.VERSION.SDK_INT >= 34) return transfer
         try {
@@ -218,6 +223,54 @@ internal class AndroidDownloadScheduler(val context: Context) {
         } catch (error: Exception) {
             currentCoroutineContext().ensureActive()
             if (!isActive(transfer)) return@withLock false
+            if (error is DownloadHttpException &&
+                error.statusCode in STALE_HTTP_STATUS_CODES &&
+                transfer.item.sourceKind == DownloadSourceKind.Http &&
+                transfer.sourceRefreshCount < MAX_DOWNLOAD_SOURCE_REFRESHES
+            ) {
+                // The link itself is dead (expired addon/debrid URL): resolve a
+                // fresh one and retry with it instead of failing. Never retry
+                // the same dead URL verbatim.
+                val refreshed = try {
+                    refreshHttpDownloadSource(transfer.item)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (refreshError: Exception) {
+                    null
+                }
+                if (refreshed != null && refreshed.sourceUrl != transfer.item.sourceUrl) {
+                    // The new link may point at a different encode: drop the
+                    // partial and restart from zero rather than resuming bytes
+                    // across files.
+                    File(directory, "${transfer.item.fileName}.part").delete()
+                    val swapped = refreshed.copy(
+                        status = DownloadStatus.Downloading,
+                        downloadedBytes = 0L,
+                        totalBytes = null,
+                        errorMessage = null,
+                    )
+                    // updateActive hands the transfer back unchanged when it
+                    // stopped being Downloading mid-refresh (user
+                    // paused/cancelled): only propagate the new URL when the
+                    // swap actually landed, or the repository's Paused copy
+                    // would flip back to "Downloading" in the UI while the
+                    // transfer stays paused.
+                    val applied = updateActive(transfer) {
+                        it.copy(
+                            item = swapped,
+                            validator = null,
+                            sourceRefreshCount = it.sourceRefreshCount + 1,
+                            retryCount = 0,
+                        )
+                    }
+                    if (applied?.item?.sourceUrl != refreshed.sourceUrl) return@withLock false
+                    // The repository owns the UI/pause-resume copy of the item:
+                    // it must see the new URL too, or a later resume would
+                    // restart the old dead link.
+                    DownloadsRepository.refreshItemSource(swapped)
+                    return@withLock true
+                }
+            }
             val retry = shouldRetryAndroidDownload(error, transfer.retryCount)
             if (retry) updateActive(transfer) { it.copy(retryCount = it.retryCount + 1) }
             else fail(transfer, error)
@@ -235,7 +288,22 @@ internal class AndroidDownloadScheduler(val context: Context) {
 
     fun fail(transfer: AndroidDownloadTransfer, error: Exception) {
         updateActive(transfer) {
-            it.copy(item = it.item.copy(status = DownloadStatus.Failed, errorMessage = error.message ?: "Download failed"))
+            it.copy(item = it.item.copy(status = DownloadStatus.Failed, errorMessage = humanDownloadError(error)))
+        }
+    }
+
+    /**
+     * Never park a raw engine message on the download: stream-preparation
+     * failures collapse to the generic human-readable text once retries are
+     * exhausted, and dead links that survived every refresh say so plainly
+     * instead of flashing a bare HTTP code.
+     */
+    private fun humanDownloadError(error: Exception): String = runBlocking {
+        when {
+            error.isStreamPreparationFailure() -> getString(Res.string.download_failed)
+            error is DownloadHttpException && error.statusCode in STALE_HTTP_STATUS_CODES ->
+                getString(Res.string.download_failed_link_expired)
+            else -> error.message ?: getString(Res.string.download_failed)
         }
     }
 
@@ -263,8 +331,19 @@ internal class AndroidDownloadScheduler(val context: Context) {
 }
 
 internal fun shouldRetryAndroidDownload(error: Exception, retries: Int): Boolean =
-    retries < 4 && when (error) {
-        is DownloadHttpException -> error.statusCode == 408 || error.statusCode == 429 || error.statusCode in 500..599
-        is IOException -> true
+    retries < 4 && when {
+        error.isStreamPreparationFailure() -> true
+        error is DownloadHttpException -> error.statusCode == 408 || error.statusCode == 429 || error.statusCode in 500..599
+        error is IOException -> true
         else -> false
     }
+
+/**
+ * The native engine rejects a second concurrent stream preparation with
+ * "stream preparation already pending", and our own lock converts an
+ * over-long wait into a "Timed out waiting for stream preparation" failure.
+ * Both are transient: the queue must back off and try again, never park the
+ * raw engine text on the download as its final state.
+ */
+internal fun Exception.isStreamPreparationFailure(): Boolean =
+    message?.contains("stream preparation", ignoreCase = true) == true

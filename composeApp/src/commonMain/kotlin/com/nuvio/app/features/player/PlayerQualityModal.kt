@@ -2,18 +2,23 @@ package com.nuvio.app.features.player
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,11 +34,11 @@ import nuvio.composeapp.generated.resources.downloads_options_quality
 import org.jetbrains.compose.resources.stringResource
 
 /**
- * Stream quality switcher: a compact popup showing the current playback quality
- * prominently, with the qualities actually available for this episode as tappable
- * chips. Selecting one switches the stream at the current position.
+ * Stream quality switcher: a subtle top-anchored dropdown menu listing the
+ * qualities actually available for this episode. The active quality is marked
+ * with an accent-tinted row; tapping a row switches the stream at the current
+ * position.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlayerQualityModal(
     visible: Boolean,
@@ -48,67 +53,86 @@ fun PlayerQualityModal(
         visible = visible,
         onDismiss = onDismiss,
         modifier = modifier,
-        // No dim: the video stays fully bright behind the compact panel.
+        // No dim: the video stays fully bright behind the dropdown.
         dimBackground = false,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 76.dp),
     ) {
         val tokens = MaterialTheme.nuvio
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
-                    .width(minOf(maxWidth - 32.dp, 400.dp))
-                    .align(Alignment.BottomCenter)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Color.Black.copy(alpha = 0.88f))
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .width(minOf(maxWidth - 32.dp, 232.dp))
+                    .align(Alignment.TopCenter)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.Black.copy(alpha = 0.92f))
+                    .padding(8.dp),
             ) {
-                Text(
-                    text = stringResource(Res.string.downloads_options_quality),
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                Text(
-                    text = currentQuality ?: "—",
-                    color = Color.White,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                // Header: label left, current quality + collapse chevron right.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onDismiss)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(Res.string.downloads_options_quality),
+                        color = Color.White.copy(alpha = 0.65f),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = currentQuality ?: "—",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.ExpandLess,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.65f),
+                        modifier = Modifier
+                            .padding(start = 4.dp)
+                            .size(18.dp),
+                    )
+                }
                 if (isLoading && qualities.isEmpty()) {
                     CircularProgressIndicator(
                         color = Color.White.copy(alpha = 0.8f),
+                        strokeWidth = 2.dp,
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(vertical = 12.dp)
+                            .size(22.dp),
                     )
                 } else {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        qualities.forEach { quality ->
-                            QualityChip(
-                                label = quality,
-                                selected = quality == currentQuality,
-                                onClick = { onQualitySelected(quality) },
+                    qualities.forEach { quality ->
+                        val active = quality == currentQuality
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 44.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (active) tokens.colors.accent.copy(alpha = 0.18f)
+                                    else Color.Transparent,
+                                )
+                                .clickable { onQualitySelected(quality) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = quality,
+                                color = if (active) tokens.colors.accent else Color.White.copy(alpha = 0.85f),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                             )
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
                     }
                 }
             }
         }
     }
-}
-
-@Composable
-private fun QualityChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val tokens = MaterialTheme.nuvio
-    Text(
-        text = label,
-        color = if (selected) tokens.colors.onAccent else Color.White,
-        style = MaterialTheme.typography.labelLarge,
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(if (selected) tokens.colors.accent else Color.White.copy(alpha = 0.14f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    )
 }

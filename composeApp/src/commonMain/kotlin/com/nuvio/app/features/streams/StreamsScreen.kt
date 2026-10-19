@@ -200,6 +200,7 @@ fun StreamsScreen(
             episodeTitle = episodeTitle,
             episodeThumbnail = episodeThumbnail,
             stream = stream,
+            downloadQuality = stream.streamResolution(),
         )
     }
     // Torrent downloads need P2P; ask for consent the same way playback does instead of failing.

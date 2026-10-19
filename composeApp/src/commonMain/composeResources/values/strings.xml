@@ -1777,6 +1777,7 @@
     <string name="details_networks">Networks</string>
     <string name="details_no_addon_meta">No addon provides meta for this content.</string>
     <string name="download_failed">Download failed</string>
+    <string name="download_failed_link_expired">Download failed: the stream link expired</string>
     <string name="downloads_channel_description">Shows live download progress and controls.</string>
     <string name="downloads_channel_name">Downloads</string>
     <string name="downloads_live_completed">Download completed</string>

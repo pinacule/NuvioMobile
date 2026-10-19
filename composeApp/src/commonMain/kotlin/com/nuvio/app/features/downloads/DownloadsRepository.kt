@@ -6,6 +6,11 @@ import com.nuvio.app.features.p2p.buildP2pMagnetUri
 import com.nuvio.app.features.p2p.canonicalP2pInfoHash
 import com.nuvio.app.features.player.addonSubtitleRequests
 import com.nuvio.app.features.streams.StreamItem
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +33,8 @@ object DownloadsRepository {
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
     private var hasLoaded = false
     private var nextDownloadOrdinal = 0L
+    /** Background source-URL refreshes for manual retries; never blocks the UI. */
+    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /**
      * Finished downloads kept on disk while their replacement is in flight, keyed by the
@@ -147,6 +154,7 @@ object DownloadsRepository {
         episodeTitle: String?,
         episodeThumbnail: String?,
         stream: StreamItem,
+        downloadQuality: String? = null,
     ): DownloadEnqueueResult {
         ensureLoaded()
 
@@ -232,6 +240,7 @@ object DownloadsRepository {
             streamSubtitle = stream.streamSubtitle,
             providerName = stream.addonName,
             providerAddonId = stream.addonId,
+            downloadQuality = downloadQuality?.trim()?.takeIf { it.isNotBlank() },
             sourceUrl = sourceUrl,
             sourceKind = if (torrentSource != null) DownloadSourceKind.Torrent else DownloadSourceKind.Http,
             torrentInfoHash = torrentSource?.infoHash,
@@ -304,8 +313,70 @@ object DownloadsRepository {
         startDownload(reset)
     }
 
+    /**
+     * Swaps in a freshly resolved source URL for [item] (called by the platform
+     * scheduler after an automatic stale-link refresh). The store owns the
+     * transfer, but pause/resume and the UI read from here, so both copies
+     * must agree on the URL.
+     */
+    internal fun refreshItemSource(item: DownloadItem) {
+        ensureLoaded()
+        replaceItem(item)
+        persist()
+    }
+
     fun retryDownload(downloadId: String) {
-        resumeDownload(downloadId)
+        ensureLoaded()
+        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
+        if (item.status != DownloadStatus.Failed || item.sourceKind != DownloadSourceKind.Http) {
+            resumeDownload(downloadId)
+            return
+        }
+        // A failed HTTP download almost always died on a stale link: flip to
+        // Downloading immediately for UI feedback, then swap in a freshly
+        // resolved URL before the transfer starts so the dead link is never
+        // retried verbatim. Falls back to the old URL when nothing fresh
+        // resolves.
+        val marked = item.copy(
+            status = DownloadStatus.Downloading,
+            errorMessage = null,
+            localFileUri = null,
+            downloadedBytes = 0L,
+            totalBytes = null,
+            updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+        )
+        replaceItem(marked)
+        persist()
+        refreshScope.launch {
+            val refreshed = try {
+                refreshHttpDownloadSource(marked)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (refreshError: Exception) {
+                null
+            }?.takeIf { it.sourceUrl != marked.sourceUrl }
+            // The user may have paused or cancelled while the fresh URL resolved.
+            val current = _uiState.value.items.firstOrNull { it.id == downloadId }
+            if (current?.status != DownloadStatus.Downloading) return@launch
+            if (refreshed != null) {
+                // The new link may point at a different encode: drop the partial
+                // so bytes are never resumed across files.
+                DownloadsPlatformDownloader.deletePartialFileNow(marked.fileName)
+                val toStart = refreshed.copy(
+                    status = DownloadStatus.Downloading,
+                    downloadedBytes = 0L,
+                    totalBytes = null,
+                    errorMessage = null,
+                    updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+                )
+                replaceItem(toStart)
+                persist()
+                // Fresh URL: never send the dead link's ETag validator against it.
+                startDownload(toStart, resetValidator = true)
+            } else {
+                startDownload(marked)
+            }
+        }
     }
 
     internal fun reattachBackgroundDownload(downloadId: String) {
@@ -376,8 +447,8 @@ object DownloadsRepository {
     private fun isSettleableDownload(downloadId: String): Boolean =
         _uiState.value.items.firstOrNull { it.id == downloadId }?.status == DownloadStatus.Downloading
 
-    private fun startDownload(item: DownloadItem) {
-        val request = DownloadPlatformRequest(item)
+    private fun startDownload(item: DownloadItem, resetValidator: Boolean = false) {
+        val request = DownloadPlatformRequest(item, resetValidator)
 
         val handle = DownloadsPlatformDownloader.start(
             request = request,
@@ -581,7 +652,7 @@ internal fun sanitizeRequestHeaders(headers: Map<String, String>?): Map<String, 
         }
         .toMap()
 
-private fun sanitizeResponseHeaders(headers: Map<String, String>?): Map<String, String> =
+internal fun sanitizeResponseHeaders(headers: Map<String, String>?): Map<String, String> =
     headers
         .orEmpty()
         .mapNotNull { (key, value) ->

@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -240,11 +241,21 @@ actual object P2pStreamingEngine {
                 "start request=$requestSequence phase=${phase.get()} begin elapsedMs=${elapsedSince(startedAtMs)} " +
                     "fileIndex=${request.fileIdx ?: -1}",
             )
-            val stream = resolvedEngine.prepareStream(
-                torrentId = torrentId,
-                fileIndex = request.fileIdx,
-                filenameHint = request.filename,
-            )
+            // Serialized app-wide (see NuvioEngineHost.withPrepareStreamLock):
+            // the native engine fails a second concurrent preparation with
+            // "stream preparation already pending" — e.g. playback starting
+            // while a torrent download or preload is preparing its stream.
+            val stream = try {
+                NuvioEngineHost.withPrepareStreamLock {
+                    resolvedEngine.prepareStream(
+                        torrentId = torrentId,
+                        fileIndex = request.fileIdx,
+                        filenameHint = request.filename,
+                    )
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                throw P2pStreamingException("Timed out waiting for stream preparation")
+            }
             preparedStream = stream
             Log.i(
                 DIAGNOSTIC_TAG,

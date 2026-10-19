@@ -153,6 +153,7 @@ internal object EpisodePreloader {
             streamSubtitle = stream.streamSubtitle,
             providerName = stream.addonName,
             providerAddonId = stream.addonId,
+            downloadQuality = quality,
             sourceUrl = sourceUrl,
             sourceKind = if (torrentSource != null) DownloadSourceKind.Torrent else DownloadSourceKind.Http,
             torrentInfoHash = torrentSource?.infoHash,

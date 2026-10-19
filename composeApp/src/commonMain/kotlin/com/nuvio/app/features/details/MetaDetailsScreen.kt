@@ -25,10 +25,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -103,8 +104,9 @@ import com.nuvio.app.features.details.components.DetailMetaInfo
 import com.nuvio.app.features.details.components.DetailPosterRailSection
 import com.nuvio.app.features.details.components.DetailProductionSection
 import com.nuvio.app.features.details.components.DetailSeriesContent
-import com.nuvio.app.features.details.components.DetailSeriesListEpisode
 import com.nuvio.app.features.details.components.DetailSeriesListHeader
+import com.nuvio.app.features.details.components.EpisodeGridCell
+import com.nuvio.app.features.details.components.seasonEpisodeKey
 import com.nuvio.app.features.details.components.DetailTrailersSection
 import com.nuvio.app.features.details.components.EpisodeWatchedActionSheet
 import com.nuvio.app.features.details.components.SeasonWatchedActionSheet
@@ -665,13 +667,10 @@ fun MetaDetailsScreen(
                 val episodeListGroupedEpisodes = remember(
                     meta.videos,
                     meta.type,
-                    metaScreenSettingsUiState.episodeCardStyle,
                 ) {
-                    if (metaScreenSettingsUiState.episodeCardStyle == MetaEpisodeCardStyle.List) {
-                        meta.groupedEpisodesForDisplay()
-                    } else {
-                        emptyMap()
-                    }
+                    // Episodes always render as the 2-column grid now; the episode
+                    // card style setting is no longer consulted.
+                    meta.groupedEpisodesForDisplay()
                 }
                 val episodeListSeasons = remember(episodeListGroupedEpisodes) {
                     episodeListGroupedEpisodes.keys.sortedBy(::seasonSortKey)
@@ -892,39 +891,57 @@ fun MetaDetailsScreen(
                             }
                         }
                     }
+                // Message shown when an episode tap cannot be resolved to a playable id.
+                // A tap must never silently do nothing.
+                val episodeUnplayableMessage = stringResource(Res.string.compose_player_no_streams_found)
                 val onEpisodePlayClick: (MetaVideo) -> Unit = { video ->
                     val season = video.season
                     val episode = video.episode
-                    val playbackVideoId = buildPlaybackVideoId(
-                        parentMetaId = meta.id,
-                        seasonNumber = season,
-                        episodeNumber = episode,
-                        fallbackVideoId = video.id,
-                    )
-                    val streamVideoId = video.id.takeIf { it.isNotBlank() } ?: playbackVideoId
-                    val savedProgress = watchProgressUiState.progressForVideo(
-                        videoId = streamVideoId,
-                        parentMetaId = meta.id,
-                        seasonNumber = season,
-                        episodeNumber = episode,
-                    )
-                        ?.takeUnless { it.isCompleted }
-                    onPlay?.invoke(
-                        meta.type,
-                        streamVideoId,
-                        meta.id,
-                        meta.type,
-                        meta.name,
-                        meta.logo,
-                        meta.poster,
-                        meta.background,
-                        season,
-                        episode,
+                    // Resolve the stream id exactly like the Play button does: prefer the
+                    // canonical per-episode id from the metadata (matched by season/episode),
+                    // fall back to the built "metaId:season:episode" id. The old path used
+                    // the list item's id directly, which silently failed for episodes whose
+                    // id was blank or in a scheme the stream layer doesn't recognize.
+                    val canonicalVideo = meta.videos.firstOrNull { candidate ->
+                        candidate.id.isNotBlank() &&
+                            candidate.season == season &&
+                            candidate.episode == episode
+                    }
+                    val streamVideoId = canonicalVideo?.id
+                        ?: video.id.takeIf { it.isNotBlank() }
+                        ?: buildPlaybackVideoId(
+                            parentMetaId = meta.id,
+                            seasonNumber = season,
+                            episodeNumber = episode,
+                            fallbackVideoId = video.id,
+                        )
+                    if (streamVideoId.isBlank()) {
+                        NuvioToastController.show(episodeUnplayableMessage)
+                    } else {
+                        val savedProgress = watchProgressUiState.progressForVideo(
+                            videoId = streamVideoId,
+                            parentMetaId = meta.id,
+                            seasonNumber = season,
+                            episodeNumber = episode,
+                        )
+                            ?.takeUnless { it.isCompleted }
+                        onPlay?.invoke(
+                            meta.type,
+                            streamVideoId,
+                            meta.id,
+                            meta.type,
+                            meta.name,
+                            meta.logo,
+                            meta.poster,
+                            meta.background,
+                            season,
+                            episode,
                         video.title,
                         video.thumbnail,
                         video.overview,
                         savedProgress?.lastPositionMs,
                     )
+                    }
                 }
                 val onEpisodeManualPlayClick: (MetaVideo) -> Unit = { video ->
                     val season = video.season
@@ -2063,29 +2080,53 @@ private fun LazyListScope.configuredMetaSectionItems(
                 )
             }
         }
-        itemsIndexed(
-            items = episodes,
-            key = { index, episode ->
-                "$key-episode-$currentSeason-${episode.episode}-${episode.id}-$index"
+        items(
+            items = episodes.chunked(2),
+            key = { rowEpisodes ->
+                "$key-episode-row-$currentSeason-${rowEpisodes.firstOrNull()?.episode}-${rowEpisodes.firstOrNull()?.id}"
             },
-            contentType = { _, _ -> "detail-episode" },
-        ) { index, episode ->
+            contentType = { "detail-episode-row" },
+        ) { rowEpisodes ->
             DetailSectionContainer(
                 horizontalPadding = contentHorizontalPadding,
                 contentMaxWidth = contentMaxWidth,
-                bottomPadding = if (index == episodes.lastIndex) 20.dp else 12.dp,
+                bottomPadding = 12.dp,
             ) {
-                DetailSeriesListEpisode(
-                    meta = meta,
-                    episode = episode,
-                    progressByVideoId = progressByVideoId,
-                    watchedKeys = watchedKeys,
-                    episodeRatings = episodeImdbRatings,
-                    episodeRatingsVisibility = settings.episodeRatingsVisibility,
-                    blurUnwatchedEpisodes = blurUnwatchedEpisodes,
-                    onEpisodeClick = onEpisodeClick,
-                    onEpisodeLongPress = onEpisodeLongPress,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    rowEpisodes.forEach { episode ->
+                        val episodeVideoId = buildPlaybackVideoId(
+                            parentMetaId = meta.id,
+                            seasonNumber = episode.season,
+                            episodeNumber = episode.episode,
+                            fallbackVideoId = episode.id,
+                        )
+                        EpisodeGridCell(
+                            video = episode,
+                            fallbackImage = meta.background ?: meta.poster,
+                            progressEntry = progressByVideoId[episodeVideoId],
+                            imdbRating = episode.seasonEpisodeKey()
+                                ?.let { episodeImdbRatings[it] } ?: episode.rating,
+                            isWatched = progressByVideoId[episodeVideoId]?.isEffectivelyCompleted == true ||
+                                WatchingState.isEpisodeWatched(
+                                    watchedKeys = watchedKeys,
+                                    metaType = meta.type,
+                                    metaId = meta.id,
+                                    episode = episode,
+                                ),
+                            episodeRatingsVisibility = settings.episodeRatingsVisibility,
+                            blurUnwatchedEpisodes = blurUnwatchedEpisodes,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onEpisodeClick?.invoke(episode) },
+                            onLongPress = { onEpisodeLongPress?.invoke(episode) },
+                        )
+                    }
+                    if (rowEpisodes.size == 1) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
             }
         }
     }
@@ -2095,7 +2136,9 @@ private fun LazyListScope.configuredMetaSectionItems(
         key: String,
         forceTabLayout: Boolean = false,
     ) {
-        if (section.key == MetaScreenSectionKey.EPISODES && settings.episodeCardStyle == MetaEpisodeCardStyle.List) {
+        // Episodes always render as the lazy 2-column grid now; the episode card
+        // style setting is no longer branched on.
+        if (section.key == MetaScreenSectionKey.EPISODES) {
             addLazyEpisodeListItems(key)
         } else {
             addSectionItem(
