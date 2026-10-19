@@ -647,7 +647,7 @@
     <string name="downloads_options_custom_watched">Watched</string>
     <string name="downloads_options_custom_youre_here">You&apos;re here</string>
     <string name="downloads_options_custom_nothing_selected">Select at least one episode to download</string>
-    <string name="downloads_options_custom_unavailable">Selected episodes aren't available for download</string>
+    <string name="downloads_options_custom_unavailable">Selected episodes are not available for download</string>
     <string name="downloads_show_downloads">Show Downloads</string>
     <string name="downloads_status_completed">Completed • %1$s</string>
     <string name="downloads_status_downloading">Downloading • %1$s</string>
