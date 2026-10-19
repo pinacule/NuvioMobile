@@ -2959,6 +2959,7 @@ private val DataSaverMode.labelRes: StringResource
         DataSaverMode.ALWAYS_OFF -> Res.string.settings_data_saver_mode_always_off
     }
 
+@Composable
 private fun DataSaverModeDialog(
     selected: DataSaverMode,
     onSelect: (DataSaverMode) -> Unit,
@@ -2985,6 +2986,7 @@ private fun DataSaverModeDialog(
     }
 }
 
+@Composable
 private fun NextEpisodeThresholdModeDialog(
     selected: com.nuvio.app.features.player.skip.NextEpisodeThresholdMode,
     onSelect: (com.nuvio.app.features.player.skip.NextEpisodeThresholdMode) -> Unit,
