@@ -134,6 +134,7 @@ object DownloadsRepository {
         episodeTitle: String?,
         episodeThumbnail: String?,
         stream: StreamItem,
+        isPreload: Boolean = false,
     ): DownloadEnqueueResult {
         ensureLoaded()
 
@@ -221,6 +222,7 @@ object DownloadsRepository {
             errorMessage = null,
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
+            isPreload = isPreload,
         )
 
         currentItems.add(0, item)

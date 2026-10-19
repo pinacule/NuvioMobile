@@ -954,7 +954,7 @@ fun HomeScreen(
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val homeSectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value)
         val posterCardStyle = rememberPosterCardStyleUiState()
-        val continueWatchingLayout = rememberContinueWatchingLayout(maxWidth.value, posterCardStyle)
+        val continueWatchingLayout = rememberContinueWatchingLayout(maxWidth.value, posterCardStyle, homeSectionPadding)
         val nativeBottomNavigationOverlayHeight =
             if (LocalNuvioBottomNavigationOverlayPadding.current > 0.dp) {
                 nuvioSafeBottomPadding()

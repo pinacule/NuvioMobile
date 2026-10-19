@@ -27,8 +27,10 @@ import java.net.URL
 internal actual object AddonStorage {
     private const val addonUrlsKey = "installed_manifest_urls"
     private const val addonEnabledStatesKey = "installed_manifest_enabled_states"
+    private const val preinstalledSeededKey = "preinstalled_addons_seeded"
     private fun urlsKey(profileId: Int) = "${addonUrlsKey}_$profileId"
     private fun enabledStatesKey(profileId: Int) = "${addonEnabledStatesKey}_$profileId"
+    private fun seededKey(profileId: Int) = "${preinstalledSeededKey}_$profileId"
 
     private val prefs = DesktopPreferences("addon_storage")
 
@@ -56,6 +58,13 @@ internal actual object AddonStorage {
             "$url\t$enabled"
         }
         prefs.putString(enabledStatesKey(profileId), payload)
+    }
+
+    actual fun loadPreinstalledAddonsSeeded(profileId: Int): Boolean =
+        prefs.getBoolean(seededKey(profileId)) ?: false
+
+    actual fun savePreinstalledAddonsSeeded(profileId: Int, seeded: Boolean) {
+        prefs.putBoolean(seededKey(profileId), seeded)
     }
 }
 

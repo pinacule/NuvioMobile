@@ -16,6 +16,7 @@ enum class LibraryLayoutMode {
 
 enum class LibrarySortOption {
     DEFAULT,
+    LAST_WATCHED_DESC,
     ADDED_DESC,
     ADDED_ASC,
     RELEASED_DESC,
@@ -26,7 +27,7 @@ enum class LibrarySortOption {
 
 data class LibraryDisplaySettingsUiState(
     val layoutMode: LibraryLayoutMode = LibraryLayoutMode.HORIZONTAL,
-    val sortOption: LibrarySortOption = LibrarySortOption.DEFAULT,
+    val sortOption: LibrarySortOption = LibrarySortOption.LAST_WATCHED_DESC,
 )
 
 object LibraryDisplaySettingsRepository {
@@ -103,7 +104,7 @@ internal fun effectiveLibrarySortOption(
     when {
         selected in availableLibrarySortOptions(sourceMode) -> selected
         sourceMode.isRemoteTrackingSource -> LibrarySortOption.DEFAULT
-        else -> LibrarySortOption.ADDED_DESC
+        else -> LibrarySortOption.LAST_WATCHED_DESC
     }
 
 internal fun sortLibraryItems(
@@ -112,6 +113,7 @@ internal fun sortLibraryItems(
     sourceMode: LibrarySourceMode,
     listKey: String? = null,
     providerOrder: Map<String, Int>? = null,
+    lastWatchedEpochMsById: Map<String, Long> = emptyMap(),
 ): List<LibraryItem> =
     when (effectiveLibrarySortOption(selected, sourceMode)) {
         LibrarySortOption.DEFAULT -> items.sortedWith(
@@ -149,6 +151,12 @@ internal fun sortLibraryItems(
             compareByDescending<LibraryItem> { libraryTitleSortKey(it) }
                 .thenBy { it.id },
         )
+        // Never-watched items have no timestamp and sort last.
+        LibrarySortOption.LAST_WATCHED_DESC -> items.sortedWith(
+            compareByDescending<LibraryItem> { lastWatchedEpochMsById[it.id] ?: Long.MIN_VALUE }
+                .thenBy { libraryTitleTieBreakKey(it) }
+                .thenBy { it.id },
+        )
     }
 
 internal fun sortLibrarySections(
@@ -156,9 +164,10 @@ internal fun sortLibrarySections(
     selected: LibrarySortOption,
     sourceMode: LibrarySourceMode,
     providerOrders: Map<String, Map<String, Int>> = emptyMap(),
+    lastWatchedEpochMsById: Map<String, Long> = emptyMap(),
 ): List<LibrarySection> =
     sections.map { section ->
-        section.copy(items = sortLibraryItems(section.items, selected, sourceMode, section.type, providerOrders[section.type]))
+        section.copy(items = sortLibraryItems(section.items, selected, sourceMode, section.type, providerOrders[section.type], lastWatchedEpochMsById))
     }
 
 internal fun buildLibraryVerticalProjection(
@@ -168,6 +177,7 @@ internal fun buildLibraryVerticalProjection(
     selectedType: String?,
     sortOption: LibrarySortOption,
     providerOrders: Map<String, Map<String, Int>> = emptyMap(),
+    lastWatchedEpochMsById: Map<String, Long> = emptyMap(),
 ): LibraryVerticalProjection {
     val availableSections = if (sourceMode.isRemoteTrackingSource) sections else emptyList()
     val selectedSection = if (sourceMode.isRemoteTrackingSource) {
@@ -207,6 +217,7 @@ internal fun buildLibraryVerticalProjection(
         sourceMode = sourceMode,
         listKey = selectedSection?.type,
         providerOrder = providerOrders[selectedSection?.type],
+        lastWatchedEpochMsById = lastWatchedEpochMsById,
     ).mapNotNull { item -> entryByKey[libraryDisplayItemKey(item)] }
 
     return LibraryVerticalProjection(
@@ -240,7 +251,7 @@ internal fun decodeLibraryDisplaySettings(payload: String?): LibraryDisplaySetti
             ?: LibraryLayoutMode.HORIZONTAL,
         sortOption = stored?.sortOption
             ?.let { value -> LibrarySortOption.entries.firstOrNull { it.name == value } }
-            ?: LibrarySortOption.DEFAULT,
+            ?: LibrarySortOption.LAST_WATCHED_DESC,
     )
 }
 
@@ -277,7 +288,7 @@ internal val LibrarySourceMode.isRemoteTrackingSource: Boolean
 @Serializable
 private data class StoredLibraryDisplaySettings(
     @SerialName("layout_mode") val layoutMode: String = LibraryLayoutMode.HORIZONTAL.name,
-    @SerialName("sort_option") val sortOption: String = LibrarySortOption.DEFAULT.name,
+    @SerialName("sort_option") val sortOption: String = LibrarySortOption.LAST_WATCHED_DESC.name,
 )
 
 private fun libraryProviderOrderComparator(ranks: Map<String, Int>): Comparator<LibraryItem> =

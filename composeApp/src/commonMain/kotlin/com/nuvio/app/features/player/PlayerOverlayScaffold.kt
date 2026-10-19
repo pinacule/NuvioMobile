@@ -25,6 +25,7 @@ internal fun PlayerOverlayScaffold(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     overlayTint: Color = Color.Black.copy(alpha = 0.34f),
+    dimBackground: Boolean = true,
     contentPadding: PaddingValues = PaddingValues(),
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -37,6 +38,30 @@ internal fun PlayerOverlayScaffold(
         modifier = modifier,
     ) {
         val interactionSource = remember { MutableInteractionSource() }
+        // When dimBackground is false the video stays fully bright behind the panel;
+        // the panel itself is expected to carry its own readable background.
+        val dimModifier: Modifier = if (dimBackground) {
+            Modifier.drawWithCache {
+                val horizontalGradient = Brush.horizontalGradient(
+                    listOf(Color.Black.copy(alpha = 0.88f), Color.Transparent),
+                )
+                val verticalGradient = Brush.verticalGradient(
+                    colorStops = arrayOf(
+                        0f to Color.Black.copy(alpha = 0.6f),
+                        0.3f to Color.Black.copy(alpha = 0.4f),
+                        0.6f to Color.Black.copy(alpha = 0.2f),
+                        1f to Color.Transparent,
+                    ),
+                )
+                onDrawBehind {
+                    drawRect(horizontalGradient)
+                    if (overlayTint.alpha > 0f) drawRect(overlayTint)
+                    drawRect(verticalGradient)
+                }
+            }
+        } else {
+            Modifier
+        }
 
         Box(
             modifier = Modifier
@@ -50,24 +75,7 @@ internal fun PlayerOverlayScaffold(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .drawWithCache {
-                        val horizontalGradient = Brush.horizontalGradient(
-                            listOf(Color.Black.copy(alpha = 0.88f), Color.Transparent),
-                        )
-                        val verticalGradient = Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0f to Color.Black.copy(alpha = 0.6f),
-                                0.3f to Color.Black.copy(alpha = 0.4f),
-                                0.6f to Color.Black.copy(alpha = 0.2f),
-                                1f to Color.Transparent,
-                            ),
-                        )
-                        onDrawBehind {
-                            drawRect(horizontalGradient)
-                            if (overlayTint.alpha > 0f) drawRect(overlayTint)
-                            drawRect(verticalGradient)
-                        }
-                    }
+                    .then(dimModifier)
                     .padding(contentPadding),
                 content = content,
             )

@@ -6,9 +6,9 @@ import kotlin.test.assertEquals
 class LibraryDisplaySettingsTest {
 
     @Test
-    fun `local default resolves to recently added while remote trackers preserve provider order`() {
+    fun `local default resolves to last watched while remote trackers preserve provider order`() {
         assertEquals(
-            LibrarySortOption.ADDED_DESC,
+            LibrarySortOption.LAST_WATCHED_DESC,
             effectiveLibrarySortOption(LibrarySortOption.DEFAULT, LibrarySourceMode.LOCAL),
         )
         assertEquals(
@@ -34,8 +34,9 @@ class LibraryDisplaySettingsTest {
             listOf("ranked-first-newer", "ranked-first", "ranked-second", "unranked"),
             sortLibraryItems(input, LibrarySortOption.DEFAULT, LibrarySourceMode.TRAKT).map { it.id },
         )
+        // With no watch history every item ties and falls back to title, then id.
         assertEquals(
-            listOf("unranked", "ranked-second", "ranked-first-newer", "ranked-first"),
+            listOf("ranked-first", "ranked-first-newer", "ranked-second", "unranked"),
             sortLibraryItems(input, LibrarySortOption.DEFAULT, LibrarySourceMode.LOCAL).map { it.id },
         )
     }
@@ -56,6 +57,7 @@ class LibraryDisplaySettingsTest {
             LibrarySortOption.RELEASED_ASC to listOf("zulu", "bravo", "alpha"),
             LibrarySortOption.TITLE_ASC to listOf("alpha", "bravo", "zulu"),
             LibrarySortOption.TITLE_DESC to listOf("zulu", "bravo", "alpha"),
+            LibrarySortOption.LAST_WATCHED_DESC to listOf("bravo", "alpha", "zulu"),
         )
         assertEquals(LibrarySortOption.entries.toSet(), expected.keys)
         for ((option, ids) in expected) {
@@ -96,7 +98,7 @@ class LibraryDisplaySettingsTest {
             effectiveLibrarySortOption(LibrarySortOption.RELEASED_DESC, LibrarySourceMode.TRAKT),
         )
         assertEquals(
-            LibrarySortOption.ADDED_DESC,
+            LibrarySortOption.LAST_WATCHED_DESC,
             effectiveLibrarySortOption(LibrarySortOption.RELEASED_DESC, LibrarySourceMode.LOCAL),
         )
     }
@@ -116,6 +118,30 @@ class LibraryDisplaySettingsTest {
         assertEquals(
             listOf("oldest", "middle", "newest"),
             sortLibraryItems(input, LibrarySortOption.ADDED_ASC, LibrarySourceMode.TRAKT).map { it.id },
+        )
+    }
+
+    @Test
+    fun `last watched sorting puts most recently watched first and never watched last`() {
+        val input = listOf(
+            item("never-b", name = "Never B"),
+            item("watched-old", name = "Watched Old"),
+            item("never-a", name = "Never A"),
+            item("watched-new", name = "Watched New"),
+        )
+        val lastWatched = mapOf(
+            "watched-old" to 100L,
+            "watched-new" to 300L,
+        )
+
+        assertEquals(
+            listOf("watched-new", "watched-old", "never-a", "never-b"),
+            sortLibraryItems(
+                input,
+                LibrarySortOption.LAST_WATCHED_DESC,
+                LibrarySourceMode.LOCAL,
+                lastWatchedEpochMsById = lastWatched,
+            ).map { it.id },
         )
     }
 

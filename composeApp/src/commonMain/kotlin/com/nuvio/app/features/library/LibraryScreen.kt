@@ -267,13 +267,20 @@ fun LibraryScreen(
     }
     val providerOrders = rememberLibraryProviderOrders(uiState.sourceMode, orderListKeys, effectiveSortOption)
     val visibleSortOption = if (providerOrders.failed) LibrarySortOption.DEFAULT else effectiveSortOption
-    val sortedSections = remember(uiState.sections, displaySettings, uiState.sourceMode, sourceMode, providerOrders) {
+    // Most recent watch timestamp per library item id (parentMetaId), for the Last watched sort.
+    val lastWatchedEpochMsById = remember(watchProgressUiState.entries) {
+        watchProgressUiState.entries
+            .groupBy { it.parentMetaId }
+            .mapValues { (_, entries) -> entries.maxOf { it.lastUpdatedEpochMs } }
+    }
+    val sortedSections = remember(uiState.sections, displaySettings, uiState.sourceMode, sourceMode, providerOrders, lastWatchedEpochMsById) {
         if (sourceMode == LibraryViewMode.Saved && displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) {
             sortLibrarySections(
                 sections = uiState.sections,
                 selected = visibleSortOption,
                 sourceMode = uiState.sourceMode,
                 providerOrders = providerOrders.ranks,
+                lastWatchedEpochMsById = lastWatchedEpochMsById,
             )
         } else {
             emptyList()
@@ -287,6 +294,7 @@ fun LibraryScreen(
         displaySettings,
         sourceMode,
         providerOrders,
+        lastWatchedEpochMsById,
     ) {
         if (sourceMode == LibraryViewMode.Saved && displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
             buildLibraryVerticalProjection(
@@ -296,6 +304,7 @@ fun LibraryScreen(
                 selectedType = selectedLibraryType,
                 sortOption = visibleSortOption,
                 providerOrders = providerOrders.ranks,
+                lastWatchedEpochMsById = lastWatchedEpochMsById,
             )
         } else {
             LibraryVerticalProjection(
@@ -495,6 +504,23 @@ fun LibraryScreen(
                     onRetry = { serverShelvesRequest++ },
                 )
             } else {
+                // Continue Watching is driven by watch progress, not by saved titles,
+                // so it renders above everything even when the library is empty.
+                if (continueWatchingPreferences.isVisible && libraryContinueWatchingItems.isNotEmpty()) {
+                    item(key = "library_continue_watching", contentType = "continue_watching") {
+                        HomeContinueWatchingSection(
+                            items = libraryContinueWatchingItems,
+                            dataSourceKey = effectiveWatchProgressSource,
+                            style = continueWatchingPreferences.style,
+                            useEpisodeThumbnails = continueWatchingPreferences.useEpisodeThumbnails,
+                            blurNextUp = continueWatchingPreferences.blurNextUp,
+                            modifier = Modifier.padding(bottom = HomeContinueWatchingSectionBottomPadding),
+                            onItemClick = onContinueWatchingClick,
+                            onItemLongPress = onContinueWatchingLongPress,
+                            disintegrationRequest = continueWatchingDisintegrationRequest,
+                        )
+                    }
+                }
                 when {
                     !uiState.isLoaded || (uiState.isLoading && uiState.sections.isEmpty()) -> {
                         if (displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
@@ -554,21 +580,6 @@ fun LibraryScreen(
                     }
 
                     else -> {
-                        if (continueWatchingPreferences.isVisible && libraryContinueWatchingItems.isNotEmpty()) {
-                            item(key = "library_continue_watching", contentType = "continue_watching") {
-                                HomeContinueWatchingSection(
-                                    items = libraryContinueWatchingItems,
-                                    dataSourceKey = effectiveWatchProgressSource,
-                                    style = continueWatchingPreferences.style,
-                                    useEpisodeThumbnails = continueWatchingPreferences.useEpisodeThumbnails,
-                                    blurNextUp = continueWatchingPreferences.blurNextUp,
-                                    modifier = Modifier.padding(bottom = HomeContinueWatchingSectionBottomPadding),
-                                    onItemClick = onContinueWatchingClick,
-                                    onItemLongPress = onContinueWatchingLongPress,
-                                    disintegrationRequest = continueWatchingDisintegrationRequest,
-                                )
-                            }
-                        }
                         item(
                             key = "library-saved-controls:${uiState.sourceMode}:" +
                                 "${displaySettings.layoutMode}:$effectiveSortOption",

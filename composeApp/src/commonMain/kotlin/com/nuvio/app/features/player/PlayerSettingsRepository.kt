@@ -84,7 +84,7 @@ data class PlayerSettingsUiState(
     val animeSkipClientId: String = "",
     val introDbApiKey: String = "",
     val introSubmitEnabled: Boolean = false,
-    val streamAutoPlayNextEpisodeEnabled: Boolean = false,
+    val streamAutoPlayNextEpisodeEnabled: Boolean = true,
     val streamAutoPlayNextEpisodeFallbackEnabled: Boolean = true,
     val streamAutoPlayPreferBingeGroup: Boolean = true,
     val streamAutoPlayReuseBingeGroup: Boolean = false,
@@ -167,7 +167,7 @@ object PlayerSettingsRepository {
     private var animeSkipClientId = ""
     private var introDbApiKey = ""
     private var introSubmitEnabled = false
-    private var streamAutoPlayNextEpisodeEnabled = false
+    private var streamAutoPlayNextEpisodeEnabled = true
     private var streamAutoPlayNextEpisodeFallbackEnabled = true
     private var streamAutoPlayPreferBingeGroup = true
     private var streamAutoPlayReuseBingeGroup = false
@@ -256,7 +256,7 @@ object PlayerSettingsRepository {
         animeSkipClientId = ""
         introDbApiKey = ""
         introSubmitEnabled = false
-        streamAutoPlayNextEpisodeEnabled = false
+        streamAutoPlayNextEpisodeEnabled = true
         streamAutoPlayNextEpisodeFallbackEnabled = true
         streamAutoPlayPreferBingeGroup = true
         streamAutoPlayReuseBingeGroup = false
@@ -411,7 +411,7 @@ object PlayerSettingsRepository {
         animeSkipClientId = PlayerSettingsStorage.loadAnimeSkipClientId() ?: ""
         introDbApiKey = PlayerSettingsStorage.loadIntroDbApiKey() ?: ""
         introSubmitEnabled = PlayerSettingsStorage.loadIntroSubmitEnabled() ?: false
-        streamAutoPlayNextEpisodeEnabled = PlayerSettingsStorage.loadStreamAutoPlayNextEpisodeEnabled() ?: false
+        streamAutoPlayNextEpisodeEnabled = PlayerSettingsStorage.loadStreamAutoPlayNextEpisodeEnabled() ?: true
         streamAutoPlayNextEpisodeFallbackEnabled = PlayerSettingsStorage.loadStreamAutoPlayNextEpisodeFallbackEnabled() ?: true
         streamAutoPlayPreferBingeGroup = PlayerSettingsStorage.loadStreamAutoPlayPreferBingeGroup() ?: true
         streamAutoPlayReuseBingeGroup = PlayerSettingsStorage.loadStreamAutoPlayReuseBingeGroup() ?: false

@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
@@ -99,11 +100,15 @@ import com.nuvio.app.features.cloud.providerPosterUrl
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.collection.CollectionSyncService
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadStatus
 import com.nuvio.app.features.downloads.DownloadSubtitles
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.EpisodeDownloadPlanner
+import com.nuvio.app.features.downloads.PosterDownloadCoordinator
+import com.nuvio.app.features.downloads.PosterDownloadRequest
 import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.HomeRepository
@@ -153,7 +158,6 @@ import com.nuvio.app.features.settings.PluginsSettingsScreen
 import com.nuvio.app.features.settings.SupportersContributorsSettingsScreen
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import com.nuvio.app.features.streams.BingeGroupCacheRepository
-import com.nuvio.app.features.streams.StreamAutoPlayPolicy
 import com.nuvio.app.features.streams.StreamLaunch
 import com.nuvio.app.features.streams.PlaybackAvailability
 import com.nuvio.app.features.streams.rememberPlaybackAvailability
@@ -275,6 +279,7 @@ internal fun MainAppContent(
         var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
         var selectedPosterActionTarget by remember { mutableStateOf<PosterActionTarget?>(null) }
         var selectedPosterAnchor by remember { mutableStateOf<PosterZoomAnchor?>(null) }
+        var posterDownloadRequest by remember { mutableStateOf<PosterDownloadRequest?>(null) }
         val posterOverlayHazeState = rememberHazeState()
         var selectedContinueWatchingForActions by remember { mutableStateOf<ContinueWatchingItem?>(null) }
         var selectedContinueWatchingZoomAnchor by remember { mutableStateOf<PosterZoomAnchor?>(null) }
@@ -552,10 +557,6 @@ internal fun MainAppContent(
                 NuvioToastController.show(getString(Res.string.network_no_internet_connection))
             }
 
-            NetworkCondition.ServersUnreachable -> {
-                NuvioToastController.show(getString(Res.string.network_cannot_reach_servers))
-            }
-
             NetworkCondition.Online -> {
                 if (
                     previousConditionName == NetworkCondition.NoInternet.name ||
@@ -629,9 +630,7 @@ internal fun MainAppContent(
                 offlineLaunchRouteHandled = true
             }
 
-            NetworkCondition.NoInternet,
-            NetworkCondition.ServersUnreachable,
-            -> {
+            NetworkCondition.NoInternet -> {
                 offlineLaunchRouteHandled = true
                 val hasPlayableDownload = downloadsUiState.completedItems.any {
                     DownloadsRepository.playableLocalFileUri(it) != null
@@ -642,6 +641,12 @@ internal fun MainAppContent(
                         launchSingleTop = true
                     }
                 }
+            }
+
+            NetworkCondition.ServersUnreachable -> {
+                // WiFi/mobile data is up but our servers are unreachable: open normally
+                // on Library instead of yanking the user to Downloads.
+                offlineLaunchRouteHandled = true
             }
         }
     }
@@ -1924,6 +1929,63 @@ internal fun MainAppContent(
                                     }
                                 },
                             ),
+                            PosterZoomOverlayAction(
+                                icon = Icons.Default.Download,
+                                label = stringResource(Res.string.hero_download),
+                                onSelected = {
+                                    posterDownloadRequest = PosterDownloadRequest(
+                                        contentType = preview.type,
+                                        parentMetaId = preview.id,
+                                        parentMetaType = preview.type,
+                                        title = preview.name,
+                                        logo = preview.logo,
+                                        poster = preview.poster,
+                                        background = preview.banner,
+                                        isSeries = preview.type == "series",
+                                    )
+                                },
+                            ),
+                            PosterZoomOverlayAction(
+                                icon = Icons.Default.PlayArrow,
+                                label = stringResource(Res.string.hero_choose_stream),
+                                onSelected = {
+                                    coroutineScope.launch {
+                                        val isSeries = preview.type == "series"
+                                        val startVideo = if (isSeries) {
+                                            EpisodeDownloadPlanner.resolveSeriesStartVideo(
+                                                parentMetaType = preview.type,
+                                                parentMetaId = preview.id,
+                                            ).second
+                                        } else {
+                                            MetaVideo(
+                                                id = preview.id,
+                                                title = preview.name,
+                                                available = true,
+                                            )
+                                        }
+                                        if (startVideo == null) return@launch
+                                        launchPlaybackWithDownloadPreference(
+                                            type = preview.type,
+                                            videoId = startVideo.id,
+                                            parentMetaId = preview.id,
+                                            parentMetaType = preview.type,
+                                            title = preview.name,
+                                            logo = preview.logo,
+                                            poster = preview.poster,
+                                            background = preview.banner,
+                                            seasonNumber = startVideo.season,
+                                            episodeNumber = startVideo.episode,
+                                            episodeTitle = startVideo.title.takeIf { it.isNotBlank() },
+                                            episodeThumbnail = startVideo.thumbnail,
+                                            pauseDescription = null,
+                                            resumePositionMs = null,
+                                            resumeProgressFraction = null,
+                                            manualSelection = true,
+                                            startFromBeginning = false,
+                                        )
+                                    }
+                                },
+                            ),
                         ),
                         hazeState = posterOverlayHazeState,
                         onDismissed = {
@@ -1934,10 +1996,17 @@ internal fun MainAppContent(
                 }
             }
 
+            posterDownloadRequest?.let { downloadRequest ->
+                PosterDownloadCoordinator(
+                    request = downloadRequest,
+                    onDismiss = { posterDownloadRequest = null },
+                )
+            }
+
             selectedContinueWatchingForActions?.let { item ->
                 selectedContinueWatchingZoomAnchor?.let { anchor ->
                     key(item.videoId, anchor) {
-                        val showManualPlayOption = StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettingsUiState) && canSelectContinueWatchingStreams(item)
+                        val showManualPlayOption = canSelectContinueWatchingStreams(item)
                         val showDetailsOption = !item.isCloudLibraryContinueWatchingItem()
                         NuvioPosterZoomActionOverlay(
                             imageUrl = cloudLibraryDisplayArtworkUrl(anchor.imageUrl ?: item.poster ?: item.imageUrl),
@@ -2007,7 +2076,7 @@ internal fun MainAppContent(
 
             NuvioContinueWatchingActionSheet(
                 item = selectedContinueWatchingForActions.takeIf { selectedContinueWatchingZoomAnchor == null },
-                showManualPlayOption = StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettingsUiState) &&
+                showManualPlayOption =
                     selectedContinueWatchingForActions?.let(::canSelectContinueWatchingStreams) == true,
                 showDetailsOption = selectedContinueWatchingForActions?.isCloudLibraryContinueWatchingItem() != true,
                 onDismiss = { selectedContinueWatchingForActions = null },

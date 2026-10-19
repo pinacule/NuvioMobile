@@ -19,6 +19,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.device.DataSaverRepository
+import com.nuvio.app.core.device.DeviceEnvironment
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
+import com.nuvio.app.features.streams.StreamAutoPlayPolicy
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.debrid.toastMessage
@@ -400,7 +404,14 @@ internal fun StreamDestination(
         episode = launch.episodeNumber,
         manualSelection = launch.manualSelection,
     )
-    val showLoadingScreen = autoPlayNavigationStarted || resolvingDebridStream || resolvingYouTubeStream || preparingServerStream || streamsUiState.shouldShowAutoPlayLoading(
+    // Adaptive auto-play (item 9): tapping an episode plays the best stream for the
+    // current network/battery state instead of showing the sources list. Manual
+    // selection ("Choose stream") and the configured auto-play modes keep the list.
+    var adaptivePickDone by remember(route.launchId) { mutableStateOf(false) }
+    val adaptiveAutoPickPending = !launch.manualSelection &&
+        !adaptivePickDone &&
+        streamsUiState.requestToken == expectedStreamsRequestToken
+    val showLoadingScreen = autoPlayNavigationStarted || resolvingDebridStream || resolvingYouTubeStream || preparingServerStream || adaptiveAutoPickPending || streamsUiState.shouldShowAutoPlayLoading(
         expectedRequestToken = expectedStreamsRequestToken,
         settings = playerSettings,
         manualSelection = launch.manualSelection,
@@ -756,6 +767,47 @@ internal fun StreamDestination(
         if (reuseNavigated) {
             StreamsRepository.setOverlayVisible(false)
         }
+    }
+
+    // Adaptive auto-play pick (item 9). Runs once per stream route when the sources
+    // list was bypassed: after loading finishes, pick the best stream for the current
+    // network/battery/data-saver state and play it through the normal funnel.
+    // Yields to: manual selection, the stream-reuse flow, and the configured
+    // settings-based auto-play. Falls back to the list when nothing is pickable.
+    LaunchedEffect(
+        adaptivePickDone,
+        reuseNavigated,
+        streamsUiState.isAnyLoading,
+        streamsUiState.hasAnyStreams,
+        streamsUiState.autoPlayStream,
+        streamsUiState.requestToken,
+        expectedStreamsRequestToken,
+        launch.manualSelection,
+    ) {
+        if (launch.manualSelection || adaptivePickDone || reuseNavigated) return@LaunchedEffect
+        if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
+        if (StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettings)) return@LaunchedEffect
+        if (streamsUiState.isAnyLoading) return@LaunchedEffect
+        if (streamsUiState.autoPlayStream != null) return@LaunchedEffect
+        val candidates = streamsUiState.allStreams
+        adaptivePickDone = true
+        if (candidates.isEmpty()) return@LaunchedEffect
+        DataSaverRepository.ensureLoaded()
+        val targetQuality = AdaptiveStreamPicker.targetQuality(
+            isCellular = DeviceEnvironment.isCellular(),
+            batteryPercent = DeviceEnvironment.batteryPercent(),
+            dataSaverActive = DataSaverRepository.isActiveNow(),
+        )
+        val pick = AdaptiveStreamPicker.pickBestSeeded(candidates, targetQuality)
+            ?: return@LaunchedEffect
+        openSelectedStream(
+            stream = pick,
+            resolvedResumePositionMs = launch.resumePositionMs,
+            resolvedResumeProgressFraction = launch.resumeProgressFraction,
+            forceExternal = false,
+            forceInternal = false,
+            saveForReuse = true,
+        )
     }
 
     val partyState by PartyRepository.state.collectAsStateWithLifecycle()

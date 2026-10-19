@@ -302,6 +302,7 @@ internal fun HomeContinueWatchingSection(
         )
     } else {
         BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+            val cwSectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value)
             HomeContinueWatchingSectionContent(
                 items = items,
                 dataSourceKey = dataSourceKey,
@@ -310,8 +311,8 @@ internal fun HomeContinueWatchingSection(
                 blurNextUp = blurNextUp,
                 modifier = Modifier.fillMaxWidth(),
                 title = title,
-                sectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value),
-                layout = rememberContinueWatchingLayout(maxWidth.value, rememberPosterCardStyleUiState()),
+                sectionPadding = cwSectionPadding,
+                layout = rememberContinueWatchingLayout(maxWidth.value, rememberPosterCardStyleUiState(), cwSectionPadding),
                 listState = listState,
                 onItemClick = onItemClick,
                 onItemLongPress = onItemLongPress,
@@ -1240,14 +1241,30 @@ internal data class ContinueWatchingLayout(
     val posterBadgeTextSize: androidx.compose.ui.unit.TextUnit,
 )
 
+/**
+ * Wide-card width sized so exactly two cards fit side by side in the row with no
+ * peeking third card: (available width − section padding on both sides − one
+ * inter-card gap) / 2, never larger than the breakpoint's designed width.
+ */
+internal fun continueWatchingTwoUpCardWidth(
+    maxWidthDp: Float,
+    sectionPadding: Dp,
+    itemGap: Dp,
+    maxCardWidth: Dp,
+): Dp {
+    val twoUp = (maxWidthDp.dp - sectionPadding * 2 - itemGap) / 2
+    return minOf(twoUp.coerceAtLeast(96.dp), maxCardWidth)
+}
+
 internal fun rememberContinueWatchingLayout(
     maxWidthDp: Float,
     posterCardStyle: PosterCardStyleUiState = PosterCardStyleUiState(),
+    sectionPadding: Dp = 16.dp,
 ): ContinueWatchingLayout {
     return when {
         maxWidthDp >= 1440f -> ContinueWatchingLayout(
             itemGap = 20.dp,
-            wideCardWidth = 400.dp,
+            wideCardWidth = continueWatchingTwoUpCardWidth(maxWidthDp, sectionPadding, 20.dp, 400.dp),
             wideCardHeight = 160.dp,
             widePosterStripWidth = 100.dp,
             wideContentPadding = 16.dp,
@@ -1265,7 +1282,7 @@ internal fun rememberContinueWatchingLayout(
         )
         maxWidthDp >= 1024f -> ContinueWatchingLayout(
             itemGap = 18.dp,
-            wideCardWidth = 350.dp,
+            wideCardWidth = continueWatchingTwoUpCardWidth(maxWidthDp, sectionPadding, 18.dp, 350.dp),
             wideCardHeight = 140.dp,
             widePosterStripWidth = 90.dp,
             wideContentPadding = 14.dp,
@@ -1283,7 +1300,7 @@ internal fun rememberContinueWatchingLayout(
         )
         maxWidthDp >= 768f -> ContinueWatchingLayout(
             itemGap = 16.dp,
-            wideCardWidth = 320.dp,
+            wideCardWidth = continueWatchingTwoUpCardWidth(maxWidthDp, sectionPadding, 16.dp, 320.dp),
             wideCardHeight = 130.dp,
             widePosterStripWidth = 85.dp,
             wideContentPadding = 12.dp,
@@ -1301,7 +1318,7 @@ internal fun rememberContinueWatchingLayout(
         )
         else -> ContinueWatchingLayout(
             itemGap = 16.dp,
-            wideCardWidth = 280.dp,
+            wideCardWidth = continueWatchingTwoUpCardWidth(maxWidthDp, sectionPadding, 16.dp, 280.dp),
             wideCardHeight = 120.dp,
             widePosterStripWidth = 80.dp,
             wideContentPadding = 12.dp,

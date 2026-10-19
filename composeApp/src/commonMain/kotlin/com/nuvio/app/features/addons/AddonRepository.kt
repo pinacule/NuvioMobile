@@ -59,6 +59,7 @@ object AddonRepository {
     private var currentProfileId: Int = 1
     private val activeRefreshJobs = mutableMapOf<String, Job>()
     private val pushJobsByProfile = mutableMapOf<Int, Job>()
+    private var seedJob: Job? = null
 
     fun initialize() {
         val effectiveProfileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
@@ -66,6 +67,7 @@ object AddonRepository {
         initialized = true
         currentProfileId = effectiveProfileId
         log.d { "initialize() — loading local addons for profile $currentProfileId" }
+        ensurePreinstalledAddonsSeeded()
 
         val storedUrls = dedupeManifestUrls(AddonStorage.loadInstalledAddonUrls(currentProfileId))
         val enabledByUrl = loadLocalEnabledStates()
@@ -95,6 +97,7 @@ object AddonRepository {
         val effectiveProfileId = resolveEffectiveProfileId(profileId)
         if (effectiveProfileId == currentProfileId && initialized) return
         cancelActiveRefreshes()
+        seedJob?.cancel()
         currentProfileId = effectiveProfileId
         initialized = false
         _uiState.value = AddonsUiState()
@@ -102,6 +105,7 @@ object AddonRepository {
 
     fun clearLocalState() {
         cancelActiveRefreshes()
+        seedJob?.cancel()
         pushJobsByProfile.values.forEach(Job::cancel)
         pushJobsByProfile.clear()
         currentProfileId = 1
@@ -165,6 +169,38 @@ object AddonRepository {
             state.addons.isEmpty() ||
                 state.addons.any { it.manifest != null } ||
                 state.addons.none { it.isRefreshing }
+        }
+    }
+
+    /**
+     * One-time migration: installs the default addons (Torrentio + Cinemeta) unless an
+     * addon of the same family is already installed. Runs at most once per profile and
+     * never re-adds an addon the user removed afterwards. Failures (e.g. offline on
+     * first start) leave the flag unset so the next start retries.
+     */
+    private fun ensurePreinstalledAddonsSeeded() {
+        if (isUsingPrimaryAddonsFromSecondaryProfile()) return
+        val profileId = currentProfileId
+        if (AddonStorage.loadPreinstalledAddonsSeeded(profileId)) return
+        seedJob?.cancel()
+        seedJob = scope.launch {
+            val missing = missingPreinstalledAddonUrls(_uiState.value.addons.map(ManagedAddon::manifestUrl))
+            for (url in missing) {
+                if (currentProfileId != profileId) return@launch
+                val result = addAddon(url)
+                if (result is AddAddonResult.Error) {
+                    // A concurrent install may have beaten us; only give up on real failures.
+                    val stillMissing =
+                        missingPreinstalledAddonUrls(_uiState.value.addons.map(ManagedAddon::manifestUrl))
+                    if (url in stillMissing) {
+                        log.w { "ensurePreinstalledAddonsSeeded() — failed for $url: ${result.message}" }
+                        return@launch
+                    }
+                }
+            }
+            if (currentProfileId == profileId) {
+                AddonStorage.savePreinstalledAddonsSeeded(profileId, true)
+            }
         }
     }
 

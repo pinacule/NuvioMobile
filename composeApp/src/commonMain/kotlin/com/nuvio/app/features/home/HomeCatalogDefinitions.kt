@@ -68,7 +68,21 @@ fun buildHomeCatalogDefinitions(addons: List<ManagedAddon>): List<HomeCatalogDef
                     descriptorSignature = buildHomeCatalogDescriptorSignature(addon, manifest, catalog),
                 )
             }
-    }.distinctBy(HomeCatalogDefinition::key) + ServerCatalog.homeDefinitions()
+    }.let(::dedupeHomeCatalogDefinitions) + ServerCatalog.homeDefinitions()
+
+/**
+ * Drops duplicate catalog rows. First by exact definition key (the same addon
+ * installed twice), then by catalog address (type + catalog id) so two different
+ * addons exposing an identical catalog (e.g. Cinemeta alongside another install of
+ * it) only produce one Home row instead of two "Popular" rows. The first occurrence
+ * wins, preserving the existing addon order. Pure logic — unit tested on JVM.
+ */
+internal fun dedupeHomeCatalogDefinitions(
+    definitions: List<HomeCatalogDefinition>,
+): List<HomeCatalogDefinition> =
+    definitions
+        .distinctBy(HomeCatalogDefinition::key)
+        .distinctBy { it.type to it.catalogId }
 
 private fun buildHomeCatalogDescriptorSignature(
     addon: ManagedAddon,

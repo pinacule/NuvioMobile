@@ -31,6 +31,7 @@ actual object AddonStorage {
     private const val preferencesName = "nuvio_addons"
     private const val addonUrlsKey = "installed_manifest_urls"
     private const val addonEnabledStatesKey = "installed_manifest_enabled_states"
+    private const val preinstalledSeededKey = "preinstalled_addons_seeded"
 
     private var preferences: SharedPreferences? = null
 
@@ -69,6 +70,15 @@ actual object AddonStorage {
         preferences
             ?.edit()
             ?.putString("${addonEnabledStatesKey}_$profileId", payload)
+            ?.apply()
+    }
+    actual fun loadPreinstalledAddonsSeeded(profileId: Int): Boolean =
+        preferences?.getBoolean("${preinstalledSeededKey}_$profileId", false) ?: false
+
+    actual fun savePreinstalledAddonsSeeded(profileId: Int, seeded: Boolean) {
+        preferences
+            ?.edit()
+            ?.putBoolean("${preinstalledSeededKey}_$profileId", seeded)
             ?.apply()
     }
 }

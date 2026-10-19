@@ -52,7 +52,9 @@ fun PlaybackSpeedModal(
         visible = visible,
         onDismiss = onDismiss,
         modifier = modifier,
-        contentPadding = PaddingValues(start = 44.dp, end = 44.dp, top = 28.dp, bottom = 64.dp),
+        // No dim: the video stays fully bright behind the compact panel.
+        dimBackground = false,
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
     ) {
         val tokens = MaterialTheme.nuvio
         // The slider moves freely while dragging and snaps to 0.05x steps when applied.
@@ -62,20 +64,23 @@ fun PlaybackSpeedModal(
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
-                    .width(minOf(maxWidth, 444.dp))
-                    .align(Alignment.BottomStart),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .width(minOf(maxWidth - 32.dp, 400.dp))
+                    .align(Alignment.BottomCenter)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.Black.copy(alpha = 0.88f))
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
                     text = stringResource(Res.string.compose_player_speed),
                     color = Color.White,
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = MaterialTheme.typography.titleLarge,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = formatPlaybackSpeedLabel(shownSpeed),
                         color = Color.White,
-                        style = MaterialTheme.typography.displaySmall,
+                        style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
                     if (shownSpeed == defaultSpeed) {

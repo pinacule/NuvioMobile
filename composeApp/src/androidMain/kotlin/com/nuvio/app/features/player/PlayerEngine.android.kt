@@ -68,6 +68,7 @@ import com.nuvio.app.features.autosync.AutoSyncExtractorsFactory
 import com.nuvio.app.features.autosync.AutoSyncPreferencesRepository
 import com.nuvio.app.features.autosync.rememberAutoSyncCoordinator
 import com.nuvio.app.R
+import com.nuvio.app.core.device.DataSaverRepository
 import com.nuvio.app.features.streams.normalizeStreamType
 import `is`.xyz.mpv.BaseMPVView
 import `is`.xyz.mpv.MPV
@@ -91,6 +92,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "NuvioPlayer"
 private const val PLAYER_DIAGNOSTIC_TAG = "NuvioPlayerDiag"
+
+/** Max ahead-buffer while data saver is active: less speculative data on metered networks. */
+private const val DATA_SAVER_MAX_BUFFER_MS = 15_000
 
 private class PlaybackDiagnostics {
     var prepareStartedAtMs: Long = 0L
@@ -122,6 +126,11 @@ actual fun PlatformPlayerSurface(
     val playerSettings = remember {
         PlayerSettingsRepository.ensureLoaded()
         PlayerSettingsRepository.uiState.value
+    }
+    // Data saver: cap speculative buffering so unwatched-ahead data stays small.
+    val dataSaverActive = remember {
+        DataSaverRepository.ensureLoaded()
+        DataSaverRepository.isActiveNow()
     }
     val playerSourceKey = listOf(
         sourceUrl,
@@ -431,7 +440,11 @@ private fun ExoPlayerSurface(
             PlaybackBufferSettings(
                 enabled = playerSettings.bufferEngineEnabled,
                 minBufferMs = playerSettings.minBufferMs,
-                maxBufferMs = playerSettings.maxBufferMs,
+                maxBufferMs = if (dataSaverActive) {
+                    minOf(playerSettings.maxBufferMs, DATA_SAVER_MAX_BUFFER_MS)
+                } else {
+                    playerSettings.maxBufferMs
+                },
                 bufferForPlaybackMs = playerSettings.bufferForPlaybackMs,
                 bufferForPlaybackAfterRebufferMs = playerSettings.bufferForPlaybackAfterRebufferMs,
                 backBufferDurationMs = playerSettings.backBufferDurationMs,

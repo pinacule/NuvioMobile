@@ -2,16 +2,21 @@ package com.nuvio.app.features.player
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -45,6 +50,25 @@ import com.nuvio.app.core.i18n.localizedEpisodeTitle
 
 internal val PlayerTimelineContentInset = 2.dp
 
+/** Small pill shown in the player when data saver mode is active. */
+@Composable
+internal fun DataSaverBadge(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.White.copy(alpha = 0.16f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = stringResource(Res.string.player_data_saver_badge),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = 0.9f),
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 internal fun PlayerTimelineDetails(
     title: String,
@@ -56,20 +80,30 @@ internal fun PlayerTimelineDetails(
     providerName: String,
     isPlaying: Boolean,
     metrics: PlayerLayoutMetrics,
+    dataSaverActive: Boolean = false,
 ) {
     val typeScale = MaterialTheme.nuvioTypeScale
     Column(Modifier.padding(horizontal = PlayerTimelineContentInset)) {
-        Text(
-            text = title,
-            style = typeScale.titleLg.copy(
-                fontSize = metrics.titleSize,
-                lineHeight = metrics.titleSize * 1.16f,
-                fontWeight = FontWeight.SemiBold,
-            ),
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = title,
+                style = typeScale.titleLg.copy(
+                    fontSize = metrics.titleSize,
+                    lineHeight = metrics.titleSize * 1.16f,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (dataSaverActive) {
+                DataSaverBadge()
+            }
+        }
         if (seasonNumber != null && episodeNumber != null) {
             val episodeCode = stringResource(Res.string.compose_player_episode_code_full, seasonNumber, episodeNumber)
             val displayEpisodeTitle = localizedEpisodeTitle(episodeTitle, episodeNumber)

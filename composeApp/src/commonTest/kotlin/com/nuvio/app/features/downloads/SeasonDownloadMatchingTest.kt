@@ -1,6 +1,7 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.streams.streamResolution
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

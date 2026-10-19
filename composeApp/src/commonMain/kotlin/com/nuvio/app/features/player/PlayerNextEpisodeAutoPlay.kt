@@ -1,5 +1,7 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.core.device.DataSaverRepository
+import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
@@ -12,6 +14,7 @@ import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlaySelector
 import com.nuvio.app.features.streams.StreamAutoPlaySource
@@ -148,6 +151,20 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         null
     }
 
+    // Unconfigured (MANUAL) mode uses the adaptive pick: best-seeded stream at the
+    // quality for the current network/battery/data-saver state. Explicitly configured
+    // modes (first stream / regex) keep their existing behavior.
+    val useAdaptivePick = settings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL
+
+    fun adaptiveTargetQuality(): String {
+        DataSaverRepository.ensureLoaded()
+        return AdaptiveStreamPicker.targetQuality(
+            isCellular = DeviceEnvironment.isCellular(),
+            batteryPercent = DeviceEnvironment.batteryPercent(),
+            dataSaverActive = DataSaverRepository.isActiveNow(),
+        )
+    }
+
     return launch {
         PlayerStreamsRepository.loadEpisodeStreams(
             type = type,
@@ -193,22 +210,33 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         }
 
         fun trySelectStream(streams: List<StreamItem>): StreamItem? =
-            StreamAutoPlaySelector.selectAutoPlayStream(
-                streams = streams,
-                mode = effectiveMode,
-                regexPattern = effectiveRegex,
-                source = effectiveSource,
-                installedAddonNames = installedAddonNames,
-                selectedAddons = effectiveSelectedAddons,
-                selectedPlugins = effectiveSelectedPlugins,
-                preferredBingeGroup = preferredBingeGroup,
-                preferBingeGroupInSelection = settings.streamAutoPlayPreferBingeGroup,
-                bingeGroupOnly = bingeGroupOnlyManualMode,
-                debridEnabled = debridSettings.canResolvePlayableLinks,
-                activeResolverProviderId = debridSettings.activeResolverProviderId,
-            )
+            if (useAdaptivePick) {
+                val target = adaptiveTargetQuality()
+                // Keep the same release across episodes when possible: restrict the
+                // adaptive pick to the current binge group, falling back to all streams.
+                val bingeCandidates = preferredBingeGroup?.takeIf { it.isNotEmpty() }?.let { group ->
+                    streams.filter { it.bingeGroup == group }.takeIf { it.isNotEmpty() }
+                }
+                AdaptiveStreamPicker.pickBestSeeded(bingeCandidates ?: streams, target)
+            } else {
+                StreamAutoPlaySelector.selectAutoPlayStream(
+                    streams = streams,
+                    mode = effectiveMode,
+                    regexPattern = effectiveRegex,
+                    source = effectiveSource,
+                    installedAddonNames = installedAddonNames,
+                    selectedAddons = effectiveSelectedAddons,
+                    selectedPlugins = effectiveSelectedPlugins,
+                    preferredBingeGroup = preferredBingeGroup,
+                    preferBingeGroupInSelection = settings.streamAutoPlayPreferBingeGroup,
+                    bingeGroupOnly = bingeGroupOnlyManualMode,
+                    debridEnabled = debridSettings.canResolvePlayableLinks,
+                    activeResolverProviderId = debridSettings.activeResolverProviderId,
+                )
+            }
 
         fun tryBingeGroupOnly(streams: List<StreamItem>): StreamItem? {
+            if (useAdaptivePick) return null
             if (preferredBingeGroup == null || !settings.streamAutoPlayPreferBingeGroup) return null
             return StreamAutoPlaySelector.selectAutoPlayStream(
                 streams = streams,

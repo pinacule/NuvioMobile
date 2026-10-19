@@ -1,5 +1,7 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.core.device.DataSaverRepository
+import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
@@ -444,6 +446,12 @@ internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: Downloa
 
 internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
     if (nextEpisodeAutoPlaySearching || nextEpisodeAutoPlayCountdown != null) return
+    // "Up next" auto-play is WiFi-only: on mobile data or with data saver on, the
+    // next-episode card still appears, but the user starts the episode manually.
+    if (automatic) {
+        DataSaverRepository.ensureLoaded()
+        if (!DeviceEnvironment.isWifi() || DataSaverRepository.isActiveNow()) return
+    }
     nextEpisodePreloadTriggered = false
     val playbackKey = activePlaybackKey
     val nextVideoId = nextEpisodeInfo?.takeIf { it.hasAired }?.videoId ?: return

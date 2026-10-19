@@ -14,6 +14,8 @@ import com.nuvio.app.core.auth.AuthStorage
 import com.nuvio.app.core.network.ServerConfigurationStorage
 import com.nuvio.app.core.diagnostics.SentryInitializer
 import com.nuvio.app.core.deeplink.handleAppUrl
+import com.nuvio.app.core.device.DataSaverStorage
+import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.core.storage.PlatformLocalAccountDataCleaner
 import com.nuvio.app.core.sync.SyncClientIdentityStorage
 import com.nuvio.app.features.addons.AddonHttpClientProvider
@@ -132,6 +134,8 @@ open class MainActivity : AppCompatActivity() {
         SimklSyncStorage.initialize(applicationContext)
         TrackingScrobbleOutboxStorage.initialize(applicationContext)
         LibraryDisplaySettingsStorage.initialize(applicationContext)
+        DeviceEnvironment.initialize(applicationContext)
+        DataSaverStorage.initialize(applicationContext)
         ContinueWatchingPreferencesStorage.initialize(applicationContext)
         ResumePromptStorage.initialize(applicationContext)
         ContinueWatchingEnrichmentStorage.initialize(applicationContext)

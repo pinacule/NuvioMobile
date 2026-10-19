@@ -119,7 +119,6 @@ import com.nuvio.app.features.library.TrackingMembershipRemovalConfirmationHost
 import com.nuvio.app.features.library.executeTrackingMembershipOperation
 import com.nuvio.app.features.library.showTrackingMembershipRewriteFeedback
 import com.nuvio.app.features.library.toLibraryItem
-import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.shuffle.EpisodeShuffleRepository
 import com.nuvio.app.features.shuffle.EpisodeShuffleSheet
 import com.nuvio.app.features.shuffle.ShuffleSurface
@@ -127,7 +126,6 @@ import com.nuvio.app.features.shuffle.rememberShuffleSave
 import com.nuvio.app.features.shuffle.shufflePrimaryAction
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.streams.rememberPlaybackAvailability
-import com.nuvio.app.features.streams.StreamAutoPlayPolicy
 import com.nuvio.app.features.tmdb.TmdbSettingsRepository
 import com.nuvio.app.features.tmdb.TmdbService
 import com.nuvio.app.features.trakt.TraktAuthRepository
@@ -232,10 +230,6 @@ fun MetaDetailsScreen(
     val progressByVideoId = remember(watchProgressUiState.entries, id) {
         watchProgressUiState.byVideoIdForContent(id)
     }
-    val playerSettingsUiState by remember {
-        PlayerSettingsRepository.ensureLoaded()
-        PlayerSettingsRepository.uiState
-    }.collectAsStateWithLifecycle()
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     var autoLoadAttempted by remember(type, id) { mutableStateOf(false) }
     var observedOfflineState by remember(type, id) { mutableStateOf(false) }
@@ -852,7 +846,7 @@ fun MetaDetailsScreen(
                     }
                 }
                 val manualPlayHandler = onPlayManually
-                val showManualPlayOption = manualPlayHandler != null && StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettingsUiState)
+                val showManualPlayOption = manualPlayHandler != null
                 val onPrimaryPlayLongClick: (() -> Unit)? = manualPlayHandler
                     ?.takeIf { !shufflePoolEmpty && showManualPlayOption && playbackAvailability.canStream(meta.type, primaryVideoId) }
                     ?.let { manualPlay ->
@@ -1731,7 +1725,6 @@ fun MetaDetailsScreen(
                     )
                     if (
                         onPlayManually != null &&
-                        StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettingsUiState) &&
                         playbackAvailability.canStream(meta.type, selectedEpisode.id)
                     ) {
                         add(

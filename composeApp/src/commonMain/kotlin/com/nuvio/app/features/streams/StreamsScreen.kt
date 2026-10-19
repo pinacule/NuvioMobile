@@ -67,7 +67,9 @@ import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.dismissNuvioBottomSheet
 import com.nuvio.app.features.downloads.DownloadEnqueueResult
+import com.nuvio.app.features.downloads.DownloadQualitySheet
 import com.nuvio.app.features.downloads.DownloadsRepository
+import com.nuvio.app.features.downloads.EpisodeDownloadPlanner
 import com.nuvio.app.features.downloads.SeasonDownloadResult
 import com.nuvio.app.features.downloads.SeasonDownloads
 import com.nuvio.app.features.downloads.TORRENT_DOWNLOAD_OWNER_PREFIX
@@ -180,6 +182,8 @@ fun StreamsScreen(
     var streamActionsTarget by remember(videoId) { mutableStateOf<StreamItem?>(null) }
     var pendingP2pDownload by remember(videoId) { mutableStateOf<StreamItem?>(null) }
     var pendingP2pSeasonDownload by remember(videoId) { mutableStateOf(false) }
+    var seasonQualityTarget by remember(videoId) { mutableStateOf<StreamItem?>(null) }
+    var seasonQualitySelected by remember(videoId) { mutableStateOf<String?>(null) }
     val downloadScope = rememberCoroutineScope()
     val enqueueStreamDownload: (StreamItem) -> DownloadEnqueueResult = { stream ->
         DownloadsRepository.enqueueFromStream(
@@ -522,7 +526,7 @@ fun StreamsScreen(
                     showDownloadResult(stream, enqueueStreamDownload(stream))
                 }
             },
-            onDownloadSeason = if (isEpisode) startSeasonDownload else null,
+            onDownloadSeason = if (isEpisode) { stream -> seasonQualityTarget = stream } else null,
             onOpen = { stream, openExternally ->
                 onStreamActionOpen(
                     stream,
@@ -532,6 +536,38 @@ fun StreamsScreen(
                 )
             },
         )
+
+        // Quality picker shown before a season download: 720p default, any offered quality.
+        seasonQualityTarget?.let { target ->
+            val allStreams = remember(uiState.groups) { uiState.groups.flatMap { it.streams } }
+            val qualities = remember(allStreams) { EpisodeDownloadPlanner.distinctQualities(allStreams) }
+            val selectedQuality = seasonQualitySelected
+                ?: EpisodeDownloadPlanner.closestQuality(qualities, EpisodeDownloadPlanner.DEFAULT_QUALITY)
+                ?: qualities.firstOrNull()
+            if (selectedQuality == null) {
+                LaunchedEffect(target) {
+                    seasonQualityTarget = null
+                    startSeasonDownload(target)
+                }
+            } else {
+                DownloadQualitySheet(
+                    qualities = qualities,
+                    selectedQuality = selectedQuality,
+                    onQualitySelected = { seasonQualitySelected = it },
+                    onConfirm = {
+                        val template =
+                            EpisodeDownloadPlanner.pickBestStreamAtQuality(allStreams, selectedQuality) ?: target
+                        seasonQualityTarget = null
+                        seasonQualitySelected = null
+                        startSeasonDownload(template)
+                    },
+                    onDismiss = {
+                        seasonQualityTarget = null
+                        seasonQualitySelected = null
+                    },
+                )
+            }
+        }
     }
 }
 

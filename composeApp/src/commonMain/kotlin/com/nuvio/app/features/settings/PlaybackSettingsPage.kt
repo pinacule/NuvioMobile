@@ -92,6 +92,8 @@ import com.nuvio.app.features.p2p.P2pTorrentProfile
 import com.nuvio.app.features.plugins.PluginsUiState
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.streams.StreamAutoPlayMode
+import com.nuvio.app.core.device.DataSaverMode
+import com.nuvio.app.core.device.DataSaverRepository
 import com.nuvio.app.features.streams.StreamAutoPlaySource
 import com.nuvio.app.isIos
 import kotlinx.coroutines.launch
@@ -367,6 +369,11 @@ private fun PlaybackSettingsSection(
     var p2pCacheClearFailed by remember { mutableStateOf(false) }
     val pluginsEnabled = AppFeaturePolicy.pluginsEnabled
     val autoPlayPlayerSettings by PlayerSettingsRepository.uiState.collectAsStateWithLifecycle()
+    var showDataSaverDialog by remember { mutableStateOf(false) }
+    val dataSaverState by remember {
+        DataSaverRepository.ensureLoaded()
+        DataSaverRepository.uiState
+    }.collectAsStateWithLifecycle()
     val p2pSettings by remember {
         P2pSettingsRepository.ensureLoaded()
         P2pSettingsRepository.uiState
@@ -1571,6 +1578,31 @@ private fun PlaybackSettingsSection(
                 }
             }
         }
+    }
+
+    SettingsSection(
+        title = stringResource(Res.string.settings_data_saver_section),
+        isTablet = isTablet,
+    ) {
+        SettingsGroup(isTablet = isTablet) {
+            SettingsNavigationRow(
+                title = stringResource(Res.string.settings_data_saver_title),
+                description = stringResource(dataSaverState.mode.labelRes),
+                isTablet = isTablet,
+                onClick = { showDataSaverDialog = true },
+            )
+        }
+    }
+
+    if (showDataSaverDialog) {
+        DataSaverModeDialog(
+            selected = dataSaverState.mode,
+            onSelect = {
+                DataSaverRepository.setMode(it)
+                showDataSaverDialog = false
+            },
+            onDismiss = { showDataSaverDialog = false },
+        )
     }
 
     if (showAutoSkipSegmentDialog) {
@@ -2922,6 +2954,39 @@ private fun IntroDbApiKeyDialog(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
+private val DataSaverMode.labelRes: StringResource
+    get() = when (this) {
+        DataSaverMode.AUTOMATIC -> Res.string.settings_data_saver_mode_automatic
+        DataSaverMode.ALWAYS_ON -> Res.string.settings_data_saver_mode_always_on
+        DataSaverMode.ALWAYS_OFF -> Res.string.settings_data_saver_mode_always_off
+    }
+
+private fun DataSaverModeDialog(
+    selected: DataSaverMode,
+    onSelect: (DataSaverMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    DialogSurface(
+        onDismissRequest = onDismiss,
+        title = stringResource(Res.string.settings_data_saver_title),
+    ) {
+        DataSaverMode.entries.forEach { mode ->
+            DialogOption(
+                text = stringResource(mode.labelRes),
+                selected = mode == selected,
+                onClick = { onSelect(mode) },
+            )
+        }
+
+        DialogButtons {
+            DialogButton(
+                text = stringResource(Res.string.action_done),
+                onClick = onDismiss,
+            )
+        }
+    }
+}
+
 private fun NextEpisodeThresholdModeDialog(
     selected: com.nuvio.app.features.player.skip.NextEpisodeThresholdMode,
     onSelect: (com.nuvio.app.features.player.skip.NextEpisodeThresholdMode) -> Unit,

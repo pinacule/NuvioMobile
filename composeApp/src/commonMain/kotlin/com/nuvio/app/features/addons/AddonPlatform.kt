@@ -5,6 +5,9 @@ internal expect object AddonStorage {
     fun saveInstalledAddonUrls(profileId: Int, urls: List<String>)
     fun loadAddonEnabledStates(profileId: Int): Map<String, Boolean>
     fun saveAddonEnabledStates(profileId: Int, states: Map<String, Boolean>)
+    /** One-time migration flag: true once the pre-installed default addons were seeded. */
+    fun loadPreinstalledAddonsSeeded(profileId: Int): Boolean
+    fun savePreinstalledAddonsSeeded(profileId: Int, seeded: Boolean)
 }
 
 data class RawHttpResponse(

@@ -197,6 +197,8 @@ internal class PlayerScreenRuntime(
     var nextEpisodeAutoPlayAutomatic by mutableStateOf(false)
     var nextEpisodePreloadJob by mutableStateOf<Job?>(null)
     var nextEpisodePreloadTriggered by mutableStateOf(false)
+    /** Video id for which the background download preload already fired (resets per episode). */
+    var nextEpisodeDownloadPreloadVideoId by mutableStateOf<String?>(null)
     var pendingP2pSwitch by mutableStateOf<PendingPlayerP2pSwitch?>(null)
     var credentialRefreshJob by mutableStateOf<Job?>(null)
     var credentialRefreshAttemptedSourceUrl by mutableStateOf<String?>(null)

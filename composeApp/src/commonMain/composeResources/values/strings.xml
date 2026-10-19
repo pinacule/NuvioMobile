@@ -631,6 +631,13 @@
     <string name="downloads_section_active">Active</string>
     <string name="downloads_section_movies">Movies</string>
     <string name="downloads_section_shows">Shows</string>
+    <string name="downloads_options_title">Download</string>
+    <string name="downloads_options_scope_rest_of_season">Rest of season</string>
+    <string name="downloads_options_scope_next_episodes">Next %1$d episodes</string>
+    <string name="downloads_options_quality">Quality</string>
+    <string name="downloads_options_no_streams">No downloadable streams found</string>
+    <string name="downloads_options_load_failed">Couldn&apos;t load download options</string>
+    <string name="downloads_options_close">Close</string>
     <string name="downloads_show_downloads">Show Downloads</string>
     <string name="downloads_status_completed">Completed • %1$s</string>
     <string name="downloads_status_downloading">Downloading • %1$s</string>
@@ -641,6 +648,8 @@
     <string name="episodes_specials">Specials</string>
     <string name="floating_prompt_continue_where_left_off">Continue where you left off</string>
     <string name="hero_add_to_library">Add to library</string>
+    <string name="hero_download">Download</string>
+    <string name="hero_choose_stream">Choose stream</string>
     <string name="hero_mark_unwatched">Mark as unwatched</string>
     <string name="hero_mark_watched">Mark as watched</string>
     <string name="hero_remove_from_library">Remove from library</string>
@@ -1061,6 +1070,13 @@
     <string name="settings_playback_anime_skip_description">Also search AnimeSkip for skip timestamps (requires client ID).</string>
     <string name="settings_playback_auto_play_next_episode">Auto-play Next Episode</string>
     <string name="settings_playback_auto_play_next_episode_description">Start next episode automatically when prompt appears.</string>
+    <string name="settings_data_saver_section">Data saver</string>
+    <string name="settings_data_saver_title">Data saver</string>
+    <string name="settings_data_saver_description">Cap quality at 480p, use a smaller buffer and never auto-play on mobile data.</string>
+    <string name="settings_data_saver_mode_automatic">Automatic (on mobile data)</string>
+    <string name="settings_data_saver_mode_always_on">Always on</string>
+    <string name="settings_data_saver_mode_always_off">Always off</string>
+    <string name="player_data_saver_badge">Data saver</string>
     <string name="settings_playback_auto_play_next_episode_fallback">Fallback when binge group fails</string>
     <string name="settings_playback_auto_play_next_episode_fallback_description">Auto-select first available stream if binge group is not found. When off, shows the stream picker instead.</string>
     <string name="settings_playback_decoder_device_only">Device decoders only</string>
@@ -1948,6 +1964,7 @@
     <string name="library_other">Other</string>
     <string name="library_sort_added_asc">Oldest added</string>
     <string name="library_sort_added_desc">Recently added</string>
+    <string name="library_sort_last_watched_desc">Last watched</string>
     <string name="library_sort_released_asc">Oldest released</string>
     <string name="library_sort_released_desc">Recently released</string>
     <string name="library_sort_title_asc">Title A–Z</string>

@@ -124,6 +124,7 @@ internal fun PlayerControlsShell(
     onScrubFinished: (Long) -> Unit,
     horizontalSafePadding: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier,
+    dataSaverActive: Boolean = false,
 ) {
     val density = LocalDensity.current
     var timelineHeight by remember { mutableStateOf(0.dp) }
@@ -189,6 +190,7 @@ internal fun PlayerControlsShell(
                     onPartyClick = onPartyClick,
                     partyActive = partyActive,
                     onBack = onBack,
+                    dataSaverActive = dataSaverActive,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
@@ -289,6 +291,7 @@ internal fun PlayerControlsShell(
                             providerName = providerName,
                             isPlaying = playbackSnapshot.isPlaying,
                             metrics = metrics,
+                            dataSaverActive = dataSaverActive,
                         )
                     }
                     PlayerTimeline(
@@ -349,6 +352,7 @@ private fun PlayerHeader(
     partyActive: Boolean,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    dataSaverActive: Boolean = false,
 ) {
     val typeScale = MaterialTheme.nuvioTypeScale
     val metadataAlpha by animateFloatAsState(
@@ -423,6 +427,9 @@ private fun PlayerHeader(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        if (dataSaverActive) {
+                            DataSaverBadge()
+                        }
                     }
                 }
                 ParentalGuideOverlay(

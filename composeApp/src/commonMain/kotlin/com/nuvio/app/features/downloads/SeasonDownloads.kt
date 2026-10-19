@@ -1,6 +1,7 @@
 package com.nuvio.app.features.downloads
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.features.addons.AddonManifest
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.buildAddonResourceUrl
 import com.nuvio.app.features.addons.enabledAddons
@@ -13,6 +14,7 @@ import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamParser
 import com.nuvio.app.features.streams.streamAddonInstanceId
+import com.nuvio.app.features.streams.streamResolution
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -36,13 +38,43 @@ sealed class SeasonDownloadResult {
 }
 
 /**
- * Downloads every released episode of a season using the stream the user picked as the template:
+ * Downloads released episodes using the stream the user picked as the template:
  * the same torrent when it is a season pack, otherwise the closest stream of the same addon, kind
  * and resolution.
  */
 object SeasonDownloads {
     private val log = Logger.withTag("SeasonDownloads")
     private const val FETCH_PARALLELISM = 3
+
+    private fun checkP2pAllowed(template: StreamItem): Boolean {
+        P2pSettingsRepository.ensureLoaded()
+        return !template.needsP2pDownload() || P2pSettingsRepository.uiState.value.p2pEnabled
+    }
+
+    private fun findTemplateAddon(template: StreamItem): AddonManifest? =
+        AddonRepository.uiState.value.addons.enabledAddons().firstNotNullOfOrNull { addon ->
+            val manifest = addon.manifest ?: return@firstNotNullOfOrNull null
+            manifest.takeIf { addon.streamAddonInstanceId(it.id) == template.addonId }
+        }
+
+    private suspend fun loadSeasonEpisodes(
+        parentMetaType: String,
+        parentMetaId: String,
+        seasonNumber: Int,
+        fromEpisode: Int,
+        toEpisode: Int?,
+    ): List<MetaVideo> {
+        val meta = MetaDetailsRepository.peek(parentMetaType, parentMetaId)
+            ?: MetaDetailsRepository.fetch(parentMetaType, parentMetaId)
+        return meta?.videos.orEmpty()
+            .filter { it.season == seasonNumber && it.episode != null && it.available }
+            .filter { video ->
+                val episode = video.episode ?: return@filter false
+                episode >= fromEpisode && (toEpisode == null || episode <= toEpisode)
+            }
+            .distinctBy { it.episode }
+            .sortedBy { it.episode }
+    }
 
     suspend fun enqueueSeason(
         contentType: String,
@@ -56,26 +88,82 @@ object SeasonDownloads {
         template: StreamItem,
         templateVideoId: String,
     ): SeasonDownloadResult {
-        P2pSettingsRepository.ensureLoaded()
-        if (template.needsP2pDownload() && !P2pSettingsRepository.uiState.value.p2pEnabled) {
-            return SeasonDownloadResult.P2pDisabled
-        }
-        val addon = AddonRepository.uiState.value.addons.enabledAddons().firstNotNullOfOrNull { addon ->
-            val manifest = addon.manifest ?: return@firstNotNullOfOrNull null
-            manifest.takeIf { addon.streamAddonInstanceId(it.id) == template.addonId }
-        } ?: return SeasonDownloadResult.UnsupportedSource
-
-        val meta = MetaDetailsRepository.peek(parentMetaType, parentMetaId)
-            ?: MetaDetailsRepository.fetch(parentMetaType, parentMetaId)
-        val episodes = meta?.videos.orEmpty()
-            .filter { it.season == seasonNumber && it.episode != null && it.available }
-            .distinctBy { it.episode }
-            .sortedBy { it.episode }
+        if (!checkP2pAllowed(template)) return SeasonDownloadResult.P2pDisabled
+        val addon = findTemplateAddon(template) ?: return SeasonDownloadResult.UnsupportedSource
+        val episodes = loadSeasonEpisodes(parentMetaType, parentMetaId, seasonNumber, fromEpisode = 1, toEpisode = null)
         if (episodes.isEmpty()) return SeasonDownloadResult.NoEpisodes
+        return enqueueVideos(
+            contentType = contentType,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
+            title = title,
+            logo = logo,
+            poster = poster,
+            background = background,
+            targets = episodes,
+            addon = addon,
+            template = template,
+            templateVideoId = templateVideoId,
+        )
+    }
 
+    /**
+     * Downloads [fromEpisode]..[toEpisode] (inclusive, [toEpisode] = null means end of season)
+     * of [seasonNumber], matching each episode to [template]'s addon/kind/resolution.
+     */
+    suspend fun enqueueEpisodeRange(
+        contentType: String,
+        parentMetaId: String,
+        parentMetaType: String,
+        title: String,
+        logo: String?,
+        poster: String?,
+        background: String?,
+        seasonNumber: Int,
+        fromEpisode: Int,
+        toEpisode: Int?,
+        template: StreamItem,
+        templateVideoId: String,
+    ): SeasonDownloadResult {
+        if (!checkP2pAllowed(template)) return SeasonDownloadResult.P2pDisabled
+        val addon = findTemplateAddon(template) ?: return SeasonDownloadResult.UnsupportedSource
+        val episodes = loadSeasonEpisodes(parentMetaType, parentMetaId, seasonNumber, fromEpisode, toEpisode)
+        if (episodes.isEmpty()) return SeasonDownloadResult.NoEpisodes
+        return enqueueVideos(
+            contentType = contentType,
+            parentMetaId = parentMetaId,
+            parentMetaType = parentMetaType,
+            title = title,
+            logo = logo,
+            poster = poster,
+            background = background,
+            targets = episodes,
+            addon = addon,
+            template = template,
+            templateVideoId = templateVideoId,
+        )
+    }
+
+    /**
+     * Downloads exactly [targets] (already resolved episode list, may span seasons),
+     * matching each episode's stream to [template].
+     */
+    suspend fun enqueueVideos(
+        contentType: String,
+        parentMetaId: String,
+        parentMetaType: String,
+        title: String,
+        logo: String?,
+        poster: String?,
+        background: String?,
+        targets: List<MetaVideo>,
+        addon: AddonManifest,
+        template: StreamItem,
+        templateVideoId: String,
+    ): SeasonDownloadResult {
         DownloadsRepository.ensureLoaded()
-        val (alreadyDownloaded, wanted) = episodes.partition { video ->
-            DownloadsRepository.hasActiveOrCompletedDownload(parentMetaId, seasonNumber, video.episode)
+        val (alreadyDownloaded, wanted) = targets.partition { video ->
+            DownloadsRepository.hasActiveOrCompletedDownload(parentMetaId, video.season, video.episode)
         }
 
         val picks: List<Pair<MetaVideo, StreamItem?>> = wanted.chunked(FETCH_PARALLELISM).flatMap { batch ->
@@ -88,7 +176,7 @@ object SeasonDownloads {
                             val candidates = fetchEpisodeStreams(addon, contentType, video.id, template)
                             pickMatchingEpisodeStream(template, candidates)
                         }
-                        video to stream?.let { resolvePlayable(it, seasonNumber, video.episode) }
+                        video to stream?.let { resolvePlayable(it, video.season ?: 0, video.episode) }
                     }
                 }.awaitAll()
             }
@@ -108,7 +196,7 @@ object SeasonDownloads {
                     logo = logo,
                     poster = poster,
                     background = background,
-                    seasonNumber = seasonNumber,
+                    seasonNumber = video.season,
                     episodeNumber = episodeNumber,
                     episodeTitle = video.title.takeIf(String::isNotBlank),
                     episodeThumbnail = video.thumbnail,
@@ -129,10 +217,30 @@ object SeasonDownloads {
     }
 
     private suspend fun fetchEpisodeStreams(
-        manifest: com.nuvio.app.features.addons.AddonManifest,
+        manifest: AddonManifest,
         contentType: String,
         videoId: String,
         template: StreamItem,
+    ): List<StreamItem> = fetchStreamsForVideo(
+        manifest = manifest,
+        contentType = contentType,
+        videoId = videoId,
+        addonName = template.addonName,
+        addonId = template.addonId,
+        addonLogo = template.addonLogo,
+    )
+
+    /**
+     * Fetches raw streams for a single episode video from one addon manifest.
+     * Used by the download planner (quality picker / preload) which has no template yet.
+     */
+    internal suspend fun fetchStreamsForVideo(
+        manifest: AddonManifest,
+        contentType: String,
+        videoId: String,
+        addonName: String,
+        addonId: String,
+        addonLogo: String?,
     ): List<StreamItem> = try {
         val url = buildAddonResourceUrl(
             manifestUrl = manifest.transportUrl,
@@ -142,9 +250,9 @@ object SeasonDownloads {
         )
         StreamParser.parse(
             payload = fetchAddonResponseText(url = url),
-            addonName = template.addonName,
-            addonId = template.addonId,
-            addonLogo = template.addonLogo,
+            addonName = addonName,
+            addonId = addonId,
+            addonLogo = addonLogo,
         )
     } catch (cancellation: CancellationException) {
         throw cancellation
@@ -182,20 +290,6 @@ internal fun pickMatchingEpisodeStream(template: StreamItem, candidates: List<St
     val templateTokens = template.releaseTokens()
     // maxByOrNull keeps the first of equal scores, so the addon's own ordering breaks ties.
     return pool.maxByOrNull { jaccard(templateTokens, it.releaseTokens()) }
-}
-
-private val resolutionPatterns = listOf(
-    "2160p" to Regex("\\b(2160p|4k|uhd)\\b"),
-    "1440p" to Regex("\\b1440p\\b"),
-    "1080p" to Regex("\\b1080p\\b"),
-    "720p" to Regex("\\b720p\\b"),
-    "576p" to Regex("\\b576p\\b"),
-    "480p" to Regex("\\b480p\\b"),
-)
-
-internal fun StreamItem.streamResolution(): String? {
-    val text = listOfNotNull(name, title, description, behaviorHints.filename).joinToString(" ").lowercase()
-    return resolutionPatterns.firstOrNull { (_, pattern) -> pattern.containsMatchIn(text) }?.first
 }
 
 private val episodeMarker = Regex("\\bs\\d{1,2}\\s*e\\d{1,3}\\b|\\b\\d{1,2}x\\d{1,3}\\b|\\be(p(isode)?)?\\s*\\d{1,3}\\b")

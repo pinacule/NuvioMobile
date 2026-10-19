@@ -60,6 +60,7 @@ internal fun Modifier.playerSurfaceDragGestures(
     clearLiveGestureFeedbackState: State<() -> Unit>,
     revealLockedOverlayState: State<() -> Unit>,
     commitHorizontalSeekState: State<(Long) -> Unit>,
+    volumeBrightnessGesturesEnabledState: State<Boolean>? = null,
 ): Modifier =
     pointerInput(gestureController, layoutSize, sideGestureSystemEdgeExclusionPx, playbackGesturesEnabled) {
         if (!playbackGesturesEnabled) return@pointerInput
@@ -77,6 +78,10 @@ internal fun Modifier.playerSurfaceDragGestures(
             if (!touchGesturesEnabledState.value) {
                 return@awaitEachGesture
             }
+            // While a panel like the speed modal is open, vertical swipes must not
+            // change volume/brightness; horizontal seek keeps working.
+            val volumeBrightnessGesturesEnabled =
+                volumeBrightnessGesturesEnabledState?.value ?: true
             val controller = gestureController
             val width = size.width.toFloat().takeIf { it > 0f } ?: return@awaitEachGesture
             val height = size.height.toFloat().takeIf { it > 0f } ?: return@awaitEachGesture
@@ -140,12 +145,12 @@ internal fun Modifier.playerSurfaceDragGestures(
                             PlayerGestureMode.HorizontalSeek
                         }
 
-                        verticalDominant && region == PlayerSideGesture.Brightness && initialBrightness != null -> {
+                        verticalDominant && region == PlayerSideGesture.Brightness && initialBrightness != null && volumeBrightnessGesturesEnabled -> {
                             verticalGestureActivationDy = totalDy
                             PlayerGestureMode.Brightness
                         }
 
-                        verticalDominant && region == PlayerSideGesture.Volume && initialVolume != null -> {
+                        verticalDominant && region == PlayerSideGesture.Volume && initialVolume != null && volumeBrightnessGesturesEnabled -> {
                             verticalGestureActivationDy = totalDy
                             PlayerGestureMode.Volume
                         }

@@ -63,6 +63,8 @@ data class DownloadItem(
     val errorMessage: String? = null,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
+    /** True for background next-episode preloads (pausable when leaving WiFi). */
+    val isPreload: Boolean = false,
 ) {
     val isEpisode: Boolean
         get() = seasonNumber != null && episodeNumber != null

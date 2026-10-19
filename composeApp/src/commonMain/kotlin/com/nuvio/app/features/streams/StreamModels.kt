@@ -166,7 +166,17 @@ private fun String?.extractTorrentSchemeInfoHash(): String? {
 
 private fun String?.extractTorrentSchemeFileIdx(): Int? {
     val raw = this?.trimStart()?.takeIf { it.isTorrentSchemeUrl() } ?: return null
-    val path = raw.removeRange(0, "torrent://".length).substringBefore('?')
+    val afterScheme = raw.removeRange(0, "torrent://".length)
+    // Query form: torrent://<infoHash>?index=<n> (also tolerates extra params)
+    val query = afterScheme.substringAfter('?', "")
+    if (query.isNotEmpty()) {
+        query.split('&')
+            .map { it.substringBefore('=') to it.substringAfter('=', "") }
+            .firstOrNull { (name, _) -> name.equals("index", ignoreCase = true) }
+            ?.second?.trim()?.toIntOrNull()
+            ?.let { return it }
+    }
+    val path = afterScheme.substringBefore('?')
     if ('/' !in path) return null
     return path.substringAfter('/')
         .trim()
