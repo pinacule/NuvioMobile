@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.nuvio.app.features.downloads
 
 import androidx.compose.foundation.background
@@ -13,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
@@ -130,7 +133,7 @@ fun PosterDownloadCoordinator(
     fun enqueueReady(
         req: PosterDownloadRequest,
         ready: PosterDownloadUiState.Ready,
-        onResult: (SeasonDownloadResult) -> Unit,
+        onResult: suspend (SeasonDownloadResult) -> Unit,
     ) {
         val targets = when {
             !req.isSeries -> listOf(ready.startVideo)
@@ -174,7 +177,7 @@ fun PosterDownloadCoordinator(
         }
     }
 
-    fun showResultToast(result: SeasonDownloadResult) {
+    suspend fun showResultToast(result: SeasonDownloadResult) {
         when (result) {
             SeasonDownloadResult.P2pDisabled -> {
                 pendingEnqueue = {

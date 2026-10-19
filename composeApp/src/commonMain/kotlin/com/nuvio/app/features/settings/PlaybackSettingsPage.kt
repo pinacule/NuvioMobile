@@ -2952,8 +2952,6 @@ private fun IntroDbApiKeyDialog(
     }
 }
 
-@Composable
-@OptIn(ExperimentalMaterial3Api::class)
 private val DataSaverMode.labelRes: StringResource
     get() = when (this) {
         DataSaverMode.AUTOMATIC -> Res.string.settings_data_saver_mode_automatic

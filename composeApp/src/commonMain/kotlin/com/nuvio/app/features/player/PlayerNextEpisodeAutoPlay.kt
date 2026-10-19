@@ -215,7 +215,7 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
                 // Keep the same release across episodes when possible: restrict the
                 // adaptive pick to the current binge group, falling back to all streams.
                 val bingeCandidates = preferredBingeGroup?.takeIf { it.isNotEmpty() }?.let { group ->
-                    streams.filter { it.bingeGroup == group }.takeIf { it.isNotEmpty() }
+                    streams.filter { it.behaviorHints.bingeGroup == group }.takeIf { it.isNotEmpty() }
                 }
                 AdaptiveStreamPicker.pickBestSeeded(bingeCandidates ?: streams, target)
             } else {

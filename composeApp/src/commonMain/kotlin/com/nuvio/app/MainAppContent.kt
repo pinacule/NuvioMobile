@@ -569,6 +569,7 @@ internal fun MainAppContent(
 
             NetworkCondition.Unknown,
             NetworkCondition.Checking,
+            NetworkCondition.ServersUnreachable,
             -> Unit
         }
 
