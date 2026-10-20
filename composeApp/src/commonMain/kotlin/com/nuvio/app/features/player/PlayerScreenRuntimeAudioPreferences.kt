@@ -70,15 +70,17 @@ internal fun PlayerScreenRuntime.applyPreferredAudioTrack(targets: List<String>)
 }
 
 /**
- * Automatic English-audio enforcement for untagged tracks: when the user's
- * preferred audio language is English and the selected track isn't English,
- * select the first English-indicated track explicitly. Idempotent — a no-op
- * when the English track is already selected. Never overrides a manual user
- * selection ([isUserExplicitAudioSelection]).
+ * Automatic English-audio enforcement for untagged tracks: when English is the
+ * user's TOP audio target and the selected track isn't English, select the
+ * first English-indicated track explicitly. Only fires when English outranks
+ * every other target — when the preference system deliberately picked a
+ * higher-priority language (e.g. "original audio" mode), it is left alone.
+ * Idempotent — a no-op when the English track is already selected. Never
+ * overrides a manual user selection ([isUserExplicitAudioSelection]).
  */
 private fun PlayerScreenRuntime.applyEnglishAudioLabelFallback(targets: List<String>) {
     if (isUserExplicitAudioSelection) return
-    if (targets.none { it.equals("en", ignoreCase = true) }) return
+    if (targets.firstOrNull()?.substringBefore('-')?.equals("en", ignoreCase = true) != true) return
     val tracks = audioTracks
     if (tracks.isEmpty()) return
     val selected = tracks.firstOrNull { it.isSelected }
