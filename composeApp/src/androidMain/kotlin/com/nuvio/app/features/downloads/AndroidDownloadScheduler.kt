@@ -226,22 +226,30 @@ internal class AndroidDownloadScheduler(val context: Context) {
                     onHeaders = onHeaders,
                     onProgress = onBytes,
                 )
-                else -> httpDownloadSlots.withSlot(transfer.item) {
-                    // The transfer actually starts only now: a link that aged while
-                    // the item waited in the queue is re-resolved first.
-                    val current = refreshAgedHttpSource(transfer) ?: return@withLock TransferOutcome.Done
-                    transferAndroidDownload(
-                        item = current.item,
-                        directory = directory,
-                        validator = current.validator,
-                        client = client,
-                        // A swapped-in link carries no validator: the partial is kept
-                        // only while the new link reports the size it was written for.
-                        expectedTotalBytes = current.item.totalBytes,
-                        maxConnections = DOWNLOAD_SEGMENT_CONNECTIONS,
-                        onHeaders = onHeaders,
-                        onProgress = onBytes,
-                    )
+                else -> try {
+                    // Shown as "Queued" until a slot frees up (see DownloadQueueState).
+                    DownloadQueueState.setQueued(transfer.item.id, true)
+                    notifyCurrent(fileName)
+                    httpDownloadSlots.withSlot(transfer.item) {
+                        DownloadQueueState.setQueued(transfer.item.id, false)
+                        // The transfer actually starts only now: a link that aged while
+                        // the item waited in the queue is re-resolved first.
+                        val current = refreshAgedHttpSource(transfer) ?: return@withLock TransferOutcome.Done
+                        transferAndroidDownload(
+                            item = current.item,
+                            directory = directory,
+                            validator = current.validator,
+                            client = client,
+                            // A swapped-in link carries no validator: the partial is kept
+                            // only while the new link reports the size it was written for.
+                            expectedTotalBytes = current.item.totalBytes,
+                            maxConnections = DOWNLOAD_SEGMENT_CONNECTIONS,
+                            onHeaders = onHeaders,
+                            onProgress = onBytes,
+                        )
+                    }
+                } finally {
+                    DownloadQueueState.setQueued(transfer.item.id, false)
                 }
             }
             currentCoroutineContext().ensureActive()
