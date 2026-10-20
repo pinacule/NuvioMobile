@@ -22,6 +22,7 @@ import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.device.DataSaverRepository
 import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.features.streams.AdaptiveStreamPicker
+import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlayPolicy
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
@@ -787,6 +788,9 @@ internal fun StreamDestination(
         if (launch.manualSelection || adaptivePickDone || reuseNavigated) return@LaunchedEffect
         if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
         if (StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettings)) return@LaunchedEffect
+        if (playerSettings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL &&
+            playerSettings.streamAutoPlayPreferBingeGroup
+        ) return@LaunchedEffect
         if (streamsUiState.isAnyLoading) return@LaunchedEffect
         if (streamsUiState.autoPlayStream != null) return@LaunchedEffect
         val candidates = streamsUiState.allStreams
