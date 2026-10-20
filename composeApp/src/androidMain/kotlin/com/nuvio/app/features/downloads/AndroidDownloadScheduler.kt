@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -144,13 +145,44 @@ internal class AndroidDownloadScheduler(val context: Context) {
         else WorkManager.getInstance(context).cancelUniqueWork(workName(transfer))
     }
 
+    /**
+     * Runs [transfer] until it completes, fails, or needs the OS to reschedule it. Returns true
+     * when the job should be retried with the OS backoff.
+     *
+     * A retry after real progress (or onto a freshly swapped-in link) runs again right here after
+     * a short pause instead: JobScheduler and WorkManager grow their exponential backoff with
+     * every reschedule over the job's whole life, so a long download that hits a handful of
+     * spaced-out hiccups would otherwise end up waiting minutes to hours between attempts. Only
+     * failures without progress go back to the OS, whose network constraint also covers being
+     * offline.
+     */
     suspend fun execute(
         transfer: AndroidDownloadTransfer,
         network: Network? = null,
         onProgress: (AndroidDownloadTransfer) -> Unit,
-    ): Boolean = lock(transfer.item.fileName).withLock {
+    ): Boolean {
+        var current = transfer
+        while (true) {
+            when (executeOnce(current, network, onProgress)) {
+                TransferOutcome.Done -> return false
+                TransferOutcome.RetryWithBackoff -> return true
+                TransferOutcome.RetryNow -> {
+                    delay(IN_PROCESS_RETRY_DELAY_MS)
+                    current = store.get(transfer.item.fileName)
+                        ?.takeIf { it.generation == transfer.generation && isActive(it) }
+                        ?: return false
+                }
+            }
+        }
+    }
+
+    private suspend fun executeOnce(
+        transfer: AndroidDownloadTransfer,
+        network: Network?,
+        onProgress: (AndroidDownloadTransfer) -> Unit,
+    ): TransferOutcome = lock(transfer.item.fileName).withLock {
         val fileName = transfer.item.fileName
-        if (!isActive(transfer)) return@withLock false
+        if (!isActive(transfer)) return@withLock TransferOutcome.Done
         val torrent = transfer.item.isTorrent
         var destination = File(directory, transfer.outputFileName ?: fileName)
         // Torrent bytes come from the engine's loopback server, which a network-bound socket cannot reach.
@@ -167,7 +199,7 @@ internal class AndroidDownloadScheduler(val context: Context) {
                 DownloadSubtitles.prepare(transfer.item, destination.toURI().toString())
             }
             currentCoroutineContext().ensureActive()
-            if (!isActive(transfer)) return@withLock false
+            if (!isActive(transfer)) return@withLock TransferOutcome.Done
             var lastProgressAt = 0L
             val onHeaders: (Long?, String?) -> Unit = { total, validator ->
                 updateActive(transfer) { it.copy(validator = validator, item = it.item.copy(totalBytes = total)) }
@@ -197,7 +229,7 @@ internal class AndroidDownloadScheduler(val context: Context) {
                 else -> httpDownloadSlots.withSlot(transfer.item) {
                     // The transfer actually starts only now: a link that aged while
                     // the item waited in the queue is re-resolved first.
-                    val current = refreshAgedHttpSource(transfer) ?: return@withLock false
+                    val current = refreshAgedHttpSource(transfer) ?: return@withLock TransferOutcome.Done
                     transferAndroidDownload(
                         item = current.item,
                         directory = directory,
@@ -226,12 +258,12 @@ internal class AndroidDownloadScheduler(val context: Context) {
                     errorMessage = null,
                 ))
             }
-            false
+            TransferOutcome.Done
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             currentCoroutineContext().ensureActive()
-            if (!isActive(transfer)) return@withLock false
+            if (!isActive(transfer)) return@withLock TransferOutcome.Done
             // The record may have changed since this run started (a link swapped
             // in at start): the refresh must exclude the URL that actually died.
             val latest = store.get(fileName)?.takeIf { it.generation == transfer.generation } ?: transfer
@@ -277,13 +309,14 @@ internal class AndroidDownloadScheduler(val context: Context) {
                         ).withSourceRefreshBudget(refreshBudget)
                     }
                     if (applied == null || !isActive(transfer) || applied.item.sourceUrl != refreshed.sourceUrl) {
-                        return@withLock false
+                        return@withLock TransferOutcome.Done
                     }
                     // The repository owns the UI/pause-resume copy of the item:
                     // it must see the new URL too, or a later resume would
                     // restart the old dead link.
                     DownloadsRepository.refreshItemSource(applied.item)
-                    return@withLock true
+                    // A fresh link deserves an immediate try, not an OS backoff.
+                    return@withLock TransferOutcome.RetryNow
                 }
             }
             var retry = false
@@ -294,7 +327,7 @@ internal class AndroidDownloadScheduler(val context: Context) {
                 }
             }
             if (!retry) fail(transfer, error)
-            retry
+            retryOutcome(retry, progressedSinceLastFailure = transferredBytes > latest.retryProgressMark)
         } finally {
             if (client !== downloadHttpClient) {
                 withContext(NonCancellable + Dispatchers.IO) { client.connectionPool.evictAll() }
@@ -403,6 +436,31 @@ internal const val MAX_CONSECUTIVE_DOWNLOAD_RETRIES = 4
  */
 private const val MAX_CONCURRENT_HTTP_DOWNLOADS = 3
 private val httpDownloadSlots = OrderedDownloadSlots(MAX_CONCURRENT_HTTP_DOWNLOADS)
+
+/** Pause before an in-process retry (see [AndroidDownloadScheduler.execute]). */
+private const val IN_PROCESS_RETRY_DELAY_MS = 5_000L
+
+internal enum class TransferOutcome {
+    /** Completed, failed terminally, or no longer active: nothing to reschedule. */
+    Done,
+
+    /** Try again in this job run after a short pause. */
+    RetryNow,
+
+    /** Hand back to the OS: reschedule with its backoff (and network constraint). */
+    RetryWithBackoff,
+}
+
+/**
+ * How a retryable failure is retried: in-process when the transfer advanced since the previous
+ * failure (a hiccup in an otherwise working download), through the OS backoff when it did not
+ * (offline, server down, stuck).
+ */
+internal fun retryOutcome(retry: Boolean, progressedSinceLastFailure: Boolean): TransferOutcome = when {
+    !retry -> TransferOutcome.Done
+    progressedSinceLastFailure -> TransferOutcome.RetryNow
+    else -> TransferOutcome.RetryWithBackoff
+}
 
 internal fun shouldRetryAndroidDownload(error: Exception, retries: Int, isTorrent: Boolean): Boolean =
     retries < MAX_CONSECUTIVE_DOWNLOAD_RETRIES && isRetryableAndroidDownloadError(error, isTorrent)

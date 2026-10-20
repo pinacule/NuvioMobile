@@ -279,6 +279,18 @@ class AndroidDownloadTransferTest {
     }
 
     @Test
+    fun retriesAfterProgressStayInProcessToKeepTheOsBackoffFromGrowing() {
+        // A hiccup in a download that was moving: retried in this job run, so the
+        // JobScheduler/WorkManager backoff (which grows for the job's whole life)
+        // is never charged for it.
+        assertEquals(TransferOutcome.RetryNow, retryOutcome(retry = true, progressedSinceLastFailure = true))
+        // No progress since the last failure (offline, server down): the OS
+        // reschedules with backoff and waits for a network.
+        assertEquals(TransferOutcome.RetryWithBackoff, retryOutcome(retry = true, progressedSinceLastFailure = false))
+        assertEquals(TransferOutcome.Done, retryOutcome(retry = false, progressedSinceLastFailure = true))
+    }
+
+    @Test
     fun retryClassificationIsIndependentOfTheBudget() {
         assertTrue(isRetryableAndroidDownloadError(IOException("connection lost"), isTorrent = false))
         assertTrue(isRetryableAndroidDownloadError(DownloadHttpException(404), isTorrent = true))
