@@ -92,8 +92,7 @@ internal actual object DownloadsPlatformDownloader {
         val scheduler = downloadScheduler ?: return false
         val safeName = File(destinationFileName).name
         if (safeName.isBlank()) return false
-        val partFile = File(scheduler.directory, "$safeName.part")
-        return !partFile.exists() || runCatching { partFile.delete() }.getOrDefault(false)
+        return runCatching { deleteDownloadPartialFiles(scheduler.directory, safeName) }.getOrDefault(false)
     }
 
     actual fun resolveLocalFileUri(localFileUri: String?, destinationFileName: String): String? {

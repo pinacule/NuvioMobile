@@ -129,7 +129,7 @@ internal class AndroidDownloadScheduler(val context: Context) {
         cleanupScope.launch {
             lock(fileName).withLock {
                 if (store.get(fileName) == null) {
-                    File(directory, "$fileName.part").delete()
+                    deleteDownloadPartialFiles(directory, fileName)
                     DownloadSubtitleStorage(File(directory, fileName).toURI().toString()).remove()
                     outputFileName?.let { name ->
                         DownloadSubtitleStorage(File(directory, name).toURI().toString()).remove()
@@ -206,6 +206,7 @@ internal class AndroidDownloadScheduler(val context: Context) {
                         // A swapped-in link carries no validator: the partial is kept
                         // only while the new link reports the size it was written for.
                         expectedTotalBytes = current.item.totalBytes,
+                        maxConnections = DOWNLOAD_SEGMENT_CONNECTIONS,
                         onHeaders = onHeaders,
                         onProgress = onBytes,
                     )
@@ -236,7 +237,7 @@ internal class AndroidDownloadScheduler(val context: Context) {
             val latest = store.get(fileName)?.takeIf { it.generation == transfer.generation } ?: transfer
             // Every budget below counts failures in a row without progress: bytes
             // on disk past a layer's last failure re-arm that layer.
-            val transferredBytes = File(directory, "$fileName.part").length()
+            val transferredBytes = downloadPartialBytes(directory, fileName)
             val refreshBudget = latest.sourceRefreshBudget.consume(transferredBytes, MAX_DOWNLOAD_SOURCE_REFRESHES)
             if (error is DownloadHttpException &&
                 error.statusCode in STALE_HTTP_STATUS_CODES &&
