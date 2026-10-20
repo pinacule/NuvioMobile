@@ -83,14 +83,35 @@ internal object PluginStorage {
         }
     }
 
-    fun loadScraperSettings(scraperId: String): String? =
-        NSUserDefaults.standardUserDefaults.stringForKey("settings_${scraperId}")
+    fun loadScraperSettings(profileId: Int, scraperId: String): String? {
+        val defaults = NSUserDefaults.standardUserDefaults
+        val newKey = "settings_${profileId}_${scraperId}"
+        defaults.stringForKey(newKey)?.let { return it }
+        // One-time migration from the pre-profile key (settings were shared across profiles).
+        val legacyKey = "settings_${scraperId}"
+        val legacy = defaults.stringForKey(legacyKey) ?: return null
+        defaults.setObject(legacy, forKey = newKey)
+        defaults.removeObjectForKey(legacyKey)
+        return legacy
+    }
 
-    fun saveScraperSettings(scraperId: String, payload: String) {
+    fun saveScraperSettings(profileId: Int, scraperId: String, payload: String) {
         NSUserDefaults.standardUserDefaults.setObject(
             payload,
-            forKey = "settings_${scraperId}",
+            forKey = "settings_${profileId}_${scraperId}",
         )
+    }
+
+    fun deleteScraperCode(profileId: Int, scraperId: String): Boolean = synchronized(scraperCodeLock) {
+        val manager = NSFileManager.defaultManager
+        val target = scraperCodePath(profileId, scraperId)
+        var ok = true
+        if (manager.fileExistsAtPath(target) && !manager.removeItemAtPath(target, null)) ok = false
+        val backup = "$target.backup"
+        if (manager.fileExistsAtPath(backup) && !manager.removeItemAtPath(backup, null)) ok = false
+        val temporary = "$target.tmp"
+        if (manager.fileExistsAtPath(temporary) && !manager.removeItemAtPath(temporary, null)) ok = false
+        ok
     }
 
     private fun scraperCodeDirectory(profileId: Int): String =

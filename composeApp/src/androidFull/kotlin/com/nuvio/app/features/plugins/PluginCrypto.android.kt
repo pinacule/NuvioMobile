@@ -135,32 +135,112 @@ internal fun pluginAesDecrypt(
     return cipher.doFinal(data)
 }
 
-internal fun pluginSign(algorithm: String, privateKey: ByteArray, data: ByteArray): ByteArray {
-    val (keyAlgo, sigAlgo) = when (algorithm.uppercase()) {
-        "RSASSA-PKCS1-V1_5-SHA256", "RSASSA-PKCS1-V1_5" -> "RSA" to "SHA256withRSA"
-        "ECDSA-SHA256", "ECDSA" -> "EC" to "SHA256withECDSA"
-        else -> "RSA" to "SHA256withRSA"
+// Maps the JS shim's signature algorithm tokens to JCA names. The shim's
+// __signatureAlgorithmName() always appends the hash ("ECDSA-SHA384",
+// "RSASSA-PKCS1-V1_5-SHA512", defaulting to SHA256); normalizedAlgorithmToken()
+// strips the dashes, so parse the trailing hash token here. MD5 is explicitly
+// rejected: it is broken and must never back a signature.
+private fun normalizeSignatureAlgorithm(algorithm: String): Pair<String, String> {
+    val token = algorithm.normalizedAlgorithmToken()
+    val (keyAlgo, hashToken) = when {
+        token.startsWith("ECDSA") -> "EC" to token.removePrefix("ECDSA")
+        token.startsWith("RSASSAPKCS1V15") -> "RSA" to token.removePrefix("RSASSAPKCS1V15")
+        else -> error("Unsupported signature algorithm: $algorithm")
     }
+    // Empty hash token = legacy callers without a hash suffix; default to SHA-256
+    // exactly like the JS shim does.
+    val jcaHash = when (hashToken.ifEmpty { "SHA256" }) {
+        "SHA1" -> "SHA1"
+        "SHA256" -> "SHA256"
+        "SHA384" -> "SHA384"
+        "SHA512" -> "SHA512"
+        "MD5" -> error("Insecure hash MD5 is not supported for signatures: $algorithm")
+        else -> error("Unsupported signature hash: $algorithm")
+    }
+    val jcaSigAlgo = if (keyAlgo == "EC") "ECDSA" else "RSA"
+    return keyAlgo to (jcaHash + "with" + jcaSigAlgo)
+}
+
+internal fun pluginSign(algorithm: String, privateKey: ByteArray, data: ByteArray): ByteArray {
+    val (keyAlgo, sigAlgo) = normalizeSignatureAlgorithm(algorithm)
     val factory = KeyFactory.getInstance(keyAlgo)
     val privKey = factory.generatePrivate(PKCS8EncodedKeySpec(privateKey))
     val sig = Signature.getInstance(sigAlgo)
     sig.initSign(privKey)
     sig.update(data)
-    return sig.sign()
+    val rawSignature = sig.sign()
+    // JCA emits ASN.1 DER; the JS crypto.subtle shim expects raw IEEE P1363 (r || s).
+    return if (keyAlgo == "EC") ecdsaDerToP1363(rawSignature) else rawSignature
 }
 
 internal fun pluginVerify(algorithm: String, publicKey: ByteArray, signature: ByteArray, data: ByteArray): Boolean {
-    val (keyAlgo, sigAlgo) = when (algorithm.uppercase()) {
-        "RSASSA-PKCS1-V1_5-SHA256", "RSASSA-PKCS1-V1_5" -> "RSA" to "SHA256withRSA"
-        "ECDSA-SHA256", "ECDSA" -> "EC" to "SHA256withECDSA"
-        else -> "RSA" to "SHA256withRSA"
-    }
+    val (keyAlgo, sigAlgo) = normalizeSignatureAlgorithm(algorithm)
     val factory = KeyFactory.getInstance(keyAlgo)
     val pubKey = factory.generatePublic(X509EncodedKeySpec(publicKey))
     val sig = Signature.getInstance(sigAlgo)
     sig.initVerify(pubKey)
     sig.update(data)
-    return sig.verify(signature)
+    // WebCrypto semantics: malformed signature bytes verify as false, never throw.
+    // The JS shim hands us raw IEEE P1363 (r || s); JCA expects ASN.1 DER. Tolerate
+    // callers that pass DER directly (0x30 SEQUENCE marker) by normalizing through
+    // P1363 first. Only bad algorithm/key (programming errors) throw.
+    val derSignature = if (keyAlgo == "EC") {
+        val p1363 = if (signature.isNotEmpty() && signature[0] == 0x30.toByte()) {
+            runCatching { ecdsaDerToP1363(signature) }.getOrNull() ?: return false
+        } else {
+            if (signature.size != 2 * P256_COORD_BYTES) return false
+            signature
+        }
+        ecdsaP1363ToDer(p1363)
+    } else {
+        signature
+    }
+    return runCatching { sig.verify(derSignature) }.getOrDefault(false)
+}
+
+// ECDSA signatures cross the native/JS boundary as raw IEEE P1363 (r || s),
+// matching WebCrypto crypto.subtle. JCA's SHA256withECDSA produces/consumes ASN.1
+// DER instead, so convert at the boundary. P-256 only: r and s are 32 bytes each.
+private const val P256_COORD_BYTES = 32
+
+private fun ecdsaDerToP1363(der: ByteArray): ByteArray {
+    var pos = 0
+    fun readByte(): Int = der[pos++].toInt() and 0xFF
+    fun readLength(): Int {
+        var len = readByte()
+        if (len and 0x80 != 0) {
+            val lenBytes = len and 0x7F
+            require(lenBytes in 1..2) { "Invalid ECDSA DER length" }
+            len = 0
+            repeat(lenBytes) { len = (len shl 8) or readByte() }
+        }
+        return len
+    }
+    fun readInteger(): ByteArray {
+        require(readByte() == 0x02) { "Invalid ECDSA DER integer tag" }
+        val intLen = readLength()
+        val raw = der.copyOfRange(pos, pos + intLen)
+        pos += intLen
+        val stripped = raw.dropWhile { it == 0.toByte() }.toByteArray()
+        require(stripped.size <= P256_COORD_BYTES) { "ECDSA coordinate too large for P-256" }
+        return ByteArray(P256_COORD_BYTES - stripped.size) + stripped
+    }
+    require(readByte() == 0x30) { "Invalid ECDSA DER sequence tag" }
+    readLength()
+    return readInteger() + readInteger()
+}
+
+private fun ecdsaP1363ToDer(p1363: ByteArray): ByteArray {
+    require(p1363.size == 2 * P256_COORD_BYTES) { "ECDSA P-1363 signature must be 64 bytes for P-256" }
+    fun encodeInteger(coord: ByteArray): ByteArray {
+        val stripped = coord.dropWhile { it == 0.toByte() }.toByteArray()
+            .let { if (it.isEmpty()) byteArrayOf(0) else it }
+        val withSign = if (stripped[0] < 0) byteArrayOf(0) + stripped else stripped
+        return byteArrayOf(0x02.toByte(), withSign.size.toByte()) + withSign
+    }
+    val body = encodeInteger(p1363.copyOfRange(0, P256_COORD_BYTES)) +
+        encodeInteger(p1363.copyOfRange(P256_COORD_BYTES, 2 * P256_COORD_BYTES))
+    return byteArrayOf(0x30.toByte(), body.size.toByte()) + body
 }
 
 internal fun pluginDigestHex(algorithm: String, data: String): String {
@@ -214,7 +294,7 @@ private fun normalizeAesTransformation(mode: String): String {
         normalized.contains("GCM") -> "AES/GCM/NoPadding"
         normalized.contains("ECB") -> "AES/ECB/$padding"
         normalized.contains("CBC") -> "AES/CBC/$padding"
-        else -> "AES/CBC/$padding"
+        else -> error("Unsupported AES mode: $mode")
     }
 }
 
@@ -232,12 +312,19 @@ private fun String.normalizedAlgorithmToken(): String =
         .replace(" ", "")
 
 @OptIn(ExperimentalEncodingApi::class)
-internal fun pluginBase64Encode(data: String): String =
-    Base64.encode(data.encodeToByteArray())
+internal fun pluginBase64Encode(data: String): String {
+    // btoa semantics: one byte per char (Latin-1); reject chars outside 0x00..0xFF.
+    val bytes = ByteArray(data.length) { index ->
+        val code = data[index].code
+        require(code <= 0xFF) { "btoa input contains non-Latin-1 character" }
+        (code and 0xFF).toByte()
+    }
+    return Base64.encode(bytes)
+}
 
 @OptIn(ExperimentalEncodingApi::class)
 internal fun pluginBase64Decode(data: String): String {
-    var normalized = data.trim().replace("\n", "").replace("\r", "").replace(" ", "")
+    var normalized = data.trim().replace("\n", "").replace("\r", "").replace("\t", "").replace(" ", "")
     // Robust URL-safe base64 decoding fallback
     normalized = normalized.replace("-", "+").replace("_", "/")
     val padNeeded = (4 - (normalized.length % 4)) % 4
@@ -245,7 +332,10 @@ internal fun pluginBase64Decode(data: String): String {
         normalized += "=".repeat(padNeeded)
     }
     val decoded = Base64.decode(normalized)
-    return decoded.decodeToString()
+    // atob semantics: one char per byte (Latin-1).
+    return buildString(decoded.size) {
+        decoded.forEach { append(it.toUByte().toInt().toChar()) }
+    }
 }
 
 internal fun pluginUtf8ToHex(value: String): String =
@@ -255,7 +345,7 @@ internal fun pluginUtf8ToHex(value: String): String =
 
 internal fun pluginHexToByteArray(hex: String): ByteArray {
     val normalized = hex.trim().lowercase()
-        .replace(" ", "")
+        .filter { !it.isWhitespace() }
         .removePrefix("0x")
     if (normalized.isEmpty()) return ByteArray(0)
 

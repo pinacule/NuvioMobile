@@ -39,15 +39,32 @@ internal object PluginStorage {
         overwrite: Boolean,
     ): Boolean = scraperCodeStore?.save(profileId, scraperId, code, overwrite) == true
 
-    fun loadScraperSettings(scraperId: String): String? =
-        preferences?.getString("settings_${scraperId}", null)
+    fun deleteScraperCode(profileId: Int, scraperId: String): Boolean =
+        scraperCodeStore?.delete(profileId, scraperId) == true
 
-    fun saveScraperSettings(scraperId: String, payload: String) {
+    fun deleteScraperCodeForProfile(profileId: Int): Boolean =
+        scraperCodeStore?.deleteProfileDir(profileId) == true
+
+    fun loadScraperSettings(profileId: Int, scraperId: String): String? {
+        val prefs = preferences ?: return null
+        val newKey = scraperSettingsKey(profileId, scraperId)
+        prefs.getString(newKey, null)?.let { return it }
+        // One-time migration from the pre-profile key (settings were shared across profiles).
+        val legacyKey = "settings_${scraperId}"
+        val legacy = prefs.getString(legacyKey, null) ?: return null
+        prefs.edit().putString(newKey, legacy).remove(legacyKey).apply()
+        return legacy
+    }
+
+    fun saveScraperSettings(profileId: Int, scraperId: String, payload: String) {
         preferences
             ?.edit()
-            ?.putString("settings_${scraperId}", payload)
+            ?.putString(scraperSettingsKey(profileId, scraperId), payload)
             ?.apply()
     }
+
+    private fun scraperSettingsKey(profileId: Int, scraperId: String) =
+        "settings_${profileId}_${scraperId}"
 }
 
 internal fun currentPluginPlatform(): String = "android"

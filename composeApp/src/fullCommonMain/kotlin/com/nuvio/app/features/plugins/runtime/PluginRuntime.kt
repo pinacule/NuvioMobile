@@ -56,10 +56,11 @@ internal object PluginRuntime {
         season: Int?,
         episode: Int?,
         scraperId: String,
+        profileId: Int,
         respectSearchPause: Boolean = true,
     ): List<PluginRuntimeResult> {
         suspend fun run(): List<PluginRuntimeResult> {
-            val scraperSettingsJson = PluginStorage.loadScraperSettings(scraperId) ?: "{}"
+            val scraperSettingsJson = PluginStorage.loadScraperSettings(profileId, scraperId) ?: "{}"
             val scraperSettingsMap = runCatching {
                 json.decodeFromString<Map<String, JsonElement>>(scraperSettingsJson)
             }.getOrElse { emptyMap() }

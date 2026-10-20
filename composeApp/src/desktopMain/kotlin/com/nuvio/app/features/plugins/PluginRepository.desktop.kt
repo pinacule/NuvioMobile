@@ -16,6 +16,8 @@ actual object PluginRepository {
 
     actual fun onProfileChanged(profileId: Int) = Unit
 
+    actual fun getCurrentProfileId(): Int = 1
+
     actual fun clearLocalState() = Unit
 
     actual suspend fun pullFromServer(profileId: Int) = Unit

@@ -9,11 +9,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Call
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.Collections
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 internal object TrailerExtractionPlatform {
     val defaultHeaders: Map<String, String> = mapOf(
@@ -89,18 +92,56 @@ internal object TrailerExtractionPlatform {
         } else {
             bestProgressive?.url
         }
-
-        val separatedVideoUrl = bestVideo?.url?.let { resolveReachableUrlOrNull(it) }
-        val combinedCandidateUrl = combinedUrl?.let { resolveReachableUrlOrNull(it) }
-        val videoUrl = separatedVideoUrl ?: combinedCandidateUrl ?: return@withContext null
-        val audioUrl = if (!separatedVideoUrl.isNullOrBlank()) {
-            bestAudio?.url?.let { resolveReachableUrlOrNull(it) }
+        val combinedHeight: Int? = if (bestCombinedIsManifest) {
+            bestManifest?.height
         } else {
-            null
+            bestProgressive?.height
         }
 
+        // Preference, not a hard gate: when the separated video track is lower-res
+        // than the combined candidate, probe combined first (higher res wins);
+        // if combined is unreachable, fall back to the (ungated) separated track.
+        // Never return null while a reachable URL exists.
+        val separatedLowerRes = combinedHeight != null && bestVideo != null &&
+            bestVideo.height < combinedHeight
+        val combinedProbeUrl: String? = if (separatedLowerRes) {
+            combinedUrl?.let { resolveReachableUrlOrNull(it) }
+        } else null
+        if (!combinedProbeUrl.isNullOrBlank()) {
+            return@withContext TrailerPlaybackSource(
+                videoUrl = combinedProbeUrl,
+                audioUrl = null,
+            )
+        }
+        // combinedProbeUrl is null here: either separated is not lower-res (probe
+        // combined lazily below) or combined was already probed and unreachable.
+        val combinedFallbackUrl: String? = if (separatedLowerRes) {
+            null
+        } else {
+            combinedUrl?.let { resolveReachableUrlOrNull(it) }
+        }
+
+        val separatedVideoUrl = bestVideo?.url?.let { resolveReachableUrlOrNull(it) }
+        val (videoUrl, audioUrl) = if (!separatedVideoUrl.isNullOrBlank()) {
+            val resolvedAudioUrl = bestAudio?.url?.let { resolveReachableUrlOrNull(it) }
+            if (resolvedAudioUrl != null) {
+                // Separated video+audio both reachable: use the pair.
+                separatedVideoUrl to resolvedAudioUrl
+            } else {
+                // Audio failed: fall back to the muxed combined stream instead
+                // of returning silent video.
+                val combinedCandidateUrl = combinedFallbackUrl
+                (combinedCandidateUrl ?: separatedVideoUrl) to null
+            }
+        } else {
+            // No (usable) separated video: use combined (already probed above
+            // when it was the preferred candidate).
+            combinedFallbackUrl to null
+        }
+        val finalVideoUrl = videoUrl ?: return@withContext null
+
         TrailerPlaybackSource(
-            videoUrl = videoUrl,
+            videoUrl = finalVideoUrl,
             audioUrl = audioUrl,
         )
     }
@@ -108,7 +149,8 @@ internal object TrailerExtractionPlatform {
     private suspend fun resolveReachableUrlOrNull(url: String): String? {
         if (!url.contains("googlevideo.com")) return url
         val uri = Uri.parse(url)
-        val mnParam = uri.getQueryParameter("mn") ?: return url
+        val mnParam = uri.getQueryParameter("mn")
+            ?: return if (isUrlReachable(url)) url else null
         val servers = mnParam.split(',').map { it.trim() }.filter { it.isNotBlank() }
         if (servers.size < 2) {
             return if (isUrlReachable(url)) url else null
@@ -121,7 +163,7 @@ internal object TrailerExtractionPlatform {
                 .replaceFirst(Regex("^rr\\d+---"), "rr${index + 1}---")
                 .replaceFirst(Regex("sn-[a-z0-9]+-[a-z0-9]+"), server)
             if (altHost != host) {
-                candidates += url.replace(host, altHost)
+                candidates += uri.buildUpon().authority(altHost).build().toString()
             }
         }
 
@@ -129,12 +171,19 @@ internal object TrailerExtractionPlatform {
             return if (isUrlReachable(candidates[0])) candidates[0] else null
         }
 
-        val result = CompletableDeferred<String>()
+        val result = CompletableDeferred<String?>()
         val probeScope = CoroutineScope(Dispatchers.IO)
+        val inFlightCalls = Collections.synchronizedList(mutableListOf<Call>())
+        val remaining = AtomicInteger(candidates.size)
         candidates.forEach { candidate ->
             probeScope.launch {
-                if (isUrlReachable(candidate)) {
+                if (isUrlReachable(candidate) { call -> inFlightCalls.add(call) }) {
                     result.complete(candidate)
+                }
+                if (remaining.decrementAndGet() == 0) {
+                    // All probes finished with no success: don't wait out the
+                    // full timeout.
+                    result.complete(null)
                 }
             }
         }
@@ -142,20 +191,23 @@ internal object TrailerExtractionPlatform {
         return try {
             withTimeoutOrNull(2_000L) { result.await() }
         } finally {
+            inFlightCalls.forEach { runCatching { it.cancel() } }
             probeScope.cancel()
         }
     }
 
-    private fun isUrlReachable(url: String): Boolean {
+    private fun isUrlReachable(url: String, trackCall: ((Call) -> Unit)? = null): Boolean {
         return runCatching {
             val request = Request.Builder()
                 .url(url)
                 .get()
-                .header("Range", "bytes=0-0")
                 .headers(buildHeaders(defaultHeaders))
+                .header("Range", "bytes=0-0")
                 .build()
 
-            probeClient.newCall(request).execute().use { response ->
+            val call = probeClient.newCall(request)
+            trackCall?.invoke(call)
+            call.execute().use { response ->
                 response.code in 200..299
             }
         }.getOrDefault(false)

@@ -505,6 +505,7 @@ fun PluginsSettingsPageContent(
 
     if (configuringScraper != null && configuringLayout != null) {
         PluginSettingsDialog(
+            profileId = PluginRepository.getCurrentProfileId(),
             scraperId = configuringScraper!!.id,
             scraperName = configuringScraper!!.name,
             layoutJson = configuringLayout!!,

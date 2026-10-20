@@ -54,7 +54,9 @@ internal class CryptoBridge : HostModule {
             val key = pluginHexToByteArray(args.getOrNull(1)?.toString() ?: "")
             val iv = pluginHexToByteArray(args.getOrNull(2)?.toString() ?: "")
             val data = pluginHexToByteArray(args.getOrNull(3)?.toString() ?: "")
-            pluginAesEncrypt(mode, key, iv, data).toHexString()
+            runCatching {
+                pluginAesEncrypt(mode, key, iv, data).toHexString()
+            }.getOrDefault("")
         }
 
         runtime.function("__crypto_aes_decrypt_hex") { args ->
@@ -62,14 +64,18 @@ internal class CryptoBridge : HostModule {
             val key = pluginHexToByteArray(args.getOrNull(1)?.toString() ?: "")
             val iv = pluginHexToByteArray(args.getOrNull(2)?.toString() ?: "")
             val data = pluginHexToByteArray(args.getOrNull(3)?.toString() ?: "")
-            pluginAesDecrypt(mode, key, iv, data).toHexString()
+            runCatching {
+                pluginAesDecrypt(mode, key, iv, data).toHexString()
+            }.getOrDefault("")
         }
 
         runtime.function("__crypto_sign_hex") { args ->
             val algorithm = args.getOrNull(0)?.toString() ?: ""
             val privateKey = pluginHexToByteArray(args.getOrNull(1)?.toString() ?: "")
             val data = pluginHexToByteArray(args.getOrNull(2)?.toString() ?: "")
-            pluginSign(algorithm, privateKey, data).toHexString()
+            runCatching {
+                pluginSign(algorithm, privateKey, data).toHexString()
+            }.getOrDefault("")
         }
 
         runtime.function("__crypto_verify_hex") { args ->
@@ -77,7 +83,9 @@ internal class CryptoBridge : HostModule {
             val publicKey = pluginHexToByteArray(args.getOrNull(1)?.toString() ?: "")
             val signature = pluginHexToByteArray(args.getOrNull(2)?.toString() ?: "")
             val data = pluginHexToByteArray(args.getOrNull(3)?.toString() ?: "")
-            pluginVerify(algorithm, publicKey, signature, data)
+            runCatching {
+                pluginVerify(algorithm, publicKey, signature, data)
+            }.getOrDefault(false)
         }
 
         // --- Legacy Hex/String Bridges (Backward Compatibility) ---

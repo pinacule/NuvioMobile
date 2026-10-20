@@ -22,6 +22,7 @@ import kotlinx.serialization.json.*
 
 @Composable
 fun PluginSettingsDialog(
+    profileId: Int,
     scraperId: String,
     scraperName: String,
     layoutJson: String,
@@ -32,7 +33,7 @@ fun PluginSettingsDialog(
         runCatching { json.parseToJsonElement(layoutJson).jsonArray }.getOrElse { JsonArray(emptyList()) }
     }
 
-    val savedSettingsJson = remember(scraperId) { PluginStorage.loadScraperSettings(scraperId) ?: "{}" }
+    val savedSettingsJson = remember(profileId, scraperId) { PluginStorage.loadScraperSettings(profileId, scraperId) ?: "{}" }
     val initialSettings = remember(savedSettingsJson) {
         runCatching { json.parseToJsonElement(savedSettingsJson).jsonObject }.getOrElse { JsonObject(emptyMap()) }
     }
@@ -186,7 +187,7 @@ fun PluginSettingsDialog(
                 text = "Save",
                 onClick = {
                     val result = JsonObject(currentSettings.toMap())
-                    PluginStorage.saveScraperSettings(scraperId, result.toString())
+                    PluginStorage.saveScraperSettings(profileId, scraperId, result.toString())
                     onDismiss()
                 },
                 style = DialogButtonStyle.Primary,

@@ -18,6 +18,13 @@ class BackgroundDownloadTestActivity : MainActivity() {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus || started) return
         started = true
+        // lifecycle-runtime-ktx is not a dependency of this module, so there is
+        // no lifecycleScope here; a plain thread keeps disk I/O and repository
+        // work off the UI thread.
+        Thread { runDownloadFixture() }.start()
+    }
+
+    private fun runDownloadFixture() {
         val url = requireNotNull(intent.getStringExtra("downloadUrl"))
         require(Uri.parse(url).host == "10.0.2.2") { "Only the emulator's local fixture server is supported" }
         val id = "nuvio-background-download-fixture"

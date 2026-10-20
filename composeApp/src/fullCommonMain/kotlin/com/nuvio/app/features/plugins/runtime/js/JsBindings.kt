@@ -518,6 +518,13 @@ internal object JsBindings {
 
         function __aesModeName(mode, padding) {
             var normalized = __normalizeAlgorithmName(mode || 'AES-CBC');
+            // Guard: CryptoJS mode objects (e.g. CryptoJS.mode.CBC) stringify to
+            // "[object Object]" and would otherwise reach native as garbage.
+            // Mirror native's contains()-based acceptance (short forms like 'CBC' work).
+            var upper = String(normalized).toUpperCase();
+            if (upper.indexOf('GCM') < 0 && upper.indexOf('CBC') < 0 && upper.indexOf('ECB') < 0) {
+                throw new Error('Unsupported AES mode: ' + String(mode));
+            }
             if (padding === CryptoJS.pad.NoPadding || padding === 'NoPadding') normalized += '-NoPadding';
             return normalized;
         }

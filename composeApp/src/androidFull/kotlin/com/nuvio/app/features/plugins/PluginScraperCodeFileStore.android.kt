@@ -9,8 +9,9 @@ internal class PluginScraperCodeFileStore(
 ) {
     private val lock = SynchronizedObject()
 
-    fun contains(profileId: Int, scraperId: String): Boolean =
+    fun contains(profileId: Int, scraperId: String): Boolean = synchronized(lock) {
         scraperCodeFile(profileId, scraperId).isFile
+    }
 
     fun load(profileId: Int, scraperId: String): String? = synchronized(lock) {
         val file = scraperCodeFile(profileId, scraperId).takeIf(File::isFile)
@@ -60,5 +61,31 @@ internal class PluginScraperCodeFileStore(
     private fun scraperCodeFile(profileId: Int, scraperId: String): File {
         val fileName = "${pluginDigestHex("SHA256", scraperId)}.js"
         return root.resolve(profileId.toString()).resolve(fileName)
+    }
+
+    /**
+     * Deletes a scraper's cached code, including the backup and any temp file
+     * a [save] may have left behind. Best-effort: returns false if any delete fails.
+     */
+    fun delete(profileId: Int, scraperId: String): Boolean = synchronized(lock) {
+        val target = scraperCodeFile(profileId, scraperId)
+        val directory = target.parentFile ?: return@synchronized false
+        // Temp files from save() are named "scraper-<random>.tmp"; under the lock no
+        // save can be in flight, so sweeping them is safe.
+        directory.listFiles { file ->
+            file.isFile && file.name.startsWith("scraper-") && file.name.endsWith(".tmp")
+        }?.forEach { it.delete() }
+        var ok = true
+        if (target.exists() && !target.delete()) ok = false
+        val backup = directory.resolve("${target.name}.backup")
+        if (backup.exists() && !backup.delete()) ok = false
+        ok
+    }
+
+    /** Deletes the whole cached-code directory for a profile. Missing dir counts as success. */
+    fun deleteProfileDir(profileId: Int): Boolean = synchronized(lock) {
+        val dir = root.resolve(profileId.toString())
+        if (!dir.exists()) return@synchronized true
+        dir.deleteRecursively()
     }
 }

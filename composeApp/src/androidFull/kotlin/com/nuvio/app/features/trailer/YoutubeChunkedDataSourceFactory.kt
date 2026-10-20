@@ -12,6 +12,7 @@ import kotlinx.coroutines.runBlocking
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.player_error_unable_to_play_stream
 import org.jetbrains.compose.resources.getString
+import java.io.IOException
 
 /**
  * A DataSource.Factory that wraps DefaultHttpDataSource and appends YouTube's
@@ -89,10 +90,13 @@ class YoutubeChunkedDataSourceFactory(
             }
             currentChunkEnd = end
 
-            // Append &range=start-end to the URL (YouTube's own range param, not HTTP Range header)
-            val rangedUri = spec.uri.buildUpon()
-                .appendQueryParameter("range", "$currentChunkStart-$currentChunkEnd")
-                .build()
+            // Append &range=start-end to the URL (YouTube's own range param, not HTTP Range header).
+            // Skip if the URI already carries one (e.g. preserved from a redirect).
+            val uriBuilder = spec.uri.buildUpon()
+            if (spec.uri.getQueryParameter("range") == null) {
+                uriBuilder.appendQueryParameter("range", "$currentChunkStart-$currentChunkEnd")
+            }
+            val rangedUri = uriBuilder.build()
 
             val chunkedSpec = spec.buildUpon()
                 .setUri(rangedUri)
@@ -101,6 +105,7 @@ class YoutubeChunkedDataSourceFactory(
                 .build()
 
             bytesReadInChunk = 0
+            currentUri = rangedUri
             upstream.open(chunkedSpec)
             return if (totalContentLength != C.LENGTH_UNSET.toLong()) totalContentLength else C.LENGTH_UNSET.toLong()
         }
@@ -129,13 +134,25 @@ class YoutubeChunkedDataSourceFactory(
                     }
                 }
 
-                return try {
+                val nextBytesRead: Int
+                try {
                     openNextChunk()
-                    upstream.read(buffer, offset, length)
+                    nextBytesRead = upstream.read(buffer, offset, length)
+                } catch (e: IOException) {
+                    Log.w(TAG, "Failed to open next chunk at $currentChunkStart: ${e.message}")
+                    throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to open next chunk at $currentChunkStart: ${e.message}")
-                    C.RESULT_END_OF_INPUT
+                    throw IOException(e)
                 }
+                if (nextBytesRead == C.RESULT_END_OF_INPUT) {
+                    // Fresh chunk exhausted on its very first read. bytesReadInChunk was
+                    // just reset to 0 by openNextChunk(), so the short-chunk rule applies
+                    // (0 bytes < expected chunk size): the stream is genuinely done.
+                    return C.RESULT_END_OF_INPUT
+                }
+                bytesReadInChunk += nextBytesRead
+                return nextBytesRead
             }
 
             bytesReadInChunk += bytesRead
@@ -143,6 +160,8 @@ class YoutubeChunkedDataSourceFactory(
         }
 
         override fun getUri(): Uri? = upstream.uri ?: currentUri
+
+        override fun getResponseHeaders(): Map<String, List<String>> = upstream.responseHeaders
 
         override fun close() {
             upstream.close()

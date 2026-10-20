@@ -13,6 +13,7 @@ class LetterboxSampler {
     private val pixels = IntArray(LetterboxDetector.SAMPLE_WIDTH * LetterboxDetector.SAMPLE_HEIGHT)
 
     fun sample(textureView: TextureView): Float? {
+        if (bitmap.isRecycled) return null
         if (!textureView.isAvailable) return null
         textureView.getBitmap(bitmap)
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)

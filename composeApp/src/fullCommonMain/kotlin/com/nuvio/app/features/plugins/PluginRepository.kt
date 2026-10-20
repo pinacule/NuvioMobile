@@ -108,6 +108,8 @@ actual object PluginRepository {
         _uiState.value = PluginsUiState()
     }
 
+    actual fun getCurrentProfileId(): Int = currentProfileId
+
     actual fun clearLocalState() {
         cancelActiveRefreshes()
         persistenceGeneration.incrementAndGet()
@@ -208,11 +210,16 @@ actual object PluginRepository {
 
     actual fun removeRepository(manifestUrl: String) {
         initialize()
+        val removedScrapers = _uiState.value.scrapers.filter { it.repositoryUrl == manifestUrl }
         _uiState.update { state ->
             state.copy(
                 repositories = state.repositories.filterNot { it.manifestUrl == manifestUrl },
                 scrapers = state.scrapers.filterNot { it.repositoryUrl == manifestUrl },
             )
+        }
+        // Drop the cached .js files so a re-added repository refetches clean code.
+        removedScrapers.forEach { scraper ->
+            runCatching { PluginStorage.deleteScraperCode(currentProfileId, scraper.id) }
         }
         persist()
         pushToServer()
@@ -384,6 +391,7 @@ actual object PluginRepository {
                 season = season,
                 episode = episode,
                 scraperId = scraper.id,
+                profileId = currentProfileId,
                 respectSearchPause = respectSearchPause,
             )
         }

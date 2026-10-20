@@ -89,6 +89,8 @@ actual fun HeroTrailerPlayerSurface(
     }
     var hasRenderedFirstFrame by remember(exoPlayer) { mutableStateOf(false) }
     var letterboxZoom by remember(exoPlayer) { mutableFloatStateOf(1f) }
+    // Set when the current player errors; reset automatically when a new player is created (exoPlayer key).
+    var playerError by remember(exoPlayer) { mutableStateOf<PlaybackException?>(null) }
     val letterboxZoomState = animateFloatAsState(
         targetValue = letterboxZoom,
         animationSpec = tween(durationMillis = 400),
@@ -132,6 +134,7 @@ actual fun HeroTrailerPlayerSurface(
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                playerError = error
                 detachVideoSurface()
                 latestOnError.value()
             }
@@ -139,7 +142,7 @@ actual fun HeroTrailerPlayerSurface(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
-                    if (latestPlayWhenReady.value && exoPlayer.playbackState != Player.STATE_ENDED) {
+                    if (latestPlayWhenReady.value && exoPlayer.playbackState != Player.STATE_ENDED && playerError == null) {
                         playerContainer?.attachPlayer(exoPlayer)
                         playerContainer?.alpha = 1f
                         exoPlayer.play()
@@ -168,6 +171,9 @@ actual fun HeroTrailerPlayerSurface(
         if (exoPlayer.playbackState == Player.STATE_ENDED) {
             return@LaunchedEffect
         }
+        if (playerError != null) {
+            return@LaunchedEffect
+        }
         exoPlayer.playWhenReady = playWhenReady
         if (playWhenReady) {
             playerContainer?.attachPlayer(exoPlayer)
@@ -191,7 +197,7 @@ actual fun HeroTrailerPlayerSurface(
             while (true) {
                 delay(LetterboxDetector.SAMPLE_INTERVAL_MS)
                 if (LetterboxDetector.isSampleWindowOver(exoPlayer.currentPosition, exoPlayer.duration)) break
-                if (!exoPlayer.isPlaying) continue
+                if (!exoPlayer.isPlaying) break
                 val textureView = playerContainer?.textureView ?: continue
                 val bar = sampler.sample(textureView) ?: continue
                 letterboxZoom = tracker.onSample(bar) ?: continue
@@ -218,8 +224,9 @@ actual fun HeroTrailerPlayerSurface(
         },
         update = { container ->
             playerContainer = container
-            if (playWhenReady) {
+            if (playWhenReady && playerError == null) {
                 container.attachPlayer(exoPlayer)
+                container.alpha = 1f
             }
         },
     )
@@ -250,6 +257,9 @@ private class HeroTrailerTextureContainer(
         attachedPlayer?.clearVideoTextureView(textureView)
         attachedPlayer = player
         player.setVideoTextureView(textureView)
+        // Sync the last known video size: re-attaching after onSizeChanged already ran would
+        // otherwise leave the texture transform at the 16:9 default. setVideoSize ignores unknowns.
+        setVideoSize(player.videoSize)
     }
 
     fun detachPlayer(player: ExoPlayer) {
@@ -273,7 +283,7 @@ private class HeroTrailerTextureContainer(
     private fun updateTextureTransform() {
         val viewWidth = width.toFloat()
         val viewHeight = height.toFloat()
-        if (viewWidth <= 0f || viewHeight <= 0f || videoAspectRatio <= 0f) return
+        if (viewWidth <= 0f || viewHeight <= 0f || !videoAspectRatio.isFinite() || videoAspectRatio <= 0f) return
 
         val viewAspectRatio = viewWidth / viewHeight
         textureTransform.reset()

@@ -3,7 +3,7 @@
     <application>
         <activity
             android:name="com.nuvio.android.BackgroundDownloadTestActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/Theme.Nuvio" />
     </application>
 </manifest>

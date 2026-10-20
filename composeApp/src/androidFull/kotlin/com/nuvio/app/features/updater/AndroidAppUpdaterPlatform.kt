@@ -77,41 +77,51 @@ object AndroidAppUpdaterPlatform {
             val context = requireContext()
             val safeName = assetName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
             val destination = File(File(context.cacheDir, "updates"), safeName)
+            val tempFile = File(destination.parent, "$safeName.tmp")
             destination.parentFile?.mkdirs()
             if (destination.exists()) {
                 destination.delete()
             }
-
-            val request = Request.Builder()
-                .url(assetUrl)
-                .build()
-
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    error(runBlocking { getString(Res.string.updates_download_failed_http, response.code) })
-                }
-
-                val body = response.body ?: error(runBlocking { getString(Res.string.updates_empty_download_body) })
-                val totalBytes = body.contentLength().takeIf { it > 0L }
-                body.byteStream().use { input ->
-                    FileOutputStream(destination).use { output ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var downloadedBytes = 0L
-                        while (true) {
-                            currentCoroutineContext().ensureActive()
-                            val read = input.read(buffer)
-                            currentCoroutineContext().ensureActive()
-                            if (read <= 0) break
-                            output.write(buffer, 0, read)
-                            downloadedBytes += read
-                            onProgress(downloadedBytes, totalBytes)
-                        }
-                        output.flush()
-                    }
-                }
+            if (tempFile.exists()) {
+                tempFile.delete()
             }
 
-            destination.absolutePath
+            try {
+                val request = Request.Builder()
+                    .url(assetUrl)
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        error(runBlocking { getString(Res.string.updates_download_failed_http, response.code) })
+                    }
+
+                    val body = response.body ?: error(runBlocking { getString(Res.string.updates_empty_download_body) })
+                    val totalBytes = body.contentLength().takeIf { it > 0L }
+                    body.byteStream().use { input ->
+                        FileOutputStream(tempFile).use { output ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            var downloadedBytes = 0L
+                            while (true) {
+                                currentCoroutineContext().ensureActive()
+                                val read = input.read(buffer)
+                                currentCoroutineContext().ensureActive()
+                                if (read <= 0) break
+                                output.write(buffer, 0, read)
+                                downloadedBytes += read
+                                onProgress(downloadedBytes, totalBytes)
+                            }
+                            output.flush()
+                        }
+                    }
+                }
+
+                check(tempFile.renameTo(destination)) { "Failed to finalize downloaded update." }
+
+                destination.absolutePath
+            } finally {
+                tempFile.delete()
+            }
         }
     }
 
@@ -121,8 +131,7 @@ object AndroidAppUpdaterPlatform {
             try {
                 context.packageManager.canRequestPackageInstalls()
             } catch (_: SecurityException) {
-            
-                true
+                false
             }
         } else {
             true
@@ -136,7 +145,7 @@ object AndroidAppUpdaterPlatform {
             Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
             Uri.parse("package:${context.packageName}"),
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+        runCatching { context.startActivity(intent) }
     }
 
     fun installDownloadedApk(path: String): Result<Unit> = runCatching {
