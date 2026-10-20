@@ -9,7 +9,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.abs
-import kotlin.math.roundToLong
 
 internal fun Modifier.playerSurfaceTapGestures(
     layoutSize: IntSize,
@@ -51,15 +50,8 @@ internal fun Modifier.playerSurfaceDragGestures(
     playerControlsLockedState: State<Boolean>,
     touchGesturesEnabledState: State<Boolean>,
     isHoldToSpeedGestureActiveState: State<Boolean>,
-    currentPositionMsState: State<Long>,
-    currentDurationMsState: State<Long>,
-    deactivateHoldToSpeedState: State<() -> Unit>,
-    showHorizontalSeekPreviewState: State<(Long, Long) -> Unit>,
     showBrightnessFeedbackState: State<(Float) -> Unit>,
-    showVolumeFeedbackState: State<(PlayerAudioLevel) -> Unit>,
-    clearLiveGestureFeedbackState: State<() -> Unit>,
     revealLockedOverlayState: State<() -> Unit>,
-    commitHorizontalSeekState: State<(Long) -> Unit>,
     volumeBrightnessGesturesEnabledState: State<Boolean>? = null,
 ): Modifier =
     pointerInput(gestureController, layoutSize, sideGestureSystemEdgeExclusionPx, playbackGesturesEnabled) {
@@ -79,31 +71,20 @@ internal fun Modifier.playerSurfaceDragGestures(
                 return@awaitEachGesture
             }
             // While a panel like the speed modal is open, vertical swipes must not
-            // change volume/brightness; horizontal seek keeps working.
+            // change brightness.
             val volumeBrightnessGesturesEnabled =
                 volumeBrightnessGesturesEnabledState?.value ?: true
             val controller = gestureController
-            val width = size.width.toFloat().takeIf { it > 0f } ?: return@awaitEachGesture
             val height = size.height.toFloat().takeIf { it > 0f } ?: return@awaitEachGesture
             val sideGestureEdgeExclusionPx = sideGestureSystemEdgeExclusionPx
                 .coerceAtMost(height * 0.25f)
             val isInSideGestureSystemEdge =
                 down.position.y <= sideGestureEdgeExclusionPx ||
                     down.position.y >= height - sideGestureEdgeExclusionPx
-            val region = when {
-                isInSideGestureSystemEdge -> null
-                down.position.x < width * PlayerLeftGestureBoundary -> PlayerSideGesture.Brightness
-                down.position.x > width * PlayerRightGestureBoundary -> PlayerSideGesture.Volume
-                else -> null
-            }
+            val region = if (isInSideGestureSystemEdge) null else PlayerSideGesture.Brightness
 
             val initialBrightness = if (region == PlayerSideGesture.Brightness) {
                 controller?.currentBrightness()
-            } else {
-                null
-            }
-            val initialVolume = if (region == PlayerSideGesture.Volume) {
-                controller?.currentVolume()
             } else {
                 null
             }
@@ -112,8 +93,6 @@ internal fun Modifier.playerSurfaceDragGestures(
             var totalDy = 0f
             var gestureMode: PlayerGestureMode? = null
             var verticalGestureActivationDy = 0f
-            val horizontalSeekBaselineMs = currentPositionMsState.value
-            var horizontalSeekPreviewMs = horizontalSeekBaselineMs
 
             while (true) {
                 val event = awaitPointerEvent()
@@ -130,29 +109,15 @@ internal fun Modifier.playerSurfaceDragGestures(
                         viewConfiguration.touchSlop * PlayerVerticalGestureTouchSlopMultiplier,
                         height * PlayerVerticalGestureMinHeightFraction,
                     )
-                    val horizontalDominant =
-                        !holdToSpeedActive &&
-                            abs(totalDx) > viewConfiguration.touchSlop &&
-                            abs(totalDx) > abs(totalDy)
                     val verticalDominant =
                         !holdToSpeedActive &&
                             abs(totalDy) > verticalGestureActivationSlop &&
                             abs(totalDy) > abs(totalDx) * PlayerVerticalGestureDominanceRatio
 
                     gestureMode = when {
-                        horizontalDominant -> {
-                            deactivateHoldToSpeedState.value()
-                            PlayerGestureMode.HorizontalSeek
-                        }
-
                         verticalDominant && region == PlayerSideGesture.Brightness && initialBrightness != null && volumeBrightnessGesturesEnabled -> {
                             verticalGestureActivationDy = totalDy
                             PlayerGestureMode.Brightness
-                        }
-
-                        verticalDominant && region == PlayerSideGesture.Volume && initialVolume != null && volumeBrightnessGesturesEnabled -> {
-                            verticalGestureActivationDy = totalDy
-                            PlayerGestureMode.Volume
                         }
 
                         else -> null
@@ -164,27 +129,6 @@ internal fun Modifier.playerSurfaceDragGestures(
                 }
 
                 when (gestureMode) {
-                    PlayerGestureMode.HorizontalSeek -> {
-                        val sensitivitySeconds = when {
-                            currentDurationMsState.value >= 3_600_000L -> 120f
-                            currentDurationMsState.value >= 1_800_000L -> 90f
-                            else -> 60f
-                        }
-                        val previewOffsetMs =
-                            ((totalDx / width) * sensitivitySeconds * 1000f).roundToLong()
-                        val unclampedPreviewMs = horizontalSeekBaselineMs + previewOffsetMs
-                        horizontalSeekPreviewMs = currentDurationMsState.value
-                            .takeIf { it > 0L }
-                            ?.let { durationMs ->
-                                unclampedPreviewMs.coerceIn(0L, durationMs)
-                            }
-                            ?: unclampedPreviewMs.coerceAtLeast(0L)
-                        showHorizontalSeekPreviewState.value(
-                            horizontalSeekPreviewMs,
-                            horizontalSeekBaselineMs,
-                        )
-                    }
-
                     PlayerGestureMode.Brightness -> {
                         val activeTotalDy = totalDy - verticalGestureActivationDy
                         val gestureDeltaFraction =
@@ -192,21 +136,8 @@ internal fun Modifier.playerSurfaceDragGestures(
                         controller?.setBrightness((initialBrightness ?: 0f) + gestureDeltaFraction)
                             ?.let(showBrightnessFeedbackState.value)
                     }
-
-                    PlayerGestureMode.Volume -> {
-                        val activeTotalDy = totalDy - verticalGestureActivationDy
-                        val gestureDeltaFraction =
-                            (-activeTotalDy / height) * PlayerVerticalGestureSensitivity
-                        controller?.setVolume((initialVolume?.fraction ?: 0f) + gestureDeltaFraction)
-                            ?.let(showVolumeFeedbackState.value)
-                    }
                 }
                 change.consume()
-            }
-
-            if (gestureMode == PlayerGestureMode.HorizontalSeek && !isHoldToSpeedGestureActiveState.value) {
-                commitHorizontalSeekState.value(horizontalSeekPreviewMs)
-                clearLiveGestureFeedbackState.value()
             }
         }
     }

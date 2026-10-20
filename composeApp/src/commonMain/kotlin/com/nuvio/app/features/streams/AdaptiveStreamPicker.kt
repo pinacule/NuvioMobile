@@ -35,8 +35,15 @@ private val seedersPattern = Regex("[\uD83D\uDC64\uD83D\uDC65]\\s*(\\d[\\d,.]*)|
 private val sizePattern = Regex("[\uD83D\uDCBE]\\s*([\\d.,]+)\\s*(GB|MB)", RegexOption.IGNORE_CASE)
 
 // Dubbed / dual-audio / multi-audio / english-dub indicators (word-boundaried).
-private val englishDubIndicators = Regex(
+private val strongEnglishDubIndicators = Regex(
     "\\bdubbed\\b|\\bdual[\\s\\-]?audio\\b|\\bmulti[\\s\\-]?audio\\b|\\benglish[\\s\\-]?dub\\b",
+    RegexOption.IGNORE_CASE,
+)
+// Standalone "dual"/"multi" are unambiguous multi-audio markers in release names
+// (e.g. "Re.Zero.S2.MULTi.1080p"), but can false-positive in description prose
+// ("dual timelines"), so they are only matched against name/title/filename.
+private val standaloneMultiAudioIndicators = Regex(
+    "\\bdual\\b|\\bmulti\\b",
     RegexOption.IGNORE_CASE,
 )
 // Standalone "eng" language tag ...
@@ -106,9 +113,16 @@ object AdaptiveStreamPicker {
      * "English subtitles" / "eng subs" (subtitle mentions) do NOT count.
      */
     fun hasEnglishAudio(stream: StreamItem): Boolean {
-        val text = listOfNotNull(stream.name, stream.title, stream.description).joinToString(" ")
+        // Scans name/title/description/filename (filename included: addons often
+        // put the release tags only in behaviorHints.filename).
+        val text = listOfNotNull(stream.name, stream.title, stream.description, stream.behaviorHints.filename)
+            .joinToString(" ")
         if (text.isBlank()) return false
-        if (englishDubIndicators.containsMatchIn(text)) return true
+        if (strongEnglishDubIndicators.containsMatchIn(text)) return true
+        // Standalone "dual"/"multi": only name/title/filename (not description prose).
+        val releaseText = listOfNotNull(stream.name, stream.title, stream.behaviorHints.filename)
+            .joinToString(" ")
+        if (standaloneMultiAudioIndicators.containsMatchIn(releaseText)) return true
         // A standalone "eng" language tag counts, unless it's part of a subtitle mention.
         val audioOnly = engSubtitleMention.replace(text, " ")
         return engAudioTag.containsMatchIn(audioOnly)
@@ -144,7 +158,9 @@ object AdaptiveStreamPicker {
      * When [requireHdrSeeders], HDR streams need at least
      * [MIN_SEEDERS_FOR_HDR_AUTOPLAY] known seeders to be eligible (playback needs
      * the speed); if the gate leaves zero candidates it falls back to the ungated
-     * list so we never pick nothing when streams exist.
+     * list so we never pick nothing when streams exist. English-audio streams are
+     * exempt from the HDR seeder gate when [preferEnglishAudio] — dub preference
+     * outranks the seeder requirement.
      *
      * Returns null when [streams] is empty.
      */
@@ -155,15 +171,19 @@ object AdaptiveStreamPicker {
         requireHdrSeeders: Boolean = false,
     ): StreamItem? {
         if (streams.isEmpty()) return null
+        if (preferEnglishAudio) {
+            // Dub over sub, always: the English-audio filter runs BEFORE the HDR
+            // seeder gate, so an English dub is never gated out in favor of a
+            // non-English stream. English-dub streams are exempt from the HDR
+            // seeder requirement (the recursive call is ungated).
+            pickBestSeeded(streams.filter { hasEnglishAudio(it) }, targetQuality)?.let { return it }
+        }
         val eligible = if (requireHdrSeeders) {
             streams.filter { stream ->
                 !isHdrStream(stream) || (parseSeeders(stream) ?: -1) >= MIN_SEEDERS_FOR_HDR_AUTOPLAY
             }.ifEmpty { streams }
         } else {
             streams
-        }
-        if (preferEnglishAudio) {
-            pickBestSeeded(eligible.filter { hasEnglishAudio(it) }, targetQuality)?.let { return it }
         }
         val byQuality = eligible.groupBy { it.streamResolution() }
         val orderedQualities = qualityRank

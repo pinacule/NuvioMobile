@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -19,17 +18,12 @@ internal data class PlayerSurfaceGestureCallbacks(
     val onSurfaceDoubleTap: State<(Offset) -> Unit>,
     val activateHoldToSpeed: State<() -> Unit>,
     val deactivateHoldToSpeed: State<() -> Unit>,
-    val showHorizontalSeekPreview: State<(Long, Long) -> Unit>,
     val showBrightnessFeedback: State<(Float) -> Unit>,
-    val showVolumeFeedback: State<(PlayerAudioLevel) -> Unit>,
     val clearLiveGestureFeedback: State<() -> Unit>,
     val revealLockedOverlay: State<() -> Unit>,
     val isHoldToSpeedGestureActive: State<Boolean>,
     val touchGesturesEnabled: State<Boolean>,
     val playerControlsLocked: State<Boolean>,
-    val currentPositionMs: State<Long>,
-    val currentDurationMs: State<Long>,
-    val commitHorizontalSeek: State<(Long) -> Unit>,
 )
 
 internal fun PlayerScreenRuntime.showGestureFeedback(feedback: GestureFeedbackState) {
@@ -102,30 +96,6 @@ internal fun PlayerScreenRuntime.showSeekFeedback(direction: PlayerSeekDirection
     )
 }
 
-internal fun PlayerScreenRuntime.showHorizontalSeekPreview(previewPositionMs: Long, baselinePositionMs: Long) {
-    val deltaMs = previewPositionMs - baselinePositionMs
-    val direction = if (deltaMs < 0L) PlayerSeekDirection.Backward else PlayerSeekDirection.Forward
-    liveGestureFeedback = GestureFeedbackState(
-        message = formatPlaybackTime(previewPositionMs),
-        icon = if (direction == PlayerSeekDirection.Forward) {
-            GestureFeedbackIcon.SeekForward
-        } else {
-            GestureFeedbackIcon.SeekBackward
-        },
-        secondaryMessageRes = if (deltaMs >= 0L) {
-            Res.string.compose_player_seek_delta_forward
-        } else {
-            Res.string.compose_player_seek_delta_backward
-        },
-        secondaryMessageArgs = listOf((abs(deltaMs) / 1000f).roundToInt()),
-        secondaryMessageColor = if (direction == PlayerSeekDirection.Forward) {
-            Color(0xFF6EE7A8)
-        } else {
-            Color(0xFFFF9A76)
-        },
-    )
-}
-
 internal fun PlayerScreenRuntime.showBrightnessFeedback(level: Float) {
     val percentage = (level.coerceIn(0f, 1f) * 100f).roundToInt()
     showGestureFeedback(
@@ -134,23 +104,6 @@ internal fun PlayerScreenRuntime.showBrightnessFeedback(level: Float) {
             messageArgs = listOf("$percentage%"),
             icon = GestureFeedbackIcon.Brightness,
             level = level.coerceIn(0f, 1f),
-        ),
-    )
-}
-
-internal fun PlayerScreenRuntime.showVolumeFeedback(level: PlayerAudioLevel) {
-    val percentage = (level.fraction.coerceIn(0f, 1f) * 100f).roundToInt()
-    showGestureFeedback(
-        GestureFeedbackState(
-            messageRes = if (level.isMuted) {
-                Res.string.compose_player_muted
-            } else {
-                Res.string.compose_player_volume_level
-            },
-            messageArgs = if (level.isMuted) emptyList() else listOf("$percentage%"),
-            icon = if (level.isMuted) GestureFeedbackIcon.VolumeMuted else GestureFeedbackIcon.Volume,
-            isDanger = level.isMuted,
-            level = if (level.isMuted) 0f else level.fraction.coerceIn(0f, 1f),
         ),
     )
 }
@@ -328,27 +281,12 @@ internal fun PlayerScreenRuntime.rememberSurfaceGestureCallbacks(): PlayerSurfac
         onSurfaceDoubleTap = onSurfaceDoubleTap,
         activateHoldToSpeed = rememberUpdatedState(::activateHoldToSpeed),
         deactivateHoldToSpeed = rememberUpdatedState(::deactivateHoldToSpeed),
-        showHorizontalSeekPreview = rememberUpdatedState(::showHorizontalSeekPreview),
         showBrightnessFeedback = rememberUpdatedState(::showBrightnessFeedback),
-        showVolumeFeedback = rememberUpdatedState(::showVolumeFeedback),
         clearLiveGestureFeedback = rememberUpdatedState(::clearLiveGestureFeedback),
         revealLockedOverlay = rememberUpdatedState(::revealLockedOverlay),
         isHoldToSpeedGestureActive = rememberUpdatedState(isHoldToSpeedGestureActive),
         touchGesturesEnabled = rememberUpdatedState(playerSettingsUiState.touchGesturesEnabled),
         playerControlsLocked = rememberUpdatedState(playerControlsLocked),
-        currentPositionMs = rememberUpdatedState(playbackSnapshot.positionMs.coerceAtLeast(0L)),
-        currentDurationMs = rememberUpdatedState(playbackSnapshot.durationMs),
-        commitHorizontalSeek = rememberUpdatedState { requestedPositionMs: Long ->
-            val targetPositionMs = if (isPartyControlLocked) {
-                ownSeekTarget(requestedPositionMs) ?: return@rememberUpdatedState
-            } else {
-                requestedPositionMs
-            }
-            lastManualSkipSeekPositions = playbackSnapshot.positionMs to targetPositionMs
-            playerController?.seekTo(targetPositionMs)
-            scheduleProgressSyncAfterSeek()
-            publishPartyPlayback(positionMs = targetPositionMs)
-        },
     )
 }
 

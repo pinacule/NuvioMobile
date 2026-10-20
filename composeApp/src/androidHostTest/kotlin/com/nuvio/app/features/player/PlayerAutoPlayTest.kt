@@ -328,6 +328,62 @@ class PlayerAutoPlayTest {
         assertEquals(4, next?.episode)
     }
 
+    @Test
+    fun longEndingDoesNotTriggerNextEpisodeCardEarly() {
+        // 24-minute episode with a 90s ED starting at 22:30 (Re:Zero-style).
+        // The card must not appear at the ED start — it's clamped to 30s before the end.
+        val ed = SkipInterval(startTime = 1350.0, endTime = 1440.0, type = "ed", provider = "test")
+        val durationMs = 1_440_000L
+        assertFalse(
+            PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
+                positionMs = 1_350_000L,
+                durationMs = durationMs,
+                skipIntervals = listOf(ed),
+                thresholdMode = NextEpisodeThresholdMode.PERCENTAGE,
+                thresholdPercent = 99f,
+                thresholdMinutesBeforeEnd = 2f,
+            )
+        )
+        assertTrue(
+            PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
+                positionMs = 1_410_000L,
+                durationMs = durationMs,
+                skipIntervals = listOf(ed),
+                thresholdMode = NextEpisodeThresholdMode.PERCENTAGE,
+                thresholdPercent = 99f,
+                thresholdMinutesBeforeEnd = 2f,
+            )
+        )
+    }
+
+    @Test
+    fun shortOutroStillTriggersAtOutroStart() {
+        // 20s outro: its start (20s before end) is later than the 30s clamp,
+        // so the card still appears right at the outro start.
+        val ed = SkipInterval(startTime = 1420.0, endTime = 1440.0, type = "ed", provider = "test")
+        val durationMs = 1_440_000L
+        assertFalse(
+            PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
+                positionMs = 1_415_000L,
+                durationMs = durationMs,
+                skipIntervals = listOf(ed),
+                thresholdMode = NextEpisodeThresholdMode.PERCENTAGE,
+                thresholdPercent = 99f,
+                thresholdMinutesBeforeEnd = 2f,
+            )
+        )
+        assertTrue(
+            PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
+                positionMs = 1_420_000L,
+                durationMs = durationMs,
+                skipIntervals = listOf(ed),
+                thresholdMode = NextEpisodeThresholdMode.PERCENTAGE,
+                thresholdPercent = 99f,
+                thresholdMinutesBeforeEnd = 2f,
+            )
+        )
+    }
+
     private fun startRuntime(settings: PlayerSettingsUiState? = null): PlayerScreenRuntime {
         WatchProgressStorage.initialize(RuntimeEnvironment.getApplication())
         WatchProgressRepository.clearLocalState()

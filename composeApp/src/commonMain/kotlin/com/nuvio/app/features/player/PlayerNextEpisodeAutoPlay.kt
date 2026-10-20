@@ -228,12 +228,23 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
                 val bingeCandidates = preferredBingeGroup?.takeIf { it.isNotEmpty() }?.let { group ->
                     streams.filter { it.behaviorHints.bingeGroup == group }.takeIf { it.isNotEmpty() }
                 }
+                val preferEnglish = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                    settings.preferredAudioLanguage,
+                )
+                // Dub over sub, always: if the binge group contains no English-dub
+                // stream, don't lock the next episode into the group's language —
+                // search all streams for a dub instead.
+                val candidates = if (preferEnglish && bingeCandidates != null &&
+                    bingeCandidates.none { AdaptiveStreamPicker.hasEnglishAudio(it) }
+                ) {
+                    streams
+                } else {
+                    bingeCandidates ?: streams
+                }
                 AdaptiveStreamPicker.pickBestSeeded(
-                    bingeCandidates ?: streams,
+                    candidates,
                     target,
-                    preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
-                        settings.preferredAudioLanguage,
-                    ),
+                    preferEnglishAudio = preferEnglish,
                     requireHdrSeeders = true,
                 )
             } else {

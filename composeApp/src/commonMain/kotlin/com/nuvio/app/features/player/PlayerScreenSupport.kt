@@ -62,7 +62,6 @@ internal fun sliderOverlayBottomPadding(metrics: PlayerLayoutMetrics) =
 
 internal enum class PlayerSideGesture {
     Brightness,
-    Volume,
 }
 
 internal enum class PlayerSeekDirection {
@@ -71,9 +70,7 @@ internal enum class PlayerSeekDirection {
 }
 
 internal enum class PlayerGestureMode {
-    HorizontalSeek,
     Brightness,
-    Volume,
 }
 
 internal data class PlayerAccumulatedSeekState(

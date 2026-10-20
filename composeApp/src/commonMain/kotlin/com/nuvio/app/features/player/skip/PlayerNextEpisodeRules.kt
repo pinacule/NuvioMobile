@@ -90,8 +90,13 @@ object PlayerNextEpisodeRules {
                     }
                 }
             } else {
-                // Outro ends close to the file end — fire at earliest outro start.
-                positionMs / 1_000.0 >= outroSegments.minOf { it.startTime }
+                // Outro ends close to the file end — fire at earliest outro start,
+                // but never more than MAX_OUTRO_EARLY_TRIGGER_MS before the actual
+                // end, so a long ED (e.g. a 90s anime ending) doesn't trigger the
+                // Up Next card while the user may still be watching it.
+                val outroStartMs = (outroSegments.minOf { it.startTime } * 1_000.0).toLong()
+                val earliestTriggerMs = (durationMs - MAX_OUTRO_EARLY_TRIGGER_MS).coerceAtLeast(0L)
+                positionMs >= maxOf(outroStartMs, earliestTriggerMs)
             }
         }
 
@@ -139,6 +144,16 @@ object PlayerNextEpisodeRules {
     val OUTRO_SEGMENT_TYPES = setOf("outro", "ed", "mixed-ed")
 
     private const val POST_CREDITS_GAP_MS = 5_000L
+
+    /**
+     * The Up Next card never appears more than this far before the episode's
+     * actual end, even when outro/ED segment data starts earlier. 30s is long
+     * enough for the card plus the 3s auto-play countdown to be useful, and
+     * short enough not to cut off a long ending sequence the user may still
+     * be watching. The user's own %/minutes threshold can still fire earlier
+     * when outro data is absent or ends well before the file end.
+     */
+    private const val MAX_OUTRO_EARLY_TRIGGER_MS = 30_000L
 
     private fun SkipInterval.findFollowingPostCreditsScene(
         intervals: List<SkipInterval>,
