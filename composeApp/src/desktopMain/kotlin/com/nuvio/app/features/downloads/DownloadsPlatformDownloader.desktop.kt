@@ -124,6 +124,8 @@ internal actual object DownloadsPlatformDownloader {
         return !partFile.exists() || runCatching { partFile.delete() }.getOrDefault(false)
     }
 
+    actual val keepsPartialAcrossSourceSwap: Boolean = false
+
     actual fun deletePartialFileNow(destinationFileName: String): Boolean =
         removePartialFile(destinationFileName)
 

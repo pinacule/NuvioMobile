@@ -88,6 +88,9 @@ internal actual object DownloadsPlatformDownloader {
         return true
     }
 
+    // transferAndroidDownload's expectedTotalBytes check.
+    actual val keepsPartialAcrossSourceSwap: Boolean = true
+
     actual fun deletePartialFileNow(destinationFileName: String): Boolean {
         val scheduler = downloadScheduler ?: return false
         val safeName = File(destinationFileName).name

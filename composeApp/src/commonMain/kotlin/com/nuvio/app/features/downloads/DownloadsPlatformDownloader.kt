@@ -42,6 +42,13 @@ internal expect object DownloadsPlatformDownloader {
      */
     fun deletePartialFileNow(destinationFileName: String): Boolean
 
+    /**
+     * True when a resumed transfer checks that the server's total size matches the size the
+     * partial was written for, restarting from zero on mismatch. Only then may a partial be kept
+     * across a swap to a freshly resolved URL (which could serve a different encode).
+     */
+    val keepsPartialAcrossSourceSwap: Boolean
+
     fun resolveLocalFileUri(localFileUri: String?, destinationFileName: String): String?
 
     fun openDownloadsDirectory(): Boolean

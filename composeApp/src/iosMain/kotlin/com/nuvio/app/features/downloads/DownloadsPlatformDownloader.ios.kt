@@ -170,6 +170,8 @@ internal actual object DownloadsPlatformDownloader {
         return removePathIfExists("$destinationPath.part")
     }
 
+    actual val keepsPartialAcrossSourceSwap: Boolean = false
+
     actual fun deletePartialFileNow(destinationFileName: String): Boolean =
         removePathIfExists("${downloadsDirectoryPath()}/$destinationFileName.part")
 
