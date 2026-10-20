@@ -23,11 +23,20 @@ internal val downloadHttpClient = OkHttpClient.Builder()
 
 internal class DownloadHttpException(val statusCode: Int) : IOException("Download failed: HTTP $statusCode")
 
+/**
+ * Downloads [item] into `<fileName>.part`, resuming an existing partial with a Range request.
+ *
+ * [expectedTotalBytes] is the size the partial was written against. When a resumed (206)
+ * response reports a different total, the partial belongs to a different file — e.g. a freshly
+ * resolved link that serves another encode — so the download restarts from zero instead of
+ * appending bytes across files. Unknown sizes on either side skip the check.
+ */
 internal suspend fun transferAndroidDownload(
     item: DownloadItem,
     directory: File,
     validator: String?,
     client: OkHttpClient = downloadHttpClient,
+    expectedTotalBytes: Long? = null,
     onHeaders: (totalBytes: Long?, validator: String?) -> Unit,
     onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
 ): File = coroutineScope {
@@ -67,6 +76,11 @@ internal suspend fun transferAndroidDownload(
                     val resumed = response.code == 206
                     if (resumed && (range == null || range.first != offset)) {
                         throw IOException("Server returned an invalid download range")
+                    }
+                    if (resumed && !restarted && isResumeSizeMismatch(expectedTotalBytes, range?.second)) {
+                        offset = 0L
+                        restarted = true
+                        return@use
                     }
                     val startingBytes = if (resumed) offset else 0L
                     val body = response.body ?: throw IOException("Download response is empty")
@@ -112,6 +126,11 @@ internal suspend fun transferAndroidDownload(
         activeCall.get()?.cancel()
     }
 }
+
+/** True when a resumed response's total size proves the partial was written for a different file. */
+internal fun isResumeSizeMismatch(expectedTotalBytes: Long?, resumedTotalBytes: Long?): Boolean =
+    expectedTotalBytes != null && expectedTotalBytes > 0L &&
+        resumedTotalBytes != null && resumedTotalBytes != expectedTotalBytes
 
 internal fun parseDownloadContentRange(value: String): Pair<Long, Long?>? {
     val match = Regex("bytes (\\d+)-(\\d+)/(\\d+|\\*)").matchEntire(value.trim()) ?: return null

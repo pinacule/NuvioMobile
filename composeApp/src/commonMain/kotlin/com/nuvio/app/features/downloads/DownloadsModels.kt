@@ -65,6 +65,8 @@ data class DownloadItem(
     val errorMessage: String? = null,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
+    /** When [sourceUrl] was last (re-)resolved; null means at creation ([createdAtEpochMs]). */
+    val sourceResolvedAtEpochMs: Long? = null,
 ) {
     val isEpisode: Boolean
         get() = seasonNumber != null && episodeNumber != null

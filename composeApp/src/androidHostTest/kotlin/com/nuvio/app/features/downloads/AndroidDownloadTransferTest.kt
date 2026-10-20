@@ -87,6 +87,58 @@ class AndroidDownloadTransferTest {
     }
 
     @Test
+    fun swappedLinkWithTheSameSizeResumesThePartial(): Unit = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 5-10/11")
+                .setBody(" world"))
+            val directory = temporary.newFolder()
+            File(directory, "video.mkv.part").writeText("hello")
+
+            // A freshly resolved link carries no validator; the size it reports
+            // must match the one the partial was written for.
+            val output = transferAndroidDownload(downloadItem(server.url("/fresh").toString()), directory,
+                null, expectedTotalBytes = 11L, onHeaders = { _, _ -> }, onProgress = { _, _ -> })
+
+            assertEquals("hello world", output.readText())
+            val request = server.takeRequest()
+            assertEquals("bytes=5-", request.getHeader("Range"))
+            assertNull(request.getHeader("If-Range"))
+            assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test
+    fun swappedLinkWithADifferentSizeRestartsFromZero(): Unit = runBlocking {
+        MockWebServer().use { server ->
+            // The fresh link serves another encode (13 bytes, not 11): appending
+            // to the old partial would splice two files together.
+            server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 5-12/13")
+                .setBody(" other!!"))
+            server.enqueue(MockResponse().setBody("other encode!"))
+            val directory = temporary.newFolder()
+            File(directory, "video.mkv.part").writeText("hello")
+            val totals = mutableListOf<Long?>()
+
+            val output = transferAndroidDownload(downloadItem(server.url("/fresh").toString()), directory,
+                null, expectedTotalBytes = 11L, onHeaders = { total, _ -> totals += total }, onProgress = { _, _ -> })
+
+            assertEquals("other encode!", output.readText())
+            assertEquals("bytes=5-", server.takeRequest().getHeader("Range"))
+            assertNull(server.takeRequest().getHeader("Range"))
+            assertEquals(listOf<Long?>(13L), totals)
+        }
+    }
+
+    @Test
+    fun resumeSizeCheckSkipsUnknownSizes() {
+        assertFalse(isResumeSizeMismatch(expectedTotalBytes = null, resumedTotalBytes = 13L))
+        assertFalse(isResumeSizeMismatch(expectedTotalBytes = 11L, resumedTotalBytes = null))
+        assertFalse(isResumeSizeMismatch(expectedTotalBytes = 0L, resumedTotalBytes = 13L))
+        assertFalse(isResumeSizeMismatch(expectedTotalBytes = 11L, resumedTotalBytes = 11L))
+        assertTrue(isResumeSizeMismatch(expectedTotalBytes = 11L, resumedTotalBytes = 13L))
+    }
+
+    @Test
     fun truncatedResponseNeverBecomesCompletedFile(): Unit = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("abcdefghij").setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))

@@ -1,8 +1,10 @@
 package com.nuvio.app.features.downloads
 
 import com.nuvio.app.features.addons.AddonRepository
+import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.streams.AdaptiveStreamPicker
+import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.streamResolution
 import kotlinx.coroutines.CancellationException
 
@@ -13,8 +15,37 @@ import kotlinx.coroutines.CancellationException
  */
 internal val STALE_HTTP_STATUS_CODES = setOf(403, 404, 410)
 
-/** How many times one download may swap in a freshly resolved URL before giving up. */
+/**
+ * How many times IN A ROW one download may swap in a freshly resolved URL without
+ * transferring any bytes in between before giving up (see [DownloadRecoveryBudget]).
+ */
 internal const val MAX_DOWNLOAD_SOURCE_REFRESHES = 2
+
+/**
+ * A queued HTTP link older than this is re-resolved when its transfer actually
+ * starts (season downloads resolve every episode at enqueue, so later episodes
+ * wait in the queue while their links age). Matches the debrid resolver's cache
+ * TTL: re-resolving a younger link would come back from that cache unchanged.
+ */
+internal const val DOWNLOAD_SOURCE_MAX_AGE_MS = 15L * 60L * 1000L
+
+/** When [DownloadItem.sourceUrl] was last resolved; items predating the field count from creation. */
+internal val DownloadItem.sourceResolvedAt: Long
+    get() = sourceResolvedAtEpochMs ?: createdAtEpochMs
+
+/** True when an HTTP item's link is old enough to re-resolve before transferring. */
+internal fun DownloadItem.hasAgedHttpSource(nowEpochMs: Long): Boolean =
+    sourceKind == DownloadSourceKind.Http && nowEpochMs - sourceResolvedAt >= DOWNLOAD_SOURCE_MAX_AGE_MS
+
+/**
+ * A stream that can become an HTTP download: one with a direct link already, or a
+ * debrid stream (client-resolved, or a torrent resolved with the user's debrid
+ * account) that [SeasonDownloads.resolvePlayable] turns into one — the same
+ * streams the enqueue path accepts.
+ */
+private fun StreamItem.isHttpDownloadCandidate(): Boolean =
+    (!isTorrentStream && playableDirectUrl?.trim()?.isSupportedDownloadUrl() == true) ||
+        DirectDebridPlaybackResolver.shouldResolveToPlayableStream(this)
 
 /**
  * Resolves a fresh HTTP source URL for [item] whose current
@@ -24,9 +55,9 @@ internal const val MAX_DOWNLOAD_SOURCE_REFRESHES = 2
  * the enqueue path uses ([SeasonDownloads.resolvePlayable]).
  *
  * Returns the item with the fresh URL, or null when no working link could be
- * found. Progress is intentionally not carried over: the new link may point at
- * a different encode, so callers must drop the partial file and restart from
- * zero rather than resuming bytes across files.
+ * found. The new link may point at a different encode: callers may keep the
+ * partial file only when the fresh link reports the same total size as the
+ * item's [DownloadItem.totalBytes], and must restart from zero otherwise.
  */
 internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem? {
     if (item.sourceKind != DownloadSourceKind.Http) return null
@@ -56,9 +87,7 @@ internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem
     val usable = candidates
         .flatMap { group -> group.streams.map { stream -> group to stream } }
         .filter { (_, stream) ->
-            !stream.isTorrentStream &&
-                stream.playableDirectUrl?.trim()?.isSupportedDownloadUrl() == true &&
-                stream.playableDirectUrl?.trim() != deadUrl
+            stream.isHttpDownloadCandidate() && stream.playableDirectUrl?.trim() != deadUrl
         }
     if (usable.isEmpty()) return null
     val qualities = EpisodeDownloadPlanner.distinctQualities(usable.map { it.second })
@@ -79,22 +108,66 @@ internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem
                 val freshUrl = resolved.playableDirectUrl?.trim()
                     ?.takeIf { it.isSupportedDownloadUrl() && it != deadUrl }
                     ?: continue
-                return item.copy(
-                    sourceUrl = freshUrl,
-                    sourceHeaders = sanitizeRequestHeaders(resolved.behaviorHints.proxyHeaders?.request),
-                    sourceResponseHeaders = sanitizeResponseHeaders(resolved.behaviorHints.proxyHeaders?.response),
-                    providerName = group.addonName,
-                    providerAddonId = group.addonId,
-                    streamTitle = resolved.streamLabel,
-                    streamSubtitle = resolved.streamSubtitle,
-                    sourceSubtitles = resolved.externalSubtitles,
-                    downloadQuality = quality,
-                )
+                return item.withFreshSource(group, resolved, freshUrl, quality)
             }
         }
     }
     return null
 }
+
+/**
+ * Re-resolves the SAME stream [item] was enqueued from (same addon, same release
+ * label) for a fresh URL, e.g. when a queued link aged while waiting for a slot.
+ * Unlike [refreshHttpDownloadSource] the current URL is not presumed dead: the
+ * result may carry the very same URL. Returns null when that stream is no longer
+ * offered or does not resolve; callers then keep the current URL.
+ */
+internal suspend fun reResolveHttpDownloadSource(item: DownloadItem): DownloadItem? {
+    if (item.sourceKind != DownloadSourceKind.Http) return null
+    val addonId = item.providerAddonId ?: return null
+    runCatching { AddonRepository.initialize() }
+    val candidates = try {
+        EpisodeDownloadPlanner.fetchAddonStreams(
+            contentType = item.contentType,
+            videoId = item.videoId,
+            preferredAddonId = addonId,
+        )
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (error: Exception) {
+        return null
+    }
+    for (group in candidates) {
+        if (group.addonId != addonId) continue
+        for (stream in group.streams) {
+            if (stream.streamLabel != item.streamTitle || stream.streamSubtitle != item.streamSubtitle) continue
+            if (!stream.isHttpDownloadCandidate()) continue
+            val resolved = SeasonDownloads.resolvePlayable(stream, item.seasonNumber ?: 0, item.episodeNumber)
+                ?: continue
+            val freshUrl = resolved.playableDirectUrl?.trim()?.takeIf { it.isSupportedDownloadUrl() } ?: continue
+            return item.withFreshSource(group, resolved, freshUrl, item.downloadQuality)
+        }
+    }
+    return null
+}
+
+private fun DownloadItem.withFreshSource(
+    group: AddonStreams,
+    resolved: StreamItem,
+    freshUrl: String,
+    quality: String?,
+): DownloadItem = copy(
+    sourceUrl = freshUrl,
+    sourceHeaders = sanitizeRequestHeaders(resolved.behaviorHints.proxyHeaders?.request),
+    sourceResponseHeaders = sanitizeResponseHeaders(resolved.behaviorHints.proxyHeaders?.response),
+    providerName = group.addonName,
+    providerAddonId = group.addonId,
+    streamTitle = resolved.streamLabel,
+    streamSubtitle = resolved.streamSubtitle,
+    sourceSubtitles = resolved.externalSubtitles,
+    downloadQuality = quality,
+    sourceResolvedAtEpochMs = DownloadsClock.nowEpochMs(),
+)
 
 /** [target] first (when offered), then the remaining qualities by closeness to it. */
 private fun orderQualitiesByCloseness(qualities: List<String>, target: String?): List<String> {

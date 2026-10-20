@@ -17,9 +17,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.downloads_torrent_missing_hash
@@ -56,70 +54,11 @@ private const val MAX_LOOPBACK_STREAM_REFRESHES = 2
  * split the bandwidth across every episode, so the rest wait in a queue.
  */
 private const val MAX_CONCURRENT_TORRENT_DOWNLOADS = 2
-internal val torrentDownloadSlots = Semaphore(MAX_CONCURRENT_TORRENT_DOWNLOADS)
+private val torrentSlots = OrderedDownloadSlots(MAX_CONCURRENT_TORRENT_DOWNLOADS)
+internal val torrentDownloadSlots: Semaphore get() = torrentSlots.permits
 
-/**
- * Hands out torrent download slots in series-episode order (E1 before E2, ...). Workers start in
- * whatever order WorkManager/JobScheduler runs them, so a bare semaphore would let a later
- * episode grab a free slot first; the ordered queue guarantees first-episode-first no matter the
- * arrival order.
- *
- * Entries are (item, token): the token identifies one acquire attempt — acquisition matches the
- * queue head by token identity, and a cancelled attempt removes exactly its own entry. The queue
- * is in-memory only; across a process restart workers re-insert themselves in episode order as
- * they arrive.
- */
-private val torrentSlotQueueMutex = Mutex()
-private val torrentSlotQueue = ArrayDeque<Pair<DownloadItem, Any>>()
-private const val TORRENT_SLOT_POLL_MS = 250L
-
-internal suspend fun acquireOrderedTorrentSlot(item: DownloadItem, token: Any) {
-    torrentSlotQueueMutex.withLock {
-        val queue = torrentSlotQueue
-        val index = queue.indexOfFirst { (queued, _) ->
-            downloadSeriesEpisodeComparator.compare(item, queued) < 0
-        }
-        if (index < 0) queue.addLast(item to token) else queue.add(index, item to token)
-    }
-    try {
-        while (true) {
-            val acquired = torrentSlotQueueMutex.withLock {
-                tryTakeTorrentSlotQueueHead(torrentSlotQueue, token, torrentDownloadSlots)
-            }
-            if (acquired) return
-            delay(TORRENT_SLOT_POLL_MS)
-        }
-    } catch (cancellation: CancellationException) {
-        // NonCancellable: this coroutine is already being torn down, so a plain withLock here
-        // could itself throw CancellationException under contention and leak the queue entry.
-        withContext(NonCancellable) {
-            torrentSlotQueueMutex.withLock {
-                torrentSlotQueue.removeAll { (_, queuedToken) -> queuedToken === token }
-            }
-        }
-        throw cancellation
-    }
-}
-
-/**
- * Takes a download slot for the attempt identified by [token] when — and only when — that
- * attempt's own entry heads [queue] and a slot permit is free; removes exactly that entry.
- * Matching by token identity rather than item id matters: the preload path can queue two
- * attempts for the same item id (pause cancels one attempt, resume starts another), and an
- * attempt that consumed the *other* attempt's head entry would leave its own entry behind as
- * a permanent phantom head blocking every later torrent download until process restart.
- * Callers must hold the queue mutex.
- */
-internal fun tryTakeTorrentSlotQueueHead(
-    queue: ArrayDeque<Pair<DownloadItem, Any>>,
-    token: Any,
-    slots: Semaphore,
-): Boolean {
-    if (queue.firstOrNull()?.second !== token) return false
-    if (!slots.tryAcquire()) return false
-    queue.removeFirst()
-    return true
-}
+/** Waits for a torrent download slot, handed out in series-episode order (see [OrderedDownloadSlots]). */
+internal suspend fun acquireOrderedTorrentSlot(item: DownloadItem, token: Any) = torrentSlots.acquire(item, token)
 
 /**
  * The engine's loopback server blocks a read until the pieces behind it are verified, so a slow swarm
@@ -133,36 +72,25 @@ internal val torrentDownloadHttpClient: OkHttpClient = downloadHttpClient.newBui
 internal class TorrentDownloadException(message: String) : Exception(message)
 
 /**
- * Budget for re-preparing a stale loopback stream during one torrent download run.
- *
- * The budget counts CONSECUTIVE refreshes without progress, not refreshes over the
- * whole run: each consumed refresh records the transferred-byte high-water mark at
- * that moment, and when a later attempt dies stale after transferring beyond that
- * mark, the count resets to zero before the refresh is consumed. A stream that
- * expires repeatedly at well-spaced points of a long download therefore never
- * burns out, while a stream that keeps dying at the same byte position exhausts
- * the budget after [maxConsecutiveRefreshes] refreshes, exactly like the old
- * lifetime cap did for back-to-back deaths.
+ * Budget for re-preparing a stale loopback stream during one torrent download run: a
+ * [DownloadRecoveryBudget] that counts CONSECUTIVE refreshes without progress, not refreshes
+ * over the whole run. A stream that expires repeatedly at well-spaced points of a long download
+ * therefore never burns out, while a stream that keeps dying at the same byte position exhausts
+ * the budget after [maxConsecutiveRefreshes] refreshes.
  */
 internal class StreamRefreshBudget(private val maxConsecutiveRefreshes: Int) {
-    var consecutiveRefreshes: Int = 0
-        private set
-    private var bytesAtLastRefresh: Long = 0L
+    private var budget = DownloadRecoveryBudget()
+
+    val consecutiveRefreshes: Int
+        get() = budget.consecutiveFailures
 
     /**
      * Records a stale-stream death at [transferredBytes] total bytes on disk and
      * returns true when a re-preparation may be consumed. A failed re-preparation
-     * still counts as consumed, mirroring the previous lifetime counter.
+     * still counts as consumed.
      */
     fun tryConsumeRefresh(transferredBytes: Long): Boolean {
-        if (transferredBytes > bytesAtLastRefresh) {
-            // Real progress since the last refresh: the deaths are spaced out,
-            // not a no-progress loop, so the budget starts over.
-            consecutiveRefreshes = 0
-        }
-        if (consecutiveRefreshes >= maxConsecutiveRefreshes) return false
-        consecutiveRefreshes++
-        bytesAtLastRefresh = transferredBytes
+        budget = budget.consume(transferredBytes, maxConsecutiveRefreshes) ?: return false
         return true
     }
 }
