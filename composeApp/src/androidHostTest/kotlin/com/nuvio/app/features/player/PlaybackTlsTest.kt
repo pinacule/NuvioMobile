@@ -93,4 +93,22 @@ class PlaybackTlsTest {
             "100.128.0.1", "2001:db8::1", "local.example.com", "lan.example.com", "999.1.1.1", "",
         ).forEach { assertFalse(isLocalNetworkHost(it), it) }
     }
+
+    @Test
+    fun trailingDotsAndCaseDoNotChangeTheVerdict() {
+        listOf("localhost.", "NAS.LOCAL", "Jellyfin").forEach { assertTrue(isLocalNetworkHost(it), it) }
+        assertFalse(isLocalNetworkHost("cdn.example.com."))
+    }
+
+    @Test
+    fun addressSpellingsAResolverReadsDifferentlyAreNeverLocal() {
+        listOf(
+            // inet_aton reads a leading-zero octet as octal: 010.0.0.1 is the public 8.0.0.1.
+            "010.0.0.1", "0127.0.0.1", "192.168.01.1", "010.0.0.1.",
+            // Dotless decimal and hex labels are whole addresses (both 8.8.8.8 here).
+            "134744072", "0x8080808", "0X8080808", "0x", "2130706433",
+            // Shortened dotted and IPv4-mapped forms are left to full verification.
+            "127.1", "10.1", "::ffff:127.0.0.1", "[::ffff:10.0.0.1]",
+        ).forEach { assertFalse(isLocalNetworkHost(it), it) }
+    }
 }

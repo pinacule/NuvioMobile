@@ -79,16 +79,25 @@ internal class LocalHostRelaxedTrustManager(private val delegate: X509TrustManag
 private val LOCAL_NAME_SUFFIXES = listOf(".local", ".lan", ".home.arpa", ".internal", ".localdomain")
 private val IPV4_LITERAL = Regex("""(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})""")
 
+/** Dotless labels that inet_aton-style parsers read as a whole address: `134744072`, `0x8080808`. */
+private val NUMERIC_LABEL = Regex("""\d+|0x\p{XDigit}*""")
+
 /**
  * True when [host] *names* a machine on the user's own network: loopback, a private, link-local
  * or CGNAT/overlay (e.g. Tailscale) IP literal, `localhost`, a single-label name, or a
  * conventional local suffix (.local, .lan, .home.arpa, .internal, .localdomain). Never resolves.
+ *
+ * Anything a resolver could read as a different address than this function does is not local:
+ * an octet with a leading zero (`010` is octal 8 to inet_aton, so `010.0.0.1` reaches 8.0.0.1),
+ * shortened dotted forms (`127.1`) and dotless numeric or hex labels all get full verification.
  */
 internal fun isLocalNetworkHost(host: String): Boolean {
     val name = host.trim().trimEnd('.').removePrefix("[").removeSuffix("]").lowercase()
     if (name.isEmpty()) return false
     IPV4_LITERAL.matchEntire(name)?.let { match ->
-        val octets = match.groupValues.drop(1).map { it.toInt() }
+        val groups = match.groupValues.drop(1)
+        if (groups.any { it.length > 1 && it.startsWith('0') }) return false
+        val octets = groups.map { it.toInt() }
         if (octets.any { it > 255 }) return false
         val (a, b) = octets
         return a == 127 || a == 10 ||
@@ -104,6 +113,6 @@ internal fun isLocalNetworkHost(host: String): Boolean {
             (firstGroup != null && (firstGroup and 0xffc0 == 0xfe80 || firstGroup and 0xfe00 == 0xfc00))
     }
     if (name == "localhost" || name.endsWith(".localhost")) return true
-    if ('.' !in name) return true
+    if ('.' !in name) return !NUMERIC_LABEL.matches(name)
     return LOCAL_NAME_SUFFIXES.any { name.endsWith(it) }
 }
