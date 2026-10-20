@@ -207,6 +207,86 @@ class AndroidDownloadTransferTest {
     }
 
     @Test
+    fun schedulerRetryBudgetSurvivesSpacedFailuresOfALongDownload() {
+        // A 1 GB transfer failing transiently every ~100 MB: far more failures
+        // than the cap in total, but never more than one in a row without
+        // progress, so the scheduler keeps retrying.
+        var transfer = AndroidDownloadTransfer(item = downloadItem(), jobId = 1, generation = "g")
+        for (failure in 1..10) {
+            val next = transfer.retryBudget.consume(failure * 100_000_000L, MAX_CONSECUTIVE_DOWNLOAD_RETRIES)
+            transfer = transfer.withRetryBudget(checkNotNull(next) { "failure $failure after progress must stay retryable" })
+        }
+        assertEquals(1, transfer.retryCount)
+        // The same transfer stuck at one byte position burns out after the cap.
+        repeat(MAX_CONSECUTIVE_DOWNLOAD_RETRIES - 1) {
+            transfer = transfer.withRetryBudget(
+                checkNotNull(transfer.retryBudget.consume(1_000_000_000L, MAX_CONSECUTIVE_DOWNLOAD_RETRIES)),
+            )
+        }
+        assertEquals(MAX_CONSECUTIVE_DOWNLOAD_RETRIES, transfer.retryCount)
+        assertNull(transfer.retryBudget.consume(1_000_000_000L, MAX_CONSECUTIVE_DOWNLOAD_RETRIES))
+    }
+
+    @Test
+    fun sourceRefreshBudgetIsReArmedByProgressAndPersistsItsMark() {
+        var transfer = AndroidDownloadTransfer(item = downloadItem(), jobId = 1, generation = "g")
+        repeat(5) { expiry ->
+            val next = transfer.sourceRefreshBudget.consume((expiry + 1) * 200L, MAX_DOWNLOAD_SOURCE_REFRESHES)
+            transfer = transfer.withSourceRefreshBudget(checkNotNull(next))
+        }
+        assertEquals(1, transfer.sourceRefreshCount)
+        assertEquals(1_000L, transfer.sourceRefreshProgressMark)
+        // A fresh link that dies again before moving a byte uses the second
+        // refresh; a third death in place is terminal.
+        transfer = transfer.withSourceRefreshBudget(
+            checkNotNull(transfer.sourceRefreshBudget.consume(1_000L, MAX_DOWNLOAD_SOURCE_REFRESHES)),
+        )
+        assertNull(transfer.sourceRefreshBudget.consume(1_000L, MAX_DOWNLOAD_SOURCE_REFRESHES))
+    }
+
+    @Test
+    fun failureReportedToTheRepositoryIsTheRawError() {
+        // The scheduler parks the humanized text on the item for the UI; the
+        // repository must get the raw one, or its transient-torrent retry
+        // (which matches "HTTP 404") can never fire on Android.
+        val failed = AndroidDownloadTransfer(
+            item = downloadItem().copy(
+                sourceKind = DownloadSourceKind.Torrent,
+                status = DownloadStatus.Failed,
+                errorMessage = "Download failed: the stream link expired",
+            ),
+            jobId = 1,
+            generation = "g",
+            failureDetail = DownloadHttpException(404).message,
+        )
+        assertEquals("Download failed: HTTP 404", failed.failureCallbackMessage)
+        assertTrue(isTransientTorrentFailureMessage(failed.failureCallbackMessage))
+        assertFalse(isTransientTorrentFailureMessage(checkNotNull(failed.item.errorMessage)))
+    }
+
+    @Test
+    fun failureReportFallsBackToTheItemTextForRecordsWithoutDetail() {
+        val failed = AndroidDownloadTransfer(
+            item = downloadItem().copy(status = DownloadStatus.Failed, errorMessage = "Disk full"),
+            jobId = 1,
+            generation = "g",
+        )
+        assertEquals("Disk full", failed.failureCallbackMessage)
+        assertEquals(
+            "Download failed",
+            failed.copy(item = failed.item.copy(errorMessage = null)).failureCallbackMessage,
+        )
+    }
+
+    @Test
+    fun retryClassificationIsIndependentOfTheBudget() {
+        assertTrue(isRetryableAndroidDownloadError(IOException("connection lost"), isTorrent = false))
+        assertTrue(isRetryableAndroidDownloadError(DownloadHttpException(404), isTorrent = true))
+        assertFalse(isRetryableAndroidDownloadError(DownloadHttpException(404), isTorrent = false))
+        assertFalse(isRetryableAndroidDownloadError(IllegalStateException("bad"), isTorrent = false))
+    }
+
+    @Test
     fun retryPolicyDistinguishesTransientAndPermanentFailures() {
         assertTrue(shouldRetryAndroidDownload(IOException("connection lost"), 0, isTorrent = false))
         assertTrue(shouldRetryAndroidDownload(DownloadHttpException(503), 0, isTorrent = false))

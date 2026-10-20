@@ -22,6 +22,14 @@ class TransientTorrentFailureMessageTest {
     }
 
     @Test
+    fun humanizedTextIsNotAStaleLinkSignal() {
+        // What the Android scheduler parks on a failed item. It carries no HTTP
+        // code, so the platform must report the raw error ("HTTP 404") to the
+        // repository instead (AndroidDownloadTransfer.failureCallbackMessage).
+        assertFalse(isTransientTorrentFailureMessage("Download failed: the stream link expired"))
+    }
+
+    @Test
     fun otherFailuresAreNotTransient() {
         assertFalse(isTransientTorrentFailureMessage("Download failed: HTTP 401"))
         assertFalse(isTransientTorrentFailureMessage("Download failed: HTTP 500"))

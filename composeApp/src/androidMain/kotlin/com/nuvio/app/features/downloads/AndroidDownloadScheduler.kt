@@ -194,14 +194,22 @@ internal class AndroidDownloadScheduler(val context: Context) {
                     onHeaders = onHeaders,
                     onProgress = onBytes,
                 )
-                else -> transferAndroidDownload(
-                    item = transfer.item,
-                    directory = directory,
-                    validator = transfer.validator,
-                    client = client,
-                    onHeaders = onHeaders,
-                    onProgress = onBytes,
-                )
+                else -> httpDownloadSlots.withSlot(transfer.item) {
+                    // The transfer actually starts only now: a link that aged while
+                    // the item waited in the queue is re-resolved first.
+                    val current = refreshAgedHttpSource(transfer) ?: return@withLock false
+                    transferAndroidDownload(
+                        item = current.item,
+                        directory = directory,
+                        validator = current.validator,
+                        client = client,
+                        // A swapped-in link carries no validator: the partial is kept
+                        // only while the new link reports the size it was written for.
+                        expectedTotalBytes = current.item.totalBytes,
+                        onHeaders = onHeaders,
+                        onProgress = onBytes,
+                    )
+                }
             }
             currentCoroutineContext().ensureActive()
             updateActive(transfer) { current ->
@@ -223,32 +231,32 @@ internal class AndroidDownloadScheduler(val context: Context) {
         } catch (error: Exception) {
             currentCoroutineContext().ensureActive()
             if (!isActive(transfer)) return@withLock false
+            // The record may have changed since this run started (a link swapped
+            // in at start): the refresh must exclude the URL that actually died.
+            val latest = store.get(fileName)?.takeIf { it.generation == transfer.generation } ?: transfer
+            // Every budget below counts failures in a row without progress: bytes
+            // on disk past a layer's last failure re-arm that layer.
+            val transferredBytes = File(directory, "$fileName.part").length()
+            val refreshBudget = latest.sourceRefreshBudget.consume(transferredBytes, MAX_DOWNLOAD_SOURCE_REFRESHES)
             if (error is DownloadHttpException &&
                 error.statusCode in STALE_HTTP_STATUS_CODES &&
-                transfer.item.sourceKind == DownloadSourceKind.Http &&
-                transfer.sourceRefreshCount < MAX_DOWNLOAD_SOURCE_REFRESHES
+                latest.item.sourceKind == DownloadSourceKind.Http &&
+                refreshBudget != null
             ) {
                 // The link itself is dead (expired addon/debrid URL): resolve a
                 // fresh one and retry with it instead of failing. Never retry
                 // the same dead URL verbatim.
                 val refreshed = try {
-                    refreshHttpDownloadSource(transfer.item)
+                    refreshHttpDownloadSource(latest.item)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (refreshError: Exception) {
                     null
                 }
-                if (refreshed != null && refreshed.sourceUrl != transfer.item.sourceUrl) {
-                    // The new link may point at a different encode: drop the
-                    // partial and restart from zero rather than resuming bytes
-                    // across files.
-                    File(directory, "${transfer.item.fileName}.part").delete()
-                    val swapped = refreshed.copy(
-                        status = DownloadStatus.Downloading,
-                        downloadedBytes = 0L,
-                        totalBytes = null,
-                        errorMessage = null,
-                    )
+                if (refreshed != null && refreshed.sourceUrl != latest.item.sourceUrl) {
+                    // The partial is kept: the next run Range-resumes against the
+                    // fresh link and restarts from zero only when that link reports
+                    // a different size (another encode; see expectedTotalBytes).
                     // updateActive hands the transfer back unchanged when it
                     // stopped being Downloading mid-refresh (user
                     // paused/cancelled): only propagate the new URL when the
@@ -257,23 +265,34 @@ internal class AndroidDownloadScheduler(val context: Context) {
                     // transfer stays paused.
                     val applied = updateActive(transfer) {
                         it.copy(
-                            item = swapped,
+                            item = refreshed.copy(
+                                status = DownloadStatus.Downloading,
+                                downloadedBytes = it.item.downloadedBytes,
+                                totalBytes = it.item.totalBytes,
+                                errorMessage = null,
+                            ),
                             validator = null,
-                            sourceRefreshCount = it.sourceRefreshCount + 1,
                             retryCount = 0,
-                        )
+                        ).withSourceRefreshBudget(refreshBudget)
                     }
-                    if (applied?.item?.sourceUrl != refreshed.sourceUrl) return@withLock false
+                    if (applied == null || !isActive(transfer) || applied.item.sourceUrl != refreshed.sourceUrl) {
+                        return@withLock false
+                    }
                     // The repository owns the UI/pause-resume copy of the item:
                     // it must see the new URL too, or a later resume would
                     // restart the old dead link.
-                    DownloadsRepository.refreshItemSource(swapped)
+                    DownloadsRepository.refreshItemSource(applied.item)
                     return@withLock true
                 }
             }
-            val retry = shouldRetryAndroidDownload(error, transfer.retryCount, isTorrent = torrent)
-            if (retry) updateActive(transfer) { it.copy(retryCount = it.retryCount + 1) }
-            else fail(transfer, error)
+            var retry = false
+            if (isRetryableAndroidDownloadError(error, isTorrent = torrent)) {
+                updateActive(transfer) { current ->
+                    val next = current.retryBudget.consume(transferredBytes, MAX_CONSECUTIVE_DOWNLOAD_RETRIES)
+                    if (next == null) current else current.withRetryBudget(next).also { retry = true }
+                }
+            }
+            if (!retry) fail(transfer, error)
             retry
         } finally {
             if (client !== downloadHttpClient) {
@@ -282,13 +301,54 @@ internal class AndroidDownloadScheduler(val context: Context) {
         }
     }
 
+    /**
+     * Re-resolves an HTTP item's link before its transfer starts when the link is
+     * older than [DOWNLOAD_SOURCE_MAX_AGE_MS] (it waited in the queue, or the
+     * download is resuming much later). Same stream, fresh URL; the partial stays,
+     * guarded by the size check in [transferAndroidDownload]. When nothing
+     * resolves, the current link is kept — if it is dead, the stale-link refresh
+     * handles it. Returns the record to transfer with, or null when the transfer
+     * stopped being active meanwhile.
+     */
+    private suspend fun refreshAgedHttpSource(transfer: AndroidDownloadTransfer): AndroidDownloadTransfer? {
+        val current = store.get(transfer.item.fileName)
+            ?.takeIf { it.generation == transfer.generation && it.item.status == DownloadStatus.Downloading }
+            ?: return null
+        if (!current.item.hasAgedHttpSource(System.currentTimeMillis())) return current
+        val fresh = try {
+            reResolveHttpDownloadSource(current.item)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            null
+        } ?: return current
+        val applied = updateActive(transfer) {
+            it.copy(
+                item = fresh.copy(
+                    status = it.item.status,
+                    downloadedBytes = it.item.downloadedBytes,
+                    totalBytes = it.item.totalBytes,
+                    errorMessage = null,
+                ),
+                // Never send the old link's If-Range validator to a different URL.
+                validator = if (fresh.sourceUrl == it.item.sourceUrl) it.validator else null,
+            )
+        }
+        if (!isActive(transfer) || applied == null) return null
+        DownloadsRepository.refreshItemSource(applied.item)
+        return applied
+    }
+
     fun isActive(transfer: AndroidDownloadTransfer): Boolean = store.get(transfer.item.fileName)?.let {
         it.generation == transfer.generation && it.item.status == DownloadStatus.Downloading
     } == true
 
     fun fail(transfer: AndroidDownloadTransfer, error: Exception) {
         updateActive(transfer) {
-            it.copy(item = it.item.copy(status = DownloadStatus.Failed, errorMessage = humanDownloadError(error)))
+            it.copy(
+                item = it.item.copy(status = DownloadStatus.Failed, errorMessage = humanDownloadError(error)),
+                failureDetail = error.message,
+            )
         }
     }
 
@@ -330,19 +390,34 @@ internal class AndroidDownloadScheduler(val context: Context) {
     }
 }
 
+/**
+ * Scheduler retries allowed IN A ROW without progress (see [DownloadRecoveryBudget]): a long
+ * download that keeps advancing between failures is never failed for its total failure count.
+ */
+internal const val MAX_CONSECUTIVE_DOWNLOAD_RETRIES = 4
+
+/**
+ * At most [MAX_CONCURRENT_HTTP_DOWNLOADS] HTTP downloads transfer at once; a queued season would
+ * otherwise split the bandwidth across every episode and age every link at the same time.
+ */
+private const val MAX_CONCURRENT_HTTP_DOWNLOADS = 3
+private val httpDownloadSlots = OrderedDownloadSlots(MAX_CONCURRENT_HTTP_DOWNLOADS)
+
 internal fun shouldRetryAndroidDownload(error: Exception, retries: Int, isTorrent: Boolean): Boolean =
-    retries < 4 && when {
-        error.isStreamPreparationFailure() -> true
-        error is DownloadHttpException ->
-            error.statusCode == 408 || error.statusCode == 429 || error.statusCode in 500..599 ||
-                // A stale link (403/404/410) is only worth retrying for torrents:
-                // the retry re-enters execute(), which prepares a FRESH loopback
-                // stream through the engine. An HTTP retry would hit the same
-                // dead URL again (the source-refresh path above handles those).
-                (isTorrent && error.statusCode in STALE_HTTP_STATUS_CODES)
-        error is IOException -> true
-        else -> false
-    }
+    retries < MAX_CONSECUTIVE_DOWNLOAD_RETRIES && isRetryableAndroidDownloadError(error, isTorrent)
+
+internal fun isRetryableAndroidDownloadError(error: Exception, isTorrent: Boolean): Boolean = when {
+    error.isStreamPreparationFailure() -> true
+    error is DownloadHttpException ->
+        error.statusCode == 408 || error.statusCode == 429 || error.statusCode in 500..599 ||
+            // A stale link (403/404/410) is only worth retrying for torrents:
+            // the retry re-enters execute(), which prepares a FRESH loopback
+            // stream through the engine. An HTTP retry would hit the same
+            // dead URL again (the source-refresh path above handles those).
+            (isTorrent && error.statusCode in STALE_HTTP_STATUS_CODES)
+    error is IOException -> true
+    else -> false
+}
 
 /**
  * The native engine rejects a second concurrent stream preparation with

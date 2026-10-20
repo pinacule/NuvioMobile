@@ -58,7 +58,9 @@ internal actual object DownloadsPlatformDownloader {
                     when (item.status) {
                         DownloadStatus.Downloading -> onProgress(item.downloadedBytes, item.totalBytes)
                         DownloadStatus.Completed -> onSuccess(checkNotNull(item.localFileUri), item.totalBytes)
-                        DownloadStatus.Failed -> onFailure(item.errorMessage ?: "Download failed")
+                        // The raw error, not the humanized item text: the repository's
+                        // transient-failure retry recognizes "HTTP 404", not "link expired".
+                        DownloadStatus.Failed -> onFailure(current.failureCallbackMessage)
                         DownloadStatus.Paused -> onPaused()
                     }
                     item.status == DownloadStatus.Downloading
