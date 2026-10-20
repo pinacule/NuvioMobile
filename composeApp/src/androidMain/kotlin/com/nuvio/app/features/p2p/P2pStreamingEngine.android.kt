@@ -134,6 +134,16 @@ actual object P2pStreamingEngine {
     private var currentTorrentLease: NuvioEngineHost.TorrentLease? = null
     @Volatile
     private var engine: NuvioEngine? = null
+
+    /**
+     * True while this session holds its single [PLAYBACK_OWNER] lease on
+     * [NuvioEngineHost]. The host counts holds per owner (R-8), but playback is
+     * a session, not a counted lease: [ensureEngine] runs on every start and
+     * cache clear while [releasePlaybackEngine] runs once per shutdown, so
+     * re-acquires are balanced immediately to keep the net hold at one.
+     */
+    @Volatile
+    private var playbackEngineLeaseHeld = false
     private var diagnosticRequestSequence = 0L
 
     fun initialize(context: Context) {
@@ -480,7 +490,15 @@ actual object P2pStreamingEngine {
 
     private suspend fun ensureEngine(): NuvioEngine {
         val startedAtMs = SystemClock.elapsedRealtime()
+        // Still acquire on every call so the host's reconfigure check runs
+        // exactly as before; when this session already holds its lease, balance
+        // the extra hold straight away (see playbackEngineLeaseHeld).
+        val alreadyHeld = playbackEngineLeaseHeld
         val acquired = NuvioEngineHost.acquireEngine(PLAYBACK_OWNER)
+        if (alreadyHeld) {
+            NuvioEngineHost.releaseEngine(PLAYBACK_OWNER)
+        }
+        playbackEngineLeaseHeld = true
         if (engine !== acquired) {
             engine = acquired
             observeEngineEvents(acquired)
@@ -498,6 +516,7 @@ actual object P2pStreamingEngine {
         engineEventsJob?.cancel()
         engineEventsJob = null
         engine = null
+        playbackEngineLeaseHeld = false
         NuvioEngineHost.releaseEngine(PLAYBACK_OWNER)
         Log.i(
             DIAGNOSTIC_TAG,

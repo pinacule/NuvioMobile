@@ -73,21 +73,47 @@ class StreamDubDisplaySortTest {
     }
 
     // M-S6: embedded groups go through sortedDubFirstForDisplay.
+    // R-15: that step is a stable English-first partition only (the same
+    // final step as the regular path), NOT the full grouped sort it used
+    // to apply — the meta addon's own order survives inside each tier.
 
     @Test
-    fun embeddedGroup_prefOn_sortedDubFirst() {
-        val jpWellSeeded = stream("Show S01E01 1080p", seeders = 900)
-        val enPoorlySeeded = englishDub("Show S01E01 1080p", seeders = 10)
-        val jpMid = stream("Show S01E01 720p", seeders = 100)
+    fun embeddedGroup_prefOn_partitionPreservesMetaOrderWithinLanguageTiers() {
+        // Meta order deliberately disagrees with seeder order inside both
+        // tiers: the old full sort would have emitted enWellSeeded before
+        // enPoorlySeeded and jpWellSeeded before jpPoorlySeeded.
+        val jpPoorlySeeded = stream("Show S01E01 1080p A", seeders = 100)
+        val enPoorlySeeded = englishDub("Show S01E01 1080p A", seeders = 10)
+        val jpWellSeeded = stream("Show S01E01 1080p B", seeders = 900)
+        val enWellSeeded = englishDub("Show S01E01 1080p B", seeders = 800)
         val group = AddonStreamGroup(
             addonName = "Embedded",
             addonId = "embedded",
-            streams = listOf(jpWellSeeded, enPoorlySeeded, jpMid),
+            streams = listOf(jpPoorlySeeded, enPoorlySeeded, jpWellSeeded, enWellSeeded),
         )
 
         val sorted = group.sortedDubFirstForDisplay(preferEnglishAudio = true)
 
-        assertEquals(listOf(enPoorlySeeded, jpWellSeeded, jpMid), sorted.streams)
+        assertEquals(
+            listOf(enPoorlySeeded, enWellSeeded, jpPoorlySeeded, jpWellSeeded),
+            sorted.streams,
+        )
+    }
+
+    @Test
+    fun embeddedGroup_prefOn_noEnglishStreams_groupReturnedUntouched() {
+        // A partition with an empty English side is the identity; the old
+        // full sort would still have re-sorted (and copied) the group.
+        val group = AddonStreamGroup(
+            addonName = "Embedded",
+            addonId = "embedded",
+            streams = listOf(
+                stream("Show S01E01 1080p", seeders = 10),
+                stream("Show S01E01 720p", seeders = 900),
+            ),
+        )
+
+        assertSame(group, group.sortedDubFirstForDisplay(preferEnglishAudio = true))
     }
 
     @Test

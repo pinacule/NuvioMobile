@@ -132,12 +132,19 @@ internal object EpisodeDownloadPlanner {
             .distinct()
             .sortedByDescending { qualityRank(it) }
 
-    /** Closest offered quality to [target] (exact match wins, ties prefer higher). */
+    /**
+     * Closest offered quality to [target] (exact match wins, ties prefer
+     * lower — the tie-break [AdaptiveStreamPicker] and [SeasonDownloads]
+     * use for their closest-quality fallbacks).
+     */
     fun closestQuality(available: List<String>, target: String): String? {
         if (available.isEmpty()) return null
         if (target in available) return target
         val targetRank = qualityRank(target)
-        return available.minByOrNull { kotlin.math.abs(qualityRank(it) - targetRank) }
+        return available.minWithOrNull(
+            compareBy<String> { kotlin.math.abs(qualityRank(it) - targetRank) }
+                .thenBy { qualityRank(it) },
+        )
     }
 
     /**
@@ -150,6 +157,13 @@ internal object EpisodeDownloadPlanner {
      * the dub closest to the target quality. Only when no dub exists anywhere
      * does the pick fall back to the best stream at [quality]: English-audio
      * first, then torrent, then best-seeded. Addon ordering breaks ties.
+     *
+     * Last resort, mirroring [SeasonDownloads.pickMatchingEpisodeStream]:
+     * when NO candidate's resolution parses, no quality can be resolved at
+     * all, so all candidates form the pool (ranked as above) instead of
+     * reporting "no streams" for an episode the season path would download
+     * from its own unparseable pool. When some other quality IS parseable,
+     * the requested quality genuinely isn't offered and the pick stays null.
      */
     fun pickBestStreamAtQuality(
         streams: List<StreamItem>,
@@ -165,8 +179,12 @@ internal object EpisodeDownloadPlanner {
                 ).firstOrNull()
             }
         }
-        val pool = streams.filter { it.streamResolution() == quality }
-        if (pool.isEmpty()) return null
+        val exactPool = streams.filter { it.streamResolution() == quality }
+        val pool = when {
+            exactPool.isNotEmpty() -> exactPool
+            streams.none { it.streamResolution() != null } -> streams
+            else -> return null
+        }
         return pool.sortedWith(
             compareBy<StreamItem> { if (preferEnglishAudio && AdaptiveStreamPicker.hasEnglishAudio(it)) 0 else 1 }
                 .thenByDescending { it.isTorrentStream }

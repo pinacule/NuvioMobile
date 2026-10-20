@@ -38,6 +38,8 @@ import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepositor
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import kotlin.concurrent.Volatile
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -81,6 +83,21 @@ object ProfileSettingsSync {
     @Volatile
     private var skipNextPushSignature: String? = null
 
+    /**
+     * Profiles with a local settings change that is known to not have reached the
+     * server (stranded by an interrupted pull or a failed compensating push),
+     * mapped to the account generation that recorded them. A pending push is
+     * retried before that profile's next pull — before the pull's whole-blob
+     * apply can overwrite the change — and cleared by any successful push of
+     * that profile's whole blob. The generation guard keeps markers recorded
+     * under a previous account from firing after an account switch.
+     */
+    private val pendingPushLock = SynchronizedObject()
+    private val pendingPushGenerations = mutableMapOf<Int, Int>()
+
+    @Volatile
+    private var accountSyncGeneration: Int = 0
+
     private var observeJob: Job? = null
 
     fun startObserving() {
@@ -95,8 +112,21 @@ object ProfileSettingsSync {
         observeJob?.cancel()
         observeJob = null
         skipNextPushSignature = null
+        accountSyncGeneration++
+        synchronized(pendingPushLock) { pendingPushGenerations.clear() }
         ProviderCredentialSync.clearAccountState()
         MediaServerSync.clearAccountState()
+    }
+
+    private fun markPendingPush(profileId: Int, generation: Int) {
+        synchronized(pendingPushLock) { pendingPushGenerations[profileId] = generation }
+    }
+
+    private fun hasPendingPush(profileId: Int, generation: Int): Boolean =
+        synchronized(pendingPushLock) { pendingPushGenerations[profileId] == generation }
+
+    private fun clearPendingPush(profileId: Int) {
+        synchronized(pendingPushLock) { pendingPushGenerations.remove(profileId) }
     }
 
     fun onProfileChanged() {
@@ -107,29 +137,49 @@ object ProfileSettingsSync {
 
     suspend fun pull(profileId: Int): Boolean {
         ensureRepositoriesLoaded()
+        val pullGeneration = accountSyncGeneration
         var pushLocalAfterPull = false
         val applied = syncMutex.withLock {
             if (ProfileRepository.activeProfileId != profileId) {
                 log.d { "pull(profileId=$profileId) — skipped because profile is no longer active" }
                 return@withLock false
             }
+            // A change stranded by an earlier interrupted pull of this profile is
+            // pushed before fetching: otherwise this pull's whole-blob apply
+            // could overwrite it before it ever reaches the server. Best-effort —
+            // on failure the marker stays and the pull proceeds (its RPC will
+            // most likely fail the same way and re-settle below).
+            if (hasPendingPush(profileId, pullGeneration)) {
+                pushProfileSettingsLocked(profileId)
+            }
+            var exit = ProfileSettingsPullExit.Failed
+            var preFetchLocalSignature: String? = null
+            var remoteSignature: String? = null
             isServerSyncInFlight = true
             try {
                 val localBlob = exportSettingsBlob()
-                if (ProfileRepository.activeProfileId != profileId) return@withLock false
+                if (ProfileRepository.activeProfileId != profileId) {
+                    exit = ProfileSettingsPullExit.ProfileSwitched
+                    return@withLock false
+                }
                 val localSignature = buildSignature(localBlob)
+                preFetchLocalSignature = localSignature
 
                 val params = buildJsonObject {
                     put("p_profile_id", profileId)
                     put("p_platform", MOBILE_SYNC_PLATFORM)
                 }
                 val result = SupabaseProvider.client.postgrest.rpc("sync_pull_profile_settings_blob", params)
-                if (ProfileRepository.activeProfileId != profileId) return@withLock false
+                if (ProfileRepository.activeProfileId != profileId) {
+                    exit = ProfileSettingsPullExit.ProfileSwitched
+                    return@withLock false
+                }
                 val response = result.decodeList<SettingsBlobResponse>().firstOrNull()
                 val remoteJson = response?.settingsJson
 
                 if (remoteJson == null) {
                     log.i { "pull(profileId=$profileId) — no remote settings blob found" }
+                    exit = ProfileSettingsPullExit.NoRemoteBlob
                     return@withLock false
                 }
 
@@ -137,69 +187,157 @@ object ProfileSettingsSync {
                     json.decodeFromJsonElement(MobileProfileSettingsBlob.serializer(), remoteJson)
                 }.getOrElse { error ->
                     log.e(error) { "pull(profileId=$profileId) — failed to decode remote settings blob" }
+                    exit = ProfileSettingsPullExit.UndecodableRemote
                     return@withLock false
                 }
-                val remoteSignature = buildSignature(remoteBlob)
+                val fetchedRemoteSignature = buildSignature(remoteBlob)
+                remoteSignature = fetchedRemoteSignature
 
                 // The user may have changed settings while the RPC was in flight.
                 // Re-read the current local signature before deciding: if it moved
                 // since the pre-fetch snapshot, the local change wins and the
                 // remote blob must not overwrite it.
-                if (ProfileRepository.activeProfileId != profileId) return@withLock false
+                if (ProfileRepository.activeProfileId != profileId) {
+                    exit = ProfileSettingsPullExit.ProfileSwitched
+                    return@withLock false
+                }
                 val postFetchLocalSignature = currentObservedStateSignature()
-                when (val decision = decideProfileSettingsPull(localSignature, postFetchLocalSignature, remoteSignature)) {
+                when (decideProfileSettingsPull(localSignature, postFetchLocalSignature, fetchedRemoteSignature)) {
                     ProfileSettingsPullDecision.SkipRemoteMatchesLocal -> {
                         log.d { "pull(profileId=$profileId) — remote matches local" }
+                        exit = ProfileSettingsPullExit.RemoteMatchedLocal
                         return@withLock false
                     }
                     ProfileSettingsPullDecision.SkipLocalChangedDuringPull -> {
                         log.i { "pull(profileId=$profileId) — local settings changed during pull; keeping local state" }
-                        pushLocalAfterPull = shouldPushLocalAfterPull(decision, postFetchLocalSignature, remoteSignature)
+                        exit = ProfileSettingsPullExit.LocalChangedDuringPull
                         return@withLock false
                     }
                     ProfileSettingsPullDecision.ApplyRemote -> Unit
                 }
 
-                if (ProfileRepository.activeProfileId != profileId) return@withLock false
+                if (ProfileRepository.activeProfileId != profileId) {
+                    exit = ProfileSettingsPullExit.ProfileSwitched
+                    return@withLock false
+                }
                 isApplyingRemoteBlob = true
                 try {
                     applyRemoteBlob(remoteBlob)
-                    skipNextPushSignature = currentObservedStateSignature()
+                    // Only absorb the applied state into the push-skip signature
+                    // when what landed locally is exactly the applied blob. If a
+                    // local change slipped in during the apply, the post-apply
+                    // signature diverges from the remote signature; leaving the
+                    // skip unset lets the exit settle below treat the divergence
+                    // as a local change (push/pending) instead of masking it, and
+                    // keeps the observer able to re-fire for that signature.
+                    val postApplySignature = currentObservedStateSignature()
+                    if (postApplySignature == fetchedRemoteSignature) {
+                        skipNextPushSignature = postApplySignature
+                    }
                 } finally {
                     isApplyingRemoteBlob = false
                 }
 
                 log.i { "pull(profileId=$profileId) — applied remote settings blob" }
+                exit = ProfileSettingsPullExit.AppliedRemote
                 true
             } catch (error: Exception) {
                 log.e(error) { "pull(profileId=$profileId) — FAILED" }
                 false
             } finally {
                 isServerSyncInFlight = false
+                // Unified exit discipline: EVERY exit (not just the decision
+                // path) settles the fate of a possible in-flight local change
+                // before returning, comparing the pulled profile's current
+                // local signature against the pre-fetch snapshot. A change is
+                // either pushed (bound to this profile) or recorded as a
+                // pending push — never silently stranded for the next pull's
+                // whole-blob apply to overwrite.
+                val stillActive = ProfileRepository.activeProfileId == profileId
+                val exitLocalSignature = if (stillActive) {
+                    runCatching { currentObservedStateSignature() }.getOrNull()
+                } else {
+                    null
+                }
+                when (
+                    decideProfileSettingsPullExitAction(
+                        exit = exit,
+                        // An unreadable local state is treated like an inactive
+                        // profile: no comparison is possible, so the change is
+                        // recorded as pending instead of being judged settled.
+                        pulledProfileStillActive = stillActive && exitLocalSignature != null,
+                        preFetchLocalSignature = preFetchLocalSignature,
+                        exitLocalSignature = exitLocalSignature,
+                        remoteSignature = remoteSignature,
+                        appliedRemoteSignature = if (exit == ProfileSettingsPullExit.AppliedRemote) {
+                            remoteSignature
+                        } else {
+                            null
+                        },
+                    )
+                ) {
+                    ProfileSettingsPullExitAction.PushLocalNow -> {
+                        // Record the pending push before attempting it: if the
+                        // push below fails, the marker is what retries it.
+                        markPendingPush(profileId, pullGeneration)
+                        pushLocalAfterPull = true
+                    }
+                    ProfileSettingsPullExitAction.MarkPendingPush ->
+                        markPendingPush(profileId, pullGeneration)
+                    ProfileSettingsPullExitAction.None -> Unit
+                }
             }
         }
         if (pushLocalAfterPull) {
             // The local-change observer drops events while a sync is in flight, so a
             // change made during the pull may never re-fire it. Push the winning
-            // local state explicitly once the sync lock has been released.
-            scope.launch { pushCurrentProfileToRemote() }
+            // local state explicitly once the sync lock has been released. The push
+            // is bound to the pulled profile: if that profile is no longer active
+            // it is skipped (its blob cannot be exported) and the pending marker
+            // retries it before that profile's next pull.
+            scope.launch { pushProfileSettingsToRemote(profileId) }
         }
         return applied
     }
 
-    suspend fun pushCurrentProfileToRemote(): Boolean {
+    suspend fun pushCurrentProfileToRemote(): Boolean =
+        pushProfileSettingsToRemote(ProfileRepository.activeProfileId)
+
+    /**
+     * Pushes [profileId]'s current local settings blob to the server. The settings
+     * export machinery is scoped to the active profile, so for a non-active
+     * profile this records (or keeps) a pending push and returns false instead of
+     * pushing whatever profile happens to be active.
+     */
+    suspend fun pushProfileSettingsToRemote(profileId: Int): Boolean {
         ensureRepositoriesLoaded()
-        return syncMutex.withLock {
-            runCatching {
-                val profileId = ProfileRepository.activeProfileId
-                val blob = exportSettingsBlob()
-                if (ProfileRepository.activeProfileId != profileId) return@runCatching false
-                pushToRemoteLocked(profileId, blob)
-                true
-            }.onFailure { error ->
-                log.e(error) { "pushCurrentProfileToRemote() — FAILED" }
-            }.getOrDefault(false)
+        return syncMutex.withLock { pushProfileSettingsLocked(profileId) != null }
+    }
+
+    /**
+     * Caller must hold [syncMutex]. Returns the pushed state's signature on
+     * success, or null when the profile is not active or the push failed (in
+     * which case any pending-push marker for the profile is kept).
+     */
+    private suspend fun pushProfileSettingsLocked(profileId: Int): String? {
+        if (ProfileRepository.activeProfileId != profileId) {
+            log.d { "pushProfileSettingsToRemote(profileId=$profileId) — skipped because profile is not active" }
+            return null
         }
+        return runCatching {
+            val blob = exportSettingsBlob()
+            if (ProfileRepository.activeProfileId != profileId) return@runCatching null
+            val signature = buildSignature(blob)
+            pushToRemoteLocked(profileId, blob)
+            // The whole blob — including any previously stranded change — is now
+            // on the server, so the pending marker for this profile is satisfied.
+            clearPendingPush(profileId)
+            // Suppress the observer echoing the exact state just pushed.
+            skipNextPushSignature = signature
+            signature
+        }.onFailure { error ->
+            log.e(error) { "pushProfileSettingsToRemote(profileId=$profileId) — FAILED" }
+        }.getOrNull()
     }
 
     @OptIn(FlowPreview::class)

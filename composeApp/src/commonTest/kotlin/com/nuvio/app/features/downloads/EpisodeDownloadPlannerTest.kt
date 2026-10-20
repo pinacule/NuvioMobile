@@ -142,6 +142,40 @@ class EpisodeDownloadPlannerTest {
     }
 
     @Test
+    fun closestQualityTiePrefersLower() {
+        // Equidistant tiers: the lower one wins whatever the input order —
+        // the tie-break AdaptiveStreamPicker and SeasonDownloads use.
+        assertEquals("720p", EpisodeDownloadPlanner.closestQuality(listOf("1440p", "720p"), "1080p"))
+        assertEquals("720p", EpisodeDownloadPlanner.closestQuality(listOf("720p", "1440p"), "1080p"))
+    }
+
+    @Test
+    fun bestStreamAtQualityFallsBackToUnparseablePool() {
+        // No candidate carries a resolution token: the episode still has
+        // streams, so the planner ranks all of them (torrent first)
+        // instead of reporting none — mirroring SeasonDownloads' own
+        // unparseable last-resort pool.
+        val torrent = stream("Show S01E01 WEB x265")
+        val http = stream("Show S01E01 HDTV", torrent = false)
+        assertEquals(torrent, EpisodeDownloadPlanner.pickBestStreamAtQuality(listOf(http, torrent), "720p"))
+        assertEquals(
+            torrent,
+            EpisodeDownloadPlanner.pickBestStreamAtQuality(
+                listOf(http, torrent), "720p", preferEnglishAudio = true,
+            ),
+        )
+    }
+
+    @Test
+    fun bestStreamAtQualityUnparseableFallbackNeedsNoParseableTier() {
+        // A parseable tier exists (just not the requested one): the pick
+        // stays null — the fallback is only for when no quality resolves.
+        val parseable = stream("Show S01E01 720p")
+        val unparseable = stream("Show S01E01 WEB")
+        assertNull(EpisodeDownloadPlanner.pickBestStreamAtQuality(listOf(parseable, unparseable), "1080p"))
+    }
+
+    @Test
     fun bestStreamAtQualityPrefersTorrents() {
         val http = stream("Show 720p", torrent = false)
         val torrent = stream("Show 720p WEB", torrent = true)

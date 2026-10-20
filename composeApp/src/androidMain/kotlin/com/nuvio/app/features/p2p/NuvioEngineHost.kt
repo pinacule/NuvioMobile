@@ -99,7 +99,7 @@ internal object NuvioEngineHost {
     private var configurationKey: ConfigurationKey? = null
     private var engineEventsJob: Job? = null
     private var idleShutdownJob: Job? = null
-    private val engineOwners = mutableSetOf<String>()
+    private val engineOwners = EngineOwnerRefCounts()
     /**
      * In-memory dedup of magnets added to the *current* engine, keyed by canonical infohash.
      * This is intentionally not persisted: it is only valid for the running engine instance.
@@ -120,7 +120,7 @@ internal object NuvioEngineHost {
     }
 
     fun hasOwnersOtherThan(owner: String): Boolean =
-        synchronized(stateLock) { (engineOwners - owner).isNotEmpty() }
+        synchronized(stateLock) { engineOwners.snapshot().any { it != owner } }
 
     /**
      * Like [hasOwnersOtherThan] but ignores warmup leases. A warmup lease must never block
@@ -129,7 +129,7 @@ internal object NuvioEngineHost {
      */
     fun hasNonWarmupOwnersOtherThan(owner: String): Boolean =
         synchronized(stateLock) {
-            engineOwners.any { it != owner && !it.startsWith(WARMUP_OWNER_PREFIX) }
+            engineOwners.snapshot().any { it != owner && !it.startsWith(WARMUP_OWNER_PREFIX) }
         }
 
     fun isTorrentKnown(infoHash: String): Boolean =
@@ -180,8 +180,10 @@ internal object NuvioEngineHost {
         withContext(NonCancellable) {
             engineMutex.withLock {
                 val idleEngine = synchronized(stateLock) {
-                    if (!engineOwners.remove(owner)) return@withLock
-                    _owners.value = engineOwners.toSet()
+                    // Not the owner's last hold (or it held none): the lease
+                    // stays up, so there is nothing to idle out.
+                    if (!engineOwners.release(owner)) return@withLock
+                    _owners.value = engineOwners.snapshot()
                     engine.takeIf { engineOwners.isEmpty() }
                 } ?: return@withLock
                 idleShutdownJob?.cancel()
@@ -254,8 +256,8 @@ internal object NuvioEngineHost {
     }
 
     private fun addOwner(owner: String) = synchronized(stateLock) {
-        engineOwners += owner
-        _owners.value = engineOwners.toSet()
+        engineOwners.acquire(owner)
+        _owners.value = engineOwners.snapshot()
     }
 
     /**
@@ -339,6 +341,52 @@ internal object NuvioEngineHost {
             }
         }
     }
+}
+
+/**
+ * Reference counts for [NuvioEngineHost] owner leases (R-8).
+ *
+ * Two holders can lease the engine under the SAME owner key at once — a cancelled
+ * download/preload attempt still unwinding while its replacement already runs,
+ * overlapping metadata-prefetch runs, back-to-back warmup generations. A plain
+ * owner set counts such a key once, so the first holder's release dropped the
+ * lease under the second holder. Counting holds per key fixes that: an owner is
+ * only gone when its last hold is released.
+ *
+ * Not thread-safe on its own: [NuvioEngineHost] only touches it while holding
+ * its `stateLock`.
+ */
+internal class EngineOwnerRefCounts {
+    private val counts = mutableMapOf<String, Int>()
+
+    /** Records one more hold for [owner]. */
+    fun acquire(owner: String) {
+        counts[owner] = (counts[owner] ?: 0) + 1
+    }
+
+    /**
+     * Drops one hold for [owner]. Returns true when that was the owner's last
+     * hold (the owner no longer holds a lease); false when the owner held no
+     * lease at all, or still holds another one after this release.
+     */
+    fun release(owner: String): Boolean {
+        val count = counts[owner] ?: return false
+        return if (count <= 1) {
+            counts.remove(owner)
+            true
+        } else {
+            counts[owner] = count - 1
+            false
+        }
+    }
+
+    fun isEmpty(): Boolean = counts.isEmpty()
+
+    /** How many holds [owner] currently has (0 when it holds no lease). */
+    fun countOf(owner: String): Int = counts[owner] ?: 0
+
+    /** The owners currently holding at least one lease. */
+    fun snapshot(): Set<String> = counts.keys.toSet()
 }
 
 /**

@@ -342,8 +342,9 @@ internal fun pickMatchingEpisodeStream(
 /**
  * The fallback pool for [pickMatchingEpisodeStream]: the same-kind streams at the
  * template's resolution when any exist. When none do, the closest available quality
- * takes their place — nearest tier, at-or-below the template first, then above (the
- * ordering [AdaptiveStreamPicker.pickBestSeeded] uses for its quality fallback) — so
+ * takes their place: the tier with the smallest distance from the template's tier
+ * in [qualityTierRank], ties going to the lower tier — the same nearest-tier
+ * ordering [AdaptiveStreamPicker.pickBestSeeded] uses for its quality fallback — so
  * an episode that only exists at another quality is still downloaded instead of
  * landing in missingEpisodes. Streams whose resolution cannot be parsed are a last
  * resort, used only when no parseable candidate exists at any tier. A null

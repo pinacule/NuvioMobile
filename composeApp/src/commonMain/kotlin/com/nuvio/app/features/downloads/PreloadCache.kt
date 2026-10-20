@@ -167,6 +167,15 @@ internal object PreloadCacheFetcher {
     private var activeRequest: PreloadFetchRequest? = null
     private var pausedRequest: PreloadFetchRequest? = null
 
+    /**
+     * The most recently cancelled fetch job (R-9). Cancellation is not
+     * completion: a cancelled transfer can still be unwinding (NonCancellable
+     * cleanup, `.part` appends) after [cancelActive] returns. A replacement
+     * fetch joins this job before touching any file, so the two never run
+     * concurrently on the same `.part`.
+     */
+    private var cancelledFetchJob: Job? = null
+
     val hasActiveFetch: Boolean get() = fetchJob?.isActive == true
     val hasPausedFetch: Boolean get() = pausedRequest != null
 
@@ -181,8 +190,15 @@ internal object PreloadCacheFetcher {
         cancelActive()
         pausedRequest = null
         activeRequest = request
+        // Consume the superseded job (from a pause or a replaced fetch): the
+        // new fetch waits for its unwind before touching any file (R-9).
+        // start() itself stays non-blocking; the join happens inside the
+        // fetch coroutine.
+        val supersededFetch = cancelledFetchJob
+        cancelledFetchJob = null
         fetchJob = scope.launch {
             try {
+                supersededFetch?.join()
                 PreloadCache.evictAllExcept(request.exceptVideoId)
                 droppedPartials.forEach { PreloadCachePlatform.deletePartialFile(it) }
                 val uri = PreloadCachePlatform.fetchMedia(request.item, request.fileName)
@@ -235,7 +251,11 @@ internal object PreloadCacheFetcher {
     }
 
     private fun cancelActive() {
-        fetchJob?.cancel()
+        val job = fetchJob
+        if (job != null) {
+            job.cancel()
+            cancelledFetchJob = job
+        }
         fetchJob = null
         activeRequest = null
     }

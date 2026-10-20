@@ -923,6 +923,16 @@ internal fun StreamList(
         StreamBadgeSettingsRepository.ensureLoaded()
         StreamBadgeSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
+    val playerSettings by remember {
+        PlayerSettingsRepository.ensureLoaded()
+        PlayerSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    // Read here (not threaded from StreamsScreen) so every StreamList
+    // caller — mobile and tablet layouts alike — buckets sources the
+    // same way (R-7).
+    val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+        playerSettings.preferredAudioLanguage,
+    )
 
     CompositionLocalProvider(LocalStreamSizeLabelFormat provides formatStreamSize) {
     LazyColumn(
@@ -973,6 +983,7 @@ internal fun StreamList(
                     streamSection(
                         sectionKey = streamSectionRenderKey(groupIndex = groupIndex, group = group),
                         group = group,
+                        preferEnglishAudio = preferEnglishAudio,
                         showHeader = uiState.selectedFilter == null,
                         debridEnabled = debridEnabled,
                         appendInstantServiceToDefaultName = appendInstantServiceToDefaultName,
@@ -1004,6 +1015,7 @@ internal fun StreamList(
 private fun LazyListScope.streamSection(
     sectionKey: String,
     group: AddonStreamGroup,
+    preferEnglishAudio: Boolean,
     showHeader: Boolean,
     debridEnabled: Boolean,
     appendInstantServiceToDefaultName: Boolean,
@@ -1032,7 +1044,10 @@ private fun LazyListScope.streamSection(
     val streamsBySource = group.streams.groupBy { stream ->
         stream.sourceName?.takeIf { it.isNotBlank() } ?: stream.addonName
     }
-    val sortedSources = streamsBySource.keys.sortedBy { it.lowercase() }
+    // With the dub preference on, sources carrying an English dub render
+    // before sources without one (R-7); off, this is the legacy
+    // alphabetical bucket order.
+    val sortedSources = streamsBySource.sortedSourceBucketNames(preferEnglishAudio)
     val showSourceHeaders = sortedSources.size > 1
 
     sortedSources.forEachIndexed { sourceIndex, sourceName ->

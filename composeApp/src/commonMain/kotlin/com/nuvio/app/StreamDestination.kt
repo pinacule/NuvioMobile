@@ -22,6 +22,7 @@ import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.device.DataSaverRepository
 import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.features.streams.AdaptiveStreamPicker
+import com.nuvio.app.features.streams.BingeGroupCacheRepository
 import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlayPolicy
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
@@ -71,6 +72,29 @@ private data class PendingP2pStreamOpen(
     val forceInternal: Boolean,
     val isAutoPlay: Boolean,
 )
+
+/**
+ * Whether the adaptive auto-play pick (item 9) must stand down because a binge
+ * preference is genuinely in play for this launch: MANUAL mode, the user prefers
+ * binge groups, binge reuse is off, and a binge group was actually persisted for
+ * the launch's series. In that configuration the episode's sources list belongs
+ * to the binge flow, not to the binge-blind adaptive pick.
+ *
+ * With reuse on, this returns false on purpose: [StreamAutoPlayPolicy.isEffectivelyEnabled]
+ * already yields the pick and the repository's binge flow owns playback. Without
+ * a persisted group there is nothing binge-related to protect, so ordinary
+ * Play / Continue Watching keeps the item-9 behavior.
+ */
+internal fun adaptivePickStandsDownForBingeGroup(
+    mode: StreamAutoPlayMode,
+    preferBingeGroup: Boolean,
+    reuseBingeGroup: Boolean,
+    hasPersistedBingeGroup: Boolean,
+): Boolean =
+    mode == StreamAutoPlayMode.MANUAL &&
+        preferBingeGroup &&
+        !reuseBingeGroup &&
+        hasPersistedBingeGroup
 
 @Composable
 internal fun StreamDestination(
@@ -773,8 +797,10 @@ internal fun StreamDestination(
     // Adaptive auto-play pick (item 9). Runs once per stream route when the sources
     // list was bypassed: after loading finishes, pick the best stream for the current
     // network/battery/data-saver state and play it through the normal funnel.
-    // Yields to: manual selection, the stream-reuse flow, and the configured
-    // settings-based auto-play. Falls back to the list when nothing is pickable.
+    // Yields to: manual selection, the stream-reuse flow, the configured
+    // settings-based auto-play, and a persisted binge group when the binge
+    // preference is on but reuse is off. Falls back to the list when nothing
+    // is pickable.
     LaunchedEffect(
         adaptivePickDone,
         reuseNavigated,
@@ -788,9 +814,18 @@ internal fun StreamDestination(
         if (launch.manualSelection || adaptivePickDone || reuseNavigated) return@LaunchedEffect
         if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
         if (StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettings)) return@LaunchedEffect
-        if (playerSettings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL &&
-            playerSettings.streamAutoPlayPreferBingeGroup
-        ) return@LaunchedEffect
+        if (
+            adaptivePickStandsDownForBingeGroup(
+                mode = playerSettings.streamAutoPlayMode,
+                preferBingeGroup = playerSettings.streamAutoPlayPreferBingeGroup,
+                reuseBingeGroup = playerSettings.streamAutoPlayReuseBingeGroup,
+                hasPersistedBingeGroup = launch.parentMetaId
+                    ?.let { parentMetaId -> BingeGroupCacheRepository.get(parentMetaId) } != null,
+            )
+        ) {
+            adaptivePickDone = true
+            return@LaunchedEffect
+        }
         if (streamsUiState.isAnyLoading) return@LaunchedEffect
         if (streamsUiState.autoPlayStream != null) return@LaunchedEffect
         val candidates = streamsUiState.allStreams

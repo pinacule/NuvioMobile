@@ -19,8 +19,11 @@ internal fun StreamItem.streamResolution(): String? {
 private val qualityRank = listOf("480p", "576p", "720p", "1080p", "1440p", "2160p")
 
 /**
- * Sane per-episode size ceiling per quality. Streams larger than this are treated as
- * outliers (e.g. remuxes) and are only picked when nothing reasonable exists.
+ * Sane per-episode size ceiling per quality. For auto-pick, a stream whose
+ * KNOWN size exceeds its tier's ceiling is never eligible (e.g. a 30 GB
+ * remux at a 1080p target): the ceiling is a hard filter in [pickFromPool],
+ * not a preference. Streams with unknown size stay eligible. Downloads do
+ * not use this picker and are unaffected.
  */
 private val saneSizeBytesByQuality = mapOf(
     "480p" to 900L * 1024 * 1024,
@@ -75,8 +78,18 @@ private val standaloneTagFollowTokens = setOf(
     "english", "eng", "jpn", "kor", "spa", "fre", "ger", "ita", "rus", "por",
     "x264", "x265", "h264", "h265", "hevc", "avc", "web", "webdl", "webrip",
     "bluray", "bdrip", "brrip", "hdtv", "hdrip", "dvdrip", "remux", "proper",
-    "repack", "flac", "aac", "ac3", "dts", "atmos", "hdr", "dv", "ddp", "dd",
-    "complete", "pack", "batch", "4k", "uhd",
+    "repack", "flac", "aac", "ac3", "eac3", "dts", "atmos", "hdr", "hdr10", "hdr10plus", "dv", "ddp", "dd",
+    "amzn", "complete", "pack", "batch", "4k", "uhd",
+)
+// Codec prefixes for the same gate: scene names fuse the codec and the
+// channel count into one token ("DUAL.DDP5.1" extracts as "ddp5"), so a
+// bare set lookup misses the standard dual-audio naming. A follow token
+// counts when it is one of these codecs, optionally plus a run of digits
+// (the fused channel integer: "ddp5", "dd5", "ddp51"). Anything past the
+// prefix must be digits only, so a title word that merely starts with a
+// codec string ("Ddramas") still does not count.
+private val standaloneTagCodecPrefixes = listOf(
+    "ddp", "eac3", "truehd", "dts", "atmos", "flac", "aac", "ac3", "dd",
 )
 private val standaloneTagResolutionToken = Regex("\\d{3,4}p")
 // A year ("DUAL 2024") or an audio-channel layout ("Dual 5.1", "Dual 7.1")
@@ -94,9 +107,14 @@ private val dubIndicators = Regex(
     "\\bdub\\b|\\bdubbed\\b",
     RegexOption.IGNORE_CASE,
 )
-// English language markers (full name or code) in the release text.
-private val englishLanguageTag = Regex(
-    "\\benglish\\b|\\beng\\b|\\ben\\b",
+// A bare "en" code counts as English rescue evidence only in audio-tag
+// position — directly next to a dub/audio token ("EN DUB", "Dual Audio
+// EN"). Anywhere else it is as likely to be a title word or a foreign
+// phrase ("En Espanol" — "in Spanish") as a language code, so on its own
+// it must not cancel a non-English veto (see hasEnglishRescueEvidence).
+private val enAudioAdjacentTag = Regex(
+    "\\ben[\\s\\-.\\[\\]()/:]*\\b(dub|dubbed|audio)\\b" +
+        "|\\b(dub|dubbed|audio)[\\s\\-.\\[\\]()/:]*\\ben\\b",
     RegexOption.IGNORE_CASE,
 )
 // Non-English language markers: full names plus the ISO codes that are
@@ -125,13 +143,22 @@ private val nonEnglishLanguageTag = Regex(
 // tracks, not an audio track, so it must drive NEITHER side of the
 // language veto in hasEnglishAudio — an "ENG" from a subs tag must not
 // rescue a Japanese dub ("[JPN Dub][ENG Subs]"), and a "JPN" from a subs
-// tag must not veto a bare dub ("[DUB] [JPN Subs]"). Only separators may
-// sit between the language token and the subtitle token, exactly like
-// engSubtitleTag below, so a neighbouring real audio tag is never eaten.
-// The veto is the only consumer; every other check keeps its own text.
+// tag must not veto a bare dub ("[DUB] [JPN Subs]"). Between the language
+// token and the subtitle token, only separators and further language /
+// "multi" tokens may sit: subtitle tags routinely name a whole cluster
+// ("[ENG Multi Subs]", "[ENG/JPN Subs]"), and every token of the cluster
+// is subtitle-bound. A neighbouring real audio tag is never eaten —
+// "dub"/"audio" tokens break the chain, so "[ENG Dub][Multi Subs]" keeps
+// its ENG. Consumers: the veto text and the combined-tag text (a
+// subtitle-bound "ENG/JPN" cluster must not form a combined audio tag
+// either); every other check keeps its own text.
 private val subtitleBoundLanguageTag = Regex(
-    "\\b(english|eng|en|$nonEnglishLanguageAlternation)\\b[\\s.\\-+/]*subs?(titles?)?\\b" +
-        "|\\bsubs?(titles?)?\\b[\\s.\\-+/]*\\b(english|eng|en|$nonEnglishLanguageAlternation)\\b",
+    "\\b(english|eng|en|$nonEnglishLanguageAlternation)\\b" +
+        "(?:[\\s.\\-+/,:]+(english|eng|en|$nonEnglishLanguageAlternation|multi|multiple)\\b)*" +
+        "[\\s.\\-+/,:]*subs?(titles?)?\\b" +
+        "|\\bsubs?(titles?)?\\b" +
+        "(?:[\\s.\\-+/,:]+(english|eng|en|$nonEnglishLanguageAlternation|multi|multiple)\\b)*" +
+        "[\\s.\\-+/,:]*\\b(english|eng|en|$nonEnglishLanguageAlternation)\\b",
     RegexOption.IGNORE_CASE,
 )
 // Combined language tags where "eng" is joined to another language code by a
@@ -306,31 +333,44 @@ object AdaptiveStreamPicker {
      * English audio, however many neutral tags it carries. Languages bound
      * to subtitle tags are not audio listings at all: they are stripped
      * before the veto is computed, so "[JPN Dub][ENG Subs]" is vetoed by
-     * the JPN while "[DUB] [JPN Subs]" is not vetoed by the JPN.
+     * the JPN while "[DUB] [JPN Subs]" is not vetoed by the JPN. The
+     * English side of the veto is held to the same tag discipline (see
+     * hasEnglishRescueEvidence): a show title that happens to contain
+     * "English" ("English Teacher") or a foreign phrase ("En Espanol")
+     * does not cancel a named non-English dub.
      */
     fun hasEnglishAudio(stream: StreamItem): Boolean {
         val text = listOfNotNull(stream.name, stream.title, stream.description, stream.behaviorHints.filename)
             .joinToString(" ")
             .toDetectionText()
         if (text.isBlank()) return false
-        val releaseText = listOfNotNull(stream.name, stream.title, stream.behaviorHints.filename)
-            .joinToString(" ")
-            .toDetectionText()
+        val releaseFields = listOfNotNull(stream.name, stream.title, stream.behaviorHints.filename)
+            .map { it.toDetectionText() }
+        val releaseText = releaseFields.joinToString(" ")
         // The veto reads subtitle-stripped text: a language token bound to
         // a subtitle tag ("[ENG Subs]", "[JPN Subs]") describes subtitle
         // tracks, not audio, so it counts for neither side (see
-        // subtitleBoundLanguageTag).
-        val releaseAudioText = subtitleBoundLanguageTag.replace(releaseText, " ")
-        val listsOnlyNonEnglishLanguages = nonEnglishLanguageTag.containsMatchIn(releaseAudioText) &&
-            !englishLanguageTag.containsMatchIn(releaseAudioText)
+        // subtitleBoundLanguageTag). The strip runs per field so the
+        // bare-"English" anchor check below can also work per field: an
+        // anchor (episode marker / resolution) in the addon name must not
+        // "tag-position" an "English" sitting in the title.
+        val releaseAudioFields = releaseFields.map { subtitleBoundLanguageTag.replace(it, " ") }
+        val releaseAudioText = releaseAudioFields.joinToString(" ")
+        val listsOnlyNonEnglishLanguages = hasNonEnglishAudioLanguage(releaseAudioText) &&
+            !hasEnglishRescueEvidence(releaseAudioFields)
         if (explicitEnglishAudioIndicators.containsMatchIn(releaseText)) return true
         if (!listsOnlyNonEnglishLanguages && dualMultiAudioIndicators.containsMatchIn(releaseText)) return true
         if (!listsOnlyNonEnglishLanguages && dubIndicators.containsMatchIn(releaseText)) return true
         // Combined language tags: first drop "eng" tokens that directly carry
         // a subtitle tag ("ENG.SUB", the tail of "JPN.ENG.SUB") so "sub" is
-        // never read as the combo partner; the pattern itself also refuses a
-        // "sub" partner for the separator-joined forms ("ENGxSUB").
-        val comboText = engSubtitleTag.replace(releaseText, " ")
+        // never read as the combo partner, then drop whole subtitle-bound
+        // language clusters ("ENG/JPN Subs"), whose "ENG/JPN" is a subtitle
+        // listing, not a combined audio tag; the pattern itself also refuses
+        // a "sub" partner for the separator-joined forms ("ENGxSUB").
+        val comboText = subtitleBoundLanguageTag.replace(
+            engSubtitleTag.replace(releaseText, " "),
+            " ",
+        )
         if (comboLanguageTag.containsMatchIn(comboText)) return true
         val releaseNoMultiSubs = multiSubtitleTag.replace(releaseText, " ")
         if (!listsOnlyNonEnglishLanguages && hasStandaloneMultiAudioTag(releaseNoMultiSubs)) {
@@ -347,10 +387,14 @@ object AdaptiveStreamPicker {
         }
         // A bare "English" tag counts in tag position (at/after the
         // episode/year/resolution anchor), with subtitle mentions stripped
-        // first so "[English Subtitles]" never counts. An "English" in the
-        // show's name sits before every anchor and is ignored.
-        val releaseAudioOnly = subtitleMention.replace(releaseText, " ")
-        if (hasBareEnglishTag(releaseAudioOnly)) return true
+        // first so "[English Subtitles]" never counts. The check runs per
+        // field: an "English" in the show's name sits before its own
+        // field's anchors and is ignored, and an anchor in the addon name
+        // ("Torrentio 1080p") must not promote a title's "English" into a
+        // tag ("The English Game").
+        if (releaseFields.any { field -> hasBareEnglishTag(subtitleMention.replace(field, " ")) }) {
+            return true
+        }
         // A standalone "eng" language tag counts, unless it's part of a subtitle mention.
         val audioOnly = subtitleMention.replace(text, " ")
         return engAudioTag.containsMatchIn(audioOnly)
@@ -365,6 +409,98 @@ object AdaptiveStreamPicker {
     private fun hasBareEnglishTag(text: String): Boolean {
         val anchor = releaseTagAnchor.find(text) ?: return false
         return englishWordTag.containsMatchIn(text.substring(anchor.range.first))
+    }
+
+    /**
+     * The non-English side of the language veto, over subtitle-stripped
+     * release text. Two alternation codes collide with ordinary release
+     * text and are filtered per match: "pt" directly followed by a short
+     * number is a part marker ("Pt.2"), not Portuguese; "spa" counts only
+     * in audio/tag context, so an episode title like "Spa Day" cannot
+     * veto while "[SPA Dub]", "Dual Audio SPA" and "SPA 1080p" still do.
+     */
+    private fun hasNonEnglishAudioLanguage(releaseAudioText: String): Boolean =
+        nonEnglishLanguageTag.findAll(releaseAudioText).any { match ->
+            when (match.value.lowercase()) {
+                "pt" -> !isPartMarker(releaseAudioText, match)
+                "spa" -> hasSpaAudioOrTagContext(releaseAudioText, match)
+                else -> true
+            }
+        }
+
+    /** "Pt" + separators + a 1–2 digit number is a part marker, not a language. */
+    private fun isPartMarker(text: String, match: MatchResult): Boolean {
+        var i = match.range.last + 1
+        while (i < text.length && (text[i] == ' ' || text[i] == '-' || text[i] == '.')) i++
+        val start = i
+        while (i < text.length && text[i].isDigit()) i++
+        return i - start in 1..2
+    }
+
+    /**
+     * Whether a "spa" token names the Spanish language: followed by an
+     * audio token ("SPA Dub"), a release tag, codec or resolution
+     * ("SPA 1080p", "SPA x264", "SPA DDP5.1"), preceded by an audio token
+     * ("Dual Audio SPA"), sitting at the end of the text, or
+     * bracket-wrapped ("[SPA]"). Followed by an ordinary word instead
+     * ("Spa Day") it is part of a title.
+     */
+    private fun hasSpaAudioOrTagContext(text: String, match: MatchResult): Boolean {
+        val next = tokenAfter(text, match.range.last + 1)
+        if (next.isEmpty()) return true // trailing token: tag position
+        val nextToken = next.lowercase()
+        if (nextToken in audioContextTokens) return true
+        if (nextToken in standaloneTagFollowTokens) return true
+        if (nextToken in standaloneTagCodecPrefixes) return true
+        // Fused codec + channel tokens ("SPA.DDP5.1" extracts "ddp5") are
+        // tag position too, same as in the standalone dual/multi gate.
+        if (isCodecFollowToken(nextToken)) return true
+        if (standaloneTagResolutionToken.matches(nextToken)) return true
+        if (standaloneTagYearToken.matches(nextToken)) return true
+        if (tokenBefore(text, match.range.first).lowercase() in audioContextTokens) return true
+        var i = match.range.first
+        while (i > 0 && text[i - 1] == ' ') i--
+        return i > 0 && (text[i - 1] == '[' || text[i - 1] == '(')
+    }
+
+    /** The alphanumeric token at/after [from] (tag separators skipped), or "" if none. */
+    private fun tokenAfter(text: String, from: Int): String {
+        var i = from
+        while (i < text.length && text[i] in tagSeparatorChars) i++
+        val start = i
+        while (i < text.length && text[i].isLetterOrDigit()) i++
+        return text.substring(start, i)
+    }
+
+    /** The alphanumeric token ending at/before [until] (tag separators skipped), or "" if none. */
+    private fun tokenBefore(text: String, until: Int): String {
+        var i = until
+        while (i > 0 && text[i - 1] in tagSeparatorChars) i--
+        val end = i
+        while (i > 0 && text[i - 1].isLetterOrDigit()) i--
+        return text.substring(i, end)
+    }
+
+    private val audioContextTokens = setOf("dub", "dubbed", "audio", "dual", "multi")
+    private val tagSeparatorChars =
+        setOf(' ', '-', '.', '_', '[', ']', '(', ')', '|', ':', '/', '+')
+
+    /**
+     * English evidence strong enough to cancel a non-English audio listing:
+     * the "eng" code, a bare "en" directly next to a dub/audio token
+     * (enAudioAdjacentTag), or a bare "English" in tag position within its
+     * own field (hasBareEnglishTag). Title text alone never rescues: a
+     * show named "English Teacher" must not turn a Japanese dub English,
+     * and the Spanish phrase "En Espanol" must not pose as an English
+     * marker. [audioFields] are the per-field subtitle-stripped release
+     * fields — a subtitle-bound "eng" was already removed from them, so it
+     * cannot rescue here either.
+     */
+    private fun hasEnglishRescueEvidence(audioFields: List<String>): Boolean {
+        val joined = audioFields.joinToString(" ")
+        if (engAudioTag.containsMatchIn(joined)) return true
+        if (enAudioAdjacentTag.containsMatchIn(joined)) return true
+        return audioFields.any { hasBareEnglishTag(it) }
     }
 
     /**
@@ -387,6 +523,17 @@ object AdaptiveStreamPicker {
             if (nextToken.isEmpty()) return true // another separator/symbol follows
             val token = nextToken.lowercase()
             if (token in standaloneTagFollowTokens) return true
+            // Fused codec + channel tokens ("DUAL.DDP5.1" extracts "ddp5").
+            if (isCodecFollowToken(token)) return true
+            if (token == "h") {
+                // "DUAL.H.264": the codec is split as "H" + ".264"/".265".
+                val tail = rest.substring(nextToken.length)
+                if ((tail.startsWith(".264") || tail.startsWith(".265")) &&
+                    tail.getOrNull(4)?.isDigit() != true
+                ) {
+                    return true
+                }
+            }
             if (standaloneTagResolutionToken.matches(token)) return true
             if (standaloneTagYearToken.matches(token)) return true
             val channelMatch = standaloneTagChannelToken.find(rest)
@@ -400,6 +547,17 @@ object AdaptiveStreamPicker {
         }
         return false
     }
+
+    /**
+     * A follow token that is a codec name, optionally fused with the
+     * channel count's digits: "ddp5" (DDP5.1), "dd5" (DD5.1), "ddp51".
+     * Anything past the codec prefix must be digits, so title words that
+     * merely start with a codec string ("Ddramas") do not count.
+     */
+    private fun isCodecFollowToken(token: String): Boolean =
+        standaloneTagCodecPrefixes.any { prefix ->
+            token.startsWith(prefix) && token.drop(prefix.length).all { it.isDigit() }
+        }
 
     /** True when the stream's label/title indicates HDR (HDR10/+, Dolby Vision / DoVi / DV). */
     fun isHdrStream(stream: StreamItem): Boolean {
@@ -436,7 +594,10 @@ object AdaptiveStreamPicker {
      * exempt from the HDR seeder gate when [preferEnglishAudio] — dub preference
      * outranks the seeder requirement.
      *
-     * Returns null when [streams] is empty.
+     * Returns null when [streams] is empty, or when every candidate is
+     * known to exceed its tier's size ceiling — the auto-pick callers then
+     * fall back to the manual source list / next-episode card instead of
+     * auto-playing an oversize stream.
      */
     fun pickBestSeeded(
         streams: List<StreamItem>,
@@ -487,9 +648,13 @@ object AdaptiveStreamPicker {
             val size = parseSizeBytes(stream)
             size == null || size <= saneCeiling
         }
+        // The ceiling is a hard filter: when every candidate at this tier
+        // is KNOWN to be oversize, this tier yields no pick (pickBestSeeded
+        // moves on to the next tier, and to null overall) rather than
+        // auto-playing the oversize stream anyway.
+        if (sane.isEmpty()) return null
         // Prefer known-size sane streams; unknown sizes are allowed but rank lower.
-        val ordered = (sane.filter { parseSizeBytes(it) != null } + sane.filter { parseSizeBytes(it) == null })
-            .ifEmpty { pool }
+        val ordered = sane.filter { parseSizeBytes(it) != null } + sane.filter { parseSizeBytes(it) == null }
         // maxByOrNull keeps the first of equal scores, so the addon's ordering breaks ties.
         return ordered.maxByOrNull { parseSeeders(it) ?: -1 }
     }

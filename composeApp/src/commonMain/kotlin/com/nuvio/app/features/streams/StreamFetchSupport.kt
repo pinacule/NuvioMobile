@@ -165,17 +165,19 @@ internal fun List<StreamItem>.sortedForGroupedDisplay(
 }
 
 /**
- * Full dub-first display sort for a whole group (used by the embedded-streams
- * path, which publishes a group without any other ordering step). Returns the
- * group untouched when the English-audio preference is off, so the original
- * order is preserved byte-for-byte in that case.
+ * Dub-first display ordering for a whole group on the embedded-streams path,
+ * which publishes a group without any other ordering step. This is the same
+ * stable English-first partition the regular path ends with — deliberately
+ * NOT [sortedForGroupedDisplay]: embedded groups carry the meta addon's own
+ * ordering, and a full sort would re-order inside each language tier (by
+ * seeders/label), discarding that meta order beyond the English-first
+ * partition itself (audit R-15). Returns the group untouched when the
+ * English-audio preference is off, so the original order is preserved
+ * byte-for-byte in that case.
  */
 internal fun AddonStreamGroup.sortedDubFirstForDisplay(
     preferEnglishAudio: Boolean,
-): AddonStreamGroup {
-    if (!preferEnglishAudio || streams.size < 2) return this
-    return copy(streams = streams.sortedForGroupedDisplay(preferEnglishAudio = true))
-}
+): AddonStreamGroup = partitionedDubFirstForDisplay(preferEnglishAudio)
 
 /**
  * Stable English-audio-first partition of an already-presented group. Debrid
@@ -193,6 +195,29 @@ internal fun AddonStreamGroup.partitionedDubFirstForDisplay(
     val (english, other) = streams.partition { AdaptiveStreamPicker.hasEnglishAudio(it) }
     if (english.isEmpty() || other.isEmpty()) return this
     return copy(streams = english + other)
+}
+
+/**
+ * Render order for a group's per-source buckets: StreamsScreen re-buckets
+ * each group by source name at render time, which would otherwise cap the
+ * repository-level dub-first order at bucket granularity — an English dub
+ * under a late-alphabet source rendered below a non-English stream under
+ * an early-alphabet source (audit R-7). Buckets are alphabetical by
+ * lowercased source name; with the English-audio preference on, buckets
+ * containing at least one English-audio stream (same classifier as every
+ * other dub-first step) come first, alphabetical within each class. The
+ * streams inside a bucket are never reordered here, and with the
+ * preference off the result is exactly the legacy alphabetical order.
+ */
+internal fun Map<String, List<StreamItem>>.sortedSourceBucketNames(
+    preferEnglishAudio: Boolean,
+): List<String> {
+    val alphabetical = keys.sortedBy { it.lowercase() }
+    if (!preferEnglishAudio) return alphabetical
+    // Stable sort: alphabetical order survives inside each class.
+    return alphabetical.sortedBy { sourceName ->
+        if (this[sourceName].orEmpty().any { AdaptiveStreamPicker.hasEnglishAudio(it) }) 0 else 1
+    }
 }
 
 private fun String.fallbackRepositoryLabel(): String {
