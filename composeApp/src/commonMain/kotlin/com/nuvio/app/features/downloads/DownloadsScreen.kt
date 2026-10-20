@@ -330,11 +330,13 @@ private fun ActiveDownloadCard(
     onDelete: () -> Unit,
 ) {
     val swarms by TorrentDownloadSwarmRepository.state.collectAsStateWithLifecycle()
+    val queuedHttpIds by DownloadQueueState.queued.collectAsStateWithLifecycle()
     val p2pSettings by P2pSettingsRepository.uiState.collectAsStateWithLifecycle()
     val swarm = swarms[item.id]?.takeIf { item.isTorrent && item.status == DownloadStatus.Downloading }
     val estimatedSpeed = rememberTransferSpeed(item)
     val speed = swarm?.downloadSpeedBytesPerSecond ?: estimatedSpeed
-    val queued = swarm?.phase == TorrentDownloadPhase.Queued
+    val queued = swarm?.phase == TorrentDownloadPhase.Queued ||
+        (!item.isTorrent && item.status == DownloadStatus.Downloading && item.id in queuedHttpIds)
     // In-progress torrents can play progressively from the partial data; the tap handler routes
     // them through the P2P engine, which reuses the download's torrent.
     val canWatchNow = item.isTorrent &&

@@ -377,13 +377,15 @@ object DownloadsRepository {
         // Downloading immediately for UI feedback, then swap in a freshly
         // resolved URL before the transfer starts so the dead link is never
         // retried verbatim. Falls back to the old URL when nothing fresh
-        // resolves.
+        // resolves. Where the platform verifies a resumed file's size, the
+        // partial (and its progress) is kept; elsewhere the retry starts over.
+        val keepPartial = DownloadsPlatformDownloader.keepsPartialAcrossSourceSwap
         val marked = item.copy(
             status = DownloadStatus.Downloading,
             errorMessage = null,
             localFileUri = null,
-            downloadedBytes = 0L,
-            totalBytes = null,
+            downloadedBytes = if (keepPartial) item.downloadedBytes else 0L,
+            totalBytes = if (keepPartial) item.totalBytes else null,
             updatedAtEpochMs = DownloadsClock.nowEpochMs(),
         )
         replaceItem(marked)
@@ -400,13 +402,15 @@ object DownloadsRepository {
             val current = _uiState.value.items.firstOrNull { it.id == downloadId }
             if (current?.status != DownloadStatus.Downloading) return@launch
             if (refreshed != null) {
-                // The new link may point at a different encode: drop the partial
-                // so bytes are never resumed across files.
-                DownloadsPlatformDownloader.deletePartialFileNow(marked.fileName)
+                // The new link may point at a different encode: without a size
+                // check on resume, drop the partial so bytes are never resumed
+                // across files. With one, keep it — the transfer restarts from
+                // zero by itself if the fresh link's size differs.
+                if (!keepPartial) DownloadsPlatformDownloader.deletePartialFileNow(marked.fileName)
                 val toStart = refreshed.copy(
                     status = DownloadStatus.Downloading,
-                    downloadedBytes = 0L,
-                    totalBytes = null,
+                    downloadedBytes = marked.downloadedBytes,
+                    totalBytes = marked.totalBytes,
                     errorMessage = null,
                     updatedAtEpochMs = DownloadsClock.nowEpochMs(),
                 )

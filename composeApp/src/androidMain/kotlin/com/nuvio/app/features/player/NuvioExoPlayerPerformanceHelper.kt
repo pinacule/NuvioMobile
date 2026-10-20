@@ -17,6 +17,14 @@ internal object NuvioExoPlayerPerformanceHelper {
     private const val MIN_BUFFER_MS = 15_000
     private const val MAX_BUFFER_MS = 45_000
     private const val BUFFER_FOR_PLAYBACK_MS = 3_000
+    /**
+     * Read-ahead on phones with plenty of RAM: the player keeps fetching for up to two minutes
+     * ahead, so a source that stalls briefly (a slow debrid edge, a thin swarm) is absorbed
+     * instead of rebuffering. Peak memory is still bounded by the load control's byte target.
+     */
+    private const val HIGH_RAM_MAX_BUFFER_MS = 120_000
+    private const val HIGH_RAM_MIN_DEVICE_BYTES = 7_500L * 1024L * 1024L
+    private const val HIGH_RAM_MIN_HEAP_BYTES = 512L * 1024L * 1024L
     private const val BACK_BUFFER_TARGET_SHARE_NUM = 1L
     private const val BACK_BUFFER_TARGET_SHARE_DEN = 2L
 
@@ -91,7 +99,7 @@ internal object NuvioExoPlayerPerformanceHelper {
                 .setBackBuffer(PlaybackBufferSettings.DEFAULT_BACK_BUFFER_MS, true)
                 .setBufferDurationsMs(
                     DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
-                    50_000,
+                    defaultMaxBufferMs(context, fallbackMs = 50_000),
                     DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
                     DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
                 )
@@ -102,11 +110,18 @@ internal object NuvioExoPlayerPerformanceHelper {
         return nativeLoadControl(
             targetBufferMb = targetBufferMb,
             minBufferMs = MIN_BUFFER_MS,
-            maxBufferMs = MAX_BUFFER_MS,
+            maxBufferMs = defaultMaxBufferMs(context, fallbackMs = MAX_BUFFER_MS),
             bufferForPlaybackMs = BUFFER_FOR_PLAYBACK_MS,
             bufferForPlaybackAfterRebufferMs = BUFFER_FOR_PLAYBACK_MS,
             backBufferMs = PlaybackBufferSettings.DEFAULT_BACK_BUFFER_MS,
         )
+    }
+
+    /** Default read-ahead when the user has not customized buffering: longer on high-RAM devices. */
+    private fun defaultMaxBufferMs(context: Context, fallbackMs: Int): Int {
+        val highRam = deviceRamBytes(context) >= HIGH_RAM_MIN_DEVICE_BYTES &&
+            Runtime.getRuntime().maxMemory() >= HIGH_RAM_MIN_HEAP_BYTES
+        return if (highRam) maxOf(fallbackMs, HIGH_RAM_MAX_BUFFER_MS) else fallbackMs
     }
 
     private fun buildCustomLoadControl(

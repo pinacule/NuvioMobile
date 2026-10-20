@@ -491,6 +491,7 @@ kotlin {
                 implementation("androidx.compose.ui:ui-test-manifest:${libs.versions.composeMultiplatform.get()}")
                 implementation("androidx.work:work-testing:${libs.versions.androidx.work.get()}")
                 implementation("com.squareup.okhttp3:mockwebserver:5.3.2")
+                implementation("com.squareup.okhttp3:okhttp-tls:5.3.2")
             }
             if (androidDistribution == "full") {
                 kotlin.srcDir(project.file("src/androidFullHostTest/kotlin"))
