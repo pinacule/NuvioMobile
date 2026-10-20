@@ -95,19 +95,19 @@ class TorrentDownloadSlotOrderTest {
 
         // The second attempt must not consume the first attempt's head entry, even though
         // the item id matches and a permit is free.
-        assertFalse(tryTakeTorrentSlotQueueHead(queue, secondToken, slots))
+        assertFalse(tryTakeOrderedSlotQueueHead(queue, secondToken, slots))
         assertEquals(2, queue.size)
         assertTrue(slots.tryAcquire(), "second attempt consumed a slot permit")
         slots.release()
 
         // The head's owner takes the slot and removes exactly its own entry.
-        assertTrue(tryTakeTorrentSlotQueueHead(queue, firstToken, slots))
+        assertTrue(tryTakeOrderedSlotQueueHead(queue, firstToken, slots))
         assertEquals(listOf(secondToken), queue.map { it.second })
 
         // Once the first attempt's run finishes and frees the permit, the surviving attempt
         // takes the slot and removes its own entry too — the queue drains fully, no phantom.
         slots.release()
-        assertTrue(tryTakeTorrentSlotQueueHead(queue, secondToken, slots))
+        assertTrue(tryTakeOrderedSlotQueueHead(queue, secondToken, slots))
         assertTrue(queue.isEmpty(), "phantom queue entry left behind: $queue")
     }
 
@@ -120,11 +120,11 @@ class TorrentDownloadSlotOrderTest {
         val slots = Semaphore(1)
         assertTrue(slots.tryAcquire()) // drain the only permit
 
-        assertFalse(tryTakeTorrentSlotQueueHead(queue, token, slots))
+        assertFalse(tryTakeOrderedSlotQueueHead(queue, token, slots))
         assertEquals(1, queue.size, "head entry was removed without acquiring a slot")
 
         slots.release()
-        assertTrue(tryTakeTorrentSlotQueueHead(queue, token, slots))
+        assertTrue(tryTakeOrderedSlotQueueHead(queue, token, slots))
         assertTrue(queue.isEmpty())
     }
 

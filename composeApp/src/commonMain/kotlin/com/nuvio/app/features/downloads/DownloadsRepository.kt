@@ -48,12 +48,13 @@ object DownloadsRepository {
 
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
     /**
-     * Transient-failure retry budget per download id, mirroring
-     * shouldRetryAndroidDownload's 4 retries for transient engine collisions.
+     * Transient-failure retry budget per download id: consecutive retries without
+     * progress (see [DownloadRecoveryBudget]), so a long torrent that keeps
+     * advancing between transient failures is never failed for their total count.
      */
-    private val torrentPrepRetryCounts = mutableMapOf<String, Int>()
+    private val torrentPrepRetryBudgets = mutableMapOf<String, DownloadRecoveryBudget>()
 
-    /** How many times a torrent download retries a transient failure (preparation collision or stale link). */
+    /** How many times IN A ROW, without progress, a torrent download retries a transient failure. */
     private const val MAX_TORRENT_PREP_RETRIES = 4
     /** Base backoff between transient-failure retries; multiplied by the attempt number. */
     private const val TORRENT_PREP_RETRY_BASE_DELAY_MS = 5_000L
@@ -91,7 +92,7 @@ object DownloadsRepository {
     fun clearLocalState() {
         activeHandles.values.forEach(DownloadsTaskHandle::cancel)
         activeHandles.clear()
-        torrentPrepRetryCounts.clear()
+        torrentPrepRetryBudgets.clear()
         stashedReplacements.clear()
         hasLoaded = false
         _hasUnseenCompleted.value = false
@@ -505,15 +506,21 @@ object DownloadsRepository {
     }
 
     /**
-     * True when a torrent download failed on a transient engine condition — a
+     * When a torrent download failed on a transient engine condition — a
      * stream-preparation collision (e.g. "stream preparation already pending")
      * or a stale loopback link (HTTP 403/404/410 in the message) — and still has
-     * retry budget left. Mirrors shouldRetryAndroidDownload: up to 4 retries.
+     * retry budget left, consumes one retry and returns its attempt number in the
+     * current no-progress streak; null when the failure is terminal.
      */
-    private fun shouldRetryTorrentPreparationFailure(item: DownloadItem, message: String): Boolean {
-        if (!item.isTorrent) return false
-        if (!isTransientTorrentFailureMessage(message)) return false
-        return torrentPrepRetryCounts.getOrDefault(item.id, 0) < MAX_TORRENT_PREP_RETRIES
+    private fun consumeTorrentPreparationRetry(item: DownloadItem, message: String): Int? {
+        if (!item.isTorrent) return null
+        if (!isTransientTorrentFailureMessage(message)) return null
+        val downloadedBytes = _uiState.value.items.firstOrNull { it.id == item.id }?.downloadedBytes ?: 0L
+        val budget = torrentPrepRetryBudgets.getOrElse(item.id) { DownloadRecoveryBudget() }
+            .consume(downloadedBytes, MAX_TORRENT_PREP_RETRIES)
+            ?: return null
+        torrentPrepRetryBudgets[item.id] = budget
+        return budget.consecutiveFailures
     }
 
     /**
@@ -521,9 +528,7 @@ object DownloadsRepository {
      * (preparation collision or stale link). The item stays Downloading; the
      * humanized terminal message is only parked once the retry budget is exhausted.
      */
-    private fun scheduleTorrentPreparationRetry(item: DownloadItem) {
-        val attempt = torrentPrepRetryCounts.getOrDefault(item.id, 0) + 1
-        torrentPrepRetryCounts[item.id] = attempt
+    private fun scheduleTorrentPreparationRetry(item: DownloadItem, attempt: Int) {
         refreshScope.launch {
             delay(TORRENT_PREP_RETRY_BASE_DELAY_MS * attempt)
             val current = _uiState.value.items.firstOrNull { it.id == item.id }
@@ -532,7 +537,7 @@ object DownloadsRepository {
             if (current?.status == DownloadStatus.Downloading) {
                 startDownload(current)
             } else {
-                torrentPrepRetryCounts.remove(item.id)
+                torrentPrepRetryBudgets.remove(item.id)
             }
         }
     }
@@ -558,7 +563,7 @@ object DownloadsRepository {
             },
             onSuccess = { localFileUri, totalBytes ->
                 activeHandles.remove(item.id)
-                torrentPrepRetryCounts.remove(item.id)
+                torrentPrepRetryBudgets.remove(item.id)
                 if (isSettleableDownload(item.id)) {
                     // The replacement proved good: delete the superseded finished file.
                     stashedReplacements.remove(item.id)?.fileUri?.let {
@@ -586,11 +591,12 @@ object DownloadsRepository {
                 // Transient torrent failures (engine preparation collisions like
                 // "stream preparation already pending", or a stale loopback link):
                 // back off and retry instead of parking a terminal failure,
-                // mirroring shouldRetryAndroidDownload's budget of 4.
-                if (shouldRetryTorrentPreparationFailure(item, message)) {
-                    scheduleTorrentPreparationRetry(item)
+                // with a budget of 4 retries in a row without progress.
+                val retryAttempt = consumeTorrentPreparationRetry(item, message)
+                if (retryAttempt != null) {
+                    scheduleTorrentPreparationRetry(item, retryAttempt)
                 } else {
-                    torrentPrepRetryCounts.remove(item.id)
+                    torrentPrepRetryBudgets.remove(item.id)
                     val stashed = if (isSettleableDownload(item.id)) {
                         stashedReplacements.remove(item.id)
                     } else {

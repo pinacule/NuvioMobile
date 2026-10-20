@@ -16,12 +16,39 @@ internal data class AndroidDownloadTransfer(
     val jobId: Int,
     val generation: String,
     val validator: String? = null,
+    /** Scheduler retries in a row without progress; see [retryBudget]. */
     val retryCount: Int = 0,
-    /** How many times a dead HTTP link was swapped for a freshly resolved one. */
+    /** Bytes on disk at the last consumed scheduler retry. */
+    val retryProgressMark: Long = 0L,
+    /** Dead HTTP links swapped for freshly resolved ones in a row without progress; see [sourceRefreshBudget]. */
     val sourceRefreshCount: Int = 0,
+    /** Bytes on disk at the last consumed source refresh. */
+    val sourceRefreshProgressMark: Long = 0L,
     /** Final file name when it differs from [DownloadItem.fileName], e.g. a torrent's real extension. */
     val outputFileName: String? = null,
-)
+    /**
+     * The raw message of the error that failed this transfer. [DownloadItem.errorMessage] holds
+     * the humanized text for the UI ("the stream link expired"), which no longer says whether the
+     * failure was transient; the repository's retry safety net reads this instead.
+     */
+    val failureDetail: String? = null,
+) {
+    val retryBudget: DownloadRecoveryBudget
+        get() = DownloadRecoveryBudget(retryCount, retryProgressMark)
+
+    val sourceRefreshBudget: DownloadRecoveryBudget
+        get() = DownloadRecoveryBudget(sourceRefreshCount, sourceRefreshProgressMark)
+
+    fun withRetryBudget(budget: DownloadRecoveryBudget): AndroidDownloadTransfer =
+        copy(retryCount = budget.consecutiveFailures, retryProgressMark = budget.progressMark)
+
+    fun withSourceRefreshBudget(budget: DownloadRecoveryBudget): AndroidDownloadTransfer =
+        copy(sourceRefreshCount = budget.consecutiveFailures, sourceRefreshProgressMark = budget.progressMark)
+
+    /** The failure text reported to the repository: the raw error when known, else the humanized one. */
+    val failureCallbackMessage: String
+        get() = failureDetail?.takeIf { it.isNotBlank() } ?: item.errorMessage ?: "Download failed"
+}
 
 internal class AndroidDownloadStore(private val directory: File) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
