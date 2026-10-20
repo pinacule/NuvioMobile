@@ -10,6 +10,7 @@ internal actual object P2pSettingsStorage {
     private const val enableUploadKey = "enable_upload"
     private const val hideTorrentStatsKey = "hide_torrent_stats"
     private const val torrentProfileKey = "torrent_profile"
+    private const val torrentProfileExplicitlySetKey = "torrent_profile_explicitly_set"
     private const val cacheSizeKey = "cache_size"
 
     private var preferences: SharedPreferences? = null
@@ -43,6 +44,13 @@ internal actual object P2pSettingsStorage {
 
     actual fun saveTorrentProfile(profile: String) {
         saveString(torrentProfileKey, profile)
+    }
+
+    actual fun loadTorrentProfileExplicitlySet(): Boolean? =
+        loadBoolean(torrentProfileExplicitlySetKey)
+
+    actual fun saveTorrentProfileExplicitlySet(explicitlySet: Boolean) {
+        saveBoolean(torrentProfileExplicitlySetKey, explicitlySet)
     }
 
     actual fun loadCacheSize(): String? = loadString(cacheSizeKey)

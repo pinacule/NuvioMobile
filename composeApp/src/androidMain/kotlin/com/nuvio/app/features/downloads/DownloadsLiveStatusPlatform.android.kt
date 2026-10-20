@@ -21,11 +21,19 @@ import org.jetbrains.compose.resources.getString
 
 internal actual object DownloadsLiveStatusPlatform {
     private const val channelId = "downloads_live_status"
+    private const val outcomesChannelId = "downloads_outcomes"
     private const val notificationsPrefName = "nuvio_download_live_notifications"
     private const val trackedDownloadIdsKey = "tracked_download_ids"
 
     private var appContext: Context? = null
     private val lastRenderStateById = mutableMapOf<String, RenderState>()
+
+    /**
+     * Last status seen per download id, for terminal-outcome detection
+     * (see downloadTerminalOutcome). In-memory only: after a process
+     * restart every item is a first sighting and never notifies.
+     */
+    private val lastKnownStatusById = mutableMapOf<String, DownloadStatus>()
 
     fun initialize(context: Context) {
         appContext = context.applicationContext
@@ -80,6 +88,27 @@ internal actual object DownloadsLiveStatusPlatform {
             .edit()
             .putStringSet(trackedDownloadIdsKey, trackedNow)
             .apply()
+
+        // Terminal outcomes: a download that just finished gets its own
+        // dismissible notification (its progress notification was cancelled
+        // above as stale, or removed by notifyTransfer). Terminal failures
+        // are already surfaced by the Failed rendering above and in
+        // notifyTransfer, so only Finished posts here — posting Failed too
+        // would double-notify.
+        val currentIds = items.mapTo(HashSet()) { it.id }
+        (lastKnownStatusById.keys - currentIds).forEach { removedId ->
+            // Deleted or replaced downloads lose their outcome notification.
+            manager.cancel(outcomeNotificationId(removedId))
+            lastKnownStatusById.remove(removedId)
+        }
+        items.forEach { item ->
+            if (downloadTerminalOutcome(lastKnownStatusById[item.id], item.status) ==
+                DownloadTerminalOutcome.Finished
+            ) {
+                postFinishedNotification(context, manager, item)
+            }
+            lastKnownStatusById[item.id] = item.status
+        }
     }
 
     internal fun notifyTransfer(item: DownloadItem) {
@@ -87,7 +116,14 @@ internal actual object DownloadsLiveStatusPlatform {
         if (!canPostNotifications(context)) return
         val manager = NotificationManagerCompat.from(context)
         if (item.status == DownloadStatus.Completed) {
+            // Terminal success: clear the progress notification and post a
+            // dismissible "finished" one. This is the only completion signal
+            // when the transfer ran in a background process (worker / job
+            // service) where DownloadsRepository was never loaded; in the app
+            // process onItemsChanged posts the same notification id, so the
+            // second post silently replaces the first.
             removeNotification(item.id)
+            postFinishedNotification(context, manager, item)
         } else {
             val active = item.status == DownloadStatus.Downloading
             manager.cancel(notificationId(if (active) "inactive:${item.id}" else item.id))
@@ -100,27 +136,59 @@ internal actual object DownloadsLiveStatusPlatform {
         NotificationManagerCompat.from(context).apply {
             cancel(notificationId(downloadId))
             cancel(notificationId("inactive:$downloadId"))
+            cancel(outcomeNotificationId(downloadId))
         }
+    }
+
+    private fun outcomeNotificationId(downloadId: String): Int =
+        notificationId("outcome:$downloadId")
+
+    private fun postFinishedNotification(
+        context: Context,
+        manager: NotificationManagerCompat,
+        item: DownloadItem,
+    ) {
+        manager.notify(outcomeNotificationId(item.id), buildFinishedNotification(context, item))
+    }
+
+    private fun buildFinishedNotification(context: Context, item: DownloadItem): android.app.Notification {
+        val completedText = runBlocking { getString(Res.string.downloads_live_completed) }
+        val detail = listOfNotNull(
+            episodeLabel(item),
+            item.displaySubtitle.takeIf { it.isNotBlank() },
+        ).joinToString(" · ")
+        val text = if (detail.isBlank()) completedText else "$detail · $completedText"
+        // Finished downloads alert on the outcomes channel (sound +
+        // heads-up); PRIORITY_HIGH covers pre-O devices without channels.
+        return NotificationCompat.Builder(context, outcomesChannelId)
+            .setSmallIcon(com.nuvio.app.R.drawable.ic_notification_small)
+            .setContentTitle(item.title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(buildLaunchPendingIntent(context, item))
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true)
+            .build()
+    }
+
+    /** "S01E03" for episode downloads, null for movies. */
+    private fun episodeLabel(item: DownloadItem): String? {
+        val season = item.seasonNumber ?: return null
+        val episode = item.episodeNumber ?: return null
+        return "S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}"
     }
 
     internal fun buildNotification(context: Context, item: DownloadItem): android.app.Notification {
         val subtitle = buildSubtitle(item)
-        val launchIntent = Intent().apply {
-            component = AppIconPlatform.currentLauncherComponent(context)
-            action = Intent.ACTION_VIEW
-            data = android.net.Uri.parse(buildDownloadsDeepLinkUrl())
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        val launchPendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId(item.id),
-            launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        val launchPendingIntent = buildLaunchPendingIntent(context, item)
 
-        val notificationBuilder = NotificationCompat.Builder(context, channelId)
+        // Terminal failures alert on the outcomes channel; progress and
+        // paused notifications stay silent on the live-status channel.
+        val builderChannelId =
+            if (item.status == DownloadStatus.Failed) outcomesChannelId else channelId
+        val notificationBuilder = NotificationCompat.Builder(context, builderChannelId)
             .setSmallIcon(com.nuvio.app.R.drawable.ic_notification_small)
             .setContentTitle(item.title)
             .setContentText(subtitle)
@@ -162,7 +230,7 @@ internal actual object DownloadsLiveStatusPlatform {
                     .setAutoCancel(false)
                     .setPriority(
                         if (item.status == DownloadStatus.Failed) {
-                            NotificationCompat.PRIORITY_DEFAULT
+                            NotificationCompat.PRIORITY_HIGH
                         } else {
                             NotificationCompat.PRIORITY_LOW
                         },
@@ -182,6 +250,23 @@ internal actual object DownloadsLiveStatusPlatform {
         }
 
         return notificationBuilder.build()
+    }
+
+    private fun buildLaunchPendingIntent(context: Context, item: DownloadItem): PendingIntent {
+        val launchIntent = Intent().apply {
+            component = AppIconPlatform.currentLauncherComponent(context)
+            action = Intent.ACTION_VIEW
+            data = android.net.Uri.parse(buildDownloadsDeepLinkUrl())
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            notificationId(item.id),
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun buildSubtitle(item: DownloadItem): String {
@@ -275,17 +360,35 @@ internal actual object DownloadsLiveStatusPlatform {
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             ?: return
-        if (manager.getNotificationChannel(channelId) != null) return
 
-        manager.createNotificationChannel(
-            NotificationChannel(
-                channelId,
-                runBlocking { getString(Res.string.downloads_channel_name) },
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply {
-                description = runBlocking { getString(Res.string.downloads_channel_description) }
-            },
-        )
+        // Channel importance is immutable once a channel exists, so each
+        // channel is created independently: on upgrades the live-status
+        // channel is already present while the outcomes channel is not.
+        // The outcomes channel alerts (sound + heads-up) for terminal
+        // finished/failed notifications; progress and paused stay silent
+        // on the live-status channel.
+        if (manager.getNotificationChannel(channelId) == null) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    channelId,
+                    runBlocking { getString(Res.string.downloads_channel_name) },
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    description = runBlocking { getString(Res.string.downloads_channel_description) }
+                },
+            )
+        }
+        if (manager.getNotificationChannel(outcomesChannelId) == null) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    outcomesChannelId,
+                    runBlocking { getString(Res.string.downloads_channel_name) },
+                    NotificationManager.IMPORTANCE_HIGH,
+                ).apply {
+                    description = runBlocking { getString(Res.string.downloads_channel_description) }
+                },
+            )
+        }
     }
 
     private fun canPostNotifications(context: Context): Boolean {

@@ -144,6 +144,18 @@ object DownloadsRepository {
         return _uiState.value.items.any { it.logicalContentKey == key && it.status != DownloadStatus.Failed }
     }
 
+    /**
+     * True only when the episode's download has finished (status Completed).
+     * Downloading, paused and failed downloads all count as NOT finished —
+     * used by the "download next N" window, which must keep an unfinished
+     * current episode in the selection.
+     */
+    fun hasCompletedDownload(parentMetaId: String, seasonNumber: Int?, episodeNumber: Int?): Boolean {
+        ensureLoaded()
+        val key = buildLogicalKey(parentMetaId, seasonNumber, episodeNumber)
+        return _uiState.value.items.any { it.logicalContentKey == key && it.status == DownloadStatus.Completed }
+    }
+
     fun playableLocalFileUri(item: DownloadItem): String? {
         ensureLoaded()
         if (item.status != DownloadStatus.Completed) return null
@@ -299,6 +311,24 @@ object DownloadsRepository {
         } else {
             DownloadEnqueueResult.Started
         }
+    }
+
+    /**
+     * Auto-cleanup hook, called when playback of a downloaded item starts:
+     * once the user is watching episode N of a season, the fully downloaded
+     * episodes they have moved past (numbered <= N - 2) are deleted through
+     * the normal delete path ([cancelDownload]), so files and records are
+     * cleaned exactly like a manual delete. The started episode and the one
+     * right before it are always kept. No-op unless the auto-delete setting
+     * is on and the started item is itself a completed download.
+     */
+    fun onDownloadedPlaybackStarted(startedItem: DownloadItem) {
+        ensureLoaded()
+        if (!DownloadsSettingsRepository.isAutoDeleteOlderEpisodesEnabled()) return
+        val current = _uiState.value.items.firstOrNull { it.id == startedItem.id } ?: return
+        if (current.status != DownloadStatus.Completed) return
+        episodesToAutoCleanup(_uiState.value.items, current)
+            .forEach { cancelDownload(it.id) }
     }
 
     fun pauseDownload(downloadId: String) {

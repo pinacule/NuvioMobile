@@ -9,7 +9,7 @@ data class P2pSettingsUiState(
     val p2pEnabled: Boolean = false,
     val enableUpload: Boolean = true,
     val hideTorrentStats: Boolean = false,
-    val torrentProfile: P2pTorrentProfile = P2pTorrentProfile.BALANCED,
+    val torrentProfile: P2pTorrentProfile = DefaultP2pTorrentProfile,
     val cacheSize: P2pCacheSize = P2pCacheSize.GB_2,
 )
 
@@ -50,7 +50,7 @@ object P2pSettingsRepository {
     private var p2pEnabled = false
     private var enableUpload = true
     private var hideTorrentStats = false
-    private var torrentProfile = P2pTorrentProfile.BALANCED
+    private var torrentProfile = DefaultP2pTorrentProfile
     private var cacheSize = P2pCacheSize.GB_2
 
     fun ensureLoaded() {
@@ -67,7 +67,7 @@ object P2pSettingsRepository {
         p2pEnabled = false
         enableUpload = true
         hideTorrentStats = false
-        torrentProfile = P2pTorrentProfile.BALANCED
+        torrentProfile = DefaultP2pTorrentProfile
         cacheSize = P2pCacheSize.GB_2
         publish()
     }
@@ -98,6 +98,10 @@ object P2pSettingsRepository {
 
     fun setTorrentProfile(profile: P2pTorrentProfile) {
         ensureLoaded()
+        // Any selection in the settings UI is an explicit choice, even
+        // re-selecting the profile that is already active: record it so the
+        // load-time migration never overrides it.
+        P2pSettingsStorage.saveTorrentProfileExplicitlySet(true)
         if (torrentProfile == profile) return
         torrentProfile = profile
         P2pSettingsStorage.saveTorrentProfile(profile.name)
@@ -117,9 +121,19 @@ object P2pSettingsRepository {
         p2pEnabled = P2pSettingsStorage.loadP2pEnabled() ?: false
         enableUpload = P2pSettingsStorage.loadEnableUpload() ?: true
         hideTorrentStats = P2pSettingsStorage.loadHideTorrentStats() ?: false
-        torrentProfile = P2pSettingsStorage.loadTorrentProfile()
-            ?.let { stored -> P2pTorrentProfile.entries.firstOrNull { it.name == stored } }
-            ?: P2pTorrentProfile.BALANCED
+        val torrentProfileResolution = resolveTorrentProfile(
+            storedProfileName = P2pSettingsStorage.loadTorrentProfile(),
+            explicitlySet = P2pSettingsStorage.loadTorrentProfileExplicitlySet() ?: false,
+        )
+        torrentProfile = torrentProfileResolution.profile
+        torrentProfileResolution.profileToPersist?.let { migratedProfile ->
+            // One-time migration to the Fast default for installs with no
+            // recorded explicit choice. Persisting the value together with
+            // the explicit-choice marker is what makes it exactly once: from
+            // now on the stored value governs, including later user picks.
+            P2pSettingsStorage.saveTorrentProfile(migratedProfile.name)
+            P2pSettingsStorage.saveTorrentProfileExplicitlySet(true)
+        }
         cacheSize = P2pSettingsStorage.loadCacheSize()
             ?.let { stored -> P2pCacheSize.entries.firstOrNull { it.name == stored } }
             ?: P2pCacheSize.GB_2
@@ -146,6 +160,8 @@ internal expect object P2pSettingsStorage {
     fun saveHideTorrentStats(enabled: Boolean)
     fun loadTorrentProfile(): String?
     fun saveTorrentProfile(profile: String)
+    fun loadTorrentProfileExplicitlySet(): Boolean?
+    fun saveTorrentProfileExplicitlySet(explicitlySet: Boolean)
     fun loadCacheSize(): String?
     fun saveCacheSize(size: String)
 }

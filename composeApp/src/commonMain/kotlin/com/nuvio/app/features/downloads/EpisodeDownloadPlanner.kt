@@ -81,45 +81,32 @@ internal object EpisodeDownloadPlanner {
     /**
      * Next [count] released episodes starting at [startVideo] (may cross seasons).
      *
-     * Smart window: when episodes of the start video's season are already
-     * downloaded, the window starts after max(current episode, highest downloaded
-     * episode) — "Download next 3" on E1 with E1–E3 saved yields E4, E5, E6
-     * instead of re-requesting what's already there. Already-downloaded
-     * episodes inside the window are filtered out (gap safety). With nothing
-     * downloaded the legacy window (current episode included) is kept.
+     * The window walks episodes in order FROM [startVideo] and picks the next
+     * [count] that are not fully downloaded: the current episode is included
+     * whenever it isn't finished — "Download next 3" on E5 with E1–E3 saved
+     * yields E5, E6, E7, not E6–E8. [isFullyDownloaded] must report only
+     * completed downloads; an in-progress or paused download counts as not
+     * finished, so its episode stays in the window (the enqueue path treats
+     * already-active episodes as covered and never duplicates them). Fully
+     * downloaded episodes inside the window are skipped and the take extends
+     * past them, filling gaps in episode order.
      */
     fun nextNVideos(
         videos: List<MetaVideo>,
         startVideo: MetaVideo,
         count: Int,
-        isDownloaded: (season: Int, episode: Int) -> Boolean = { _, _ -> false },
+        isFullyDownloaded: (season: Int, episode: Int) -> Boolean = { _, _ -> false },
     ): List<MetaVideo> {
         val ordered = orderedReleases(videos)
         val idx = ordered.indexOfFirst { it.id == startVideo.id }
         if (idx < 0) return emptyList()
-        val season = startVideo.season
-        val highestDownloaded = if (season == null) 0 else ordered
-            .asSequence()
-            .filter { it.season == season && it.episode != null && isDownloaded(season, it.episode) }
-            .maxOfOrNull { it.episode ?: 0 } ?: 0
-        if (highestDownloaded <= 0 || season == null) {
-            // Legacy window (current episode included), minus anything already saved.
-            return ordered.drop(idx).take(count).filterNot { video ->
+        return ordered.drop(idx)
+            .filterNot { video ->
                 val s = video.season
                 val e = video.episode
-                s != null && e != null && isDownloaded(s, e)
-            }
-        }
-        val startAfter = kotlin.math.max(startVideo.episode ?: 0, highestDownloaded)
-        return ordered
-            .asSequence()
-            .filter { video ->
-                val s = video.season ?: return@filter false
-                val e = video.episode ?: return@filter false
-                (s > season || (s == season && e > startAfter)) && !isDownloaded(s, e)
+                s != null && e != null && isFullyDownloaded(s, e)
             }
             .take(count)
-            .toList()
     }
 
     /**

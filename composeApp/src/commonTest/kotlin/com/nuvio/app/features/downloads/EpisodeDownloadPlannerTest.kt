@@ -230,22 +230,60 @@ class EpisodeDownloadPlannerTest {
     }
 
     @Test
-    fun nextNAnchorsOnCurrentEpisodeWhenAheadOfDownloads() {
+    fun nextNIncludesCurrentEpisodeWhenEarlierEpisodesDownloaded() {
         val videos = (1..8).map { video("s1e$it", 1, it) }
-        val downloaded: (Int, Int) -> Boolean = { _, episode -> episode == 2 }
-        // On E5 with only E2 saved, the window starts after the current episode.
+        val downloaded: (Int, Int) -> Boolean = { _, episode -> episode in 1..3 }
+        // On E5 with E1–E3 saved, "next 3" yields E5, E6, E7: the current
+        // episode is not finished, so it heads the window (batch-20 change;
+        // the old anchoring skipped it and returned E6–E8).
+        val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[4], 3, downloaded)
+        assertEquals(listOf("s1e5", "s1e6", "s1e7"), next.map { it.id })
+    }
+
+    @Test
+    fun nextNStartsAfterCurrentWhenCurrentAlsoDownloaded() {
+        val videos = (1..8).map { video("s1e$it", 1, it) }
+        val downloaded: (Int, Int) -> Boolean = { _, episode -> episode in 1..5 }
+        // On E5 with E5 itself saved too, the window starts at the next
+        // not-fully-downloaded episode: E6.
         val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[4], 3, downloaded)
         assertEquals(listOf("s1e6", "s1e7", "s1e8"), next.map { it.id })
     }
 
     @Test
+    fun nextNIncludesCurrentEpisodeWhileItsDownloadIsInProgress() {
+        val videos = (1..8).map { video("s1e$it", 1, it) }
+        // The planner predicate reports only COMPLETED downloads (the caller
+        // wires DownloadsRepository.hasCompletedDownload), so an episode that
+        // is still downloading or paused counts as not finished and stays in
+        // the window; SeasonDownloads.enqueueVideos partitions already-active
+        // episodes out as covered instead of duplicating them.
+        val completed = setOf(1, 2, 3)
+        val inProgress = setOf(5)
+        val fullyDownloaded: (Int, Int) -> Boolean = { _, episode -> episode in completed }
+        assertTrue(5 in inProgress && 5 !in completed)
+        val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[4], 3, fullyDownloaded)
+        assertEquals(listOf("s1e5", "s1e6", "s1e7"), next.map { it.id })
+    }
+
+    @Test
+    fun nextNFillsGapsAfterCurrentInEpisodeOrder() {
+        val videos = (1..10).map { video("s1e$it", 1, it) }
+        // E6 and E8 are already saved: gaps after the current episode are
+        // filled in episode order and the take extends past them.
+        val downloaded: (Int, Int) -> Boolean = { _, episode -> episode == 6 || episode == 8 }
+        val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[4], 3, downloaded)
+        assertEquals(listOf("s1e5", "s1e7", "s1e9"), next.map { it.id })
+    }
+
+    @Test
     fun nextNFiltersDownloadedInsideWindow() {
         val videos = (1..8).map { video("s1e$it", 1, it) }
-        // Gap before the anchor: E2 saved but E1 (current) not; the window
-        // still starts after the highest downloaded episode (E2).
+        // Gap at the anchor: E2 saved but E1 (current) not. The walk starts
+        // at the current episode, so E1 heads the window and E2 is skipped.
         val downloaded: (Int, Int) -> Boolean = { _, episode -> episode == 2 }
         val next = EpisodeDownloadPlanner.nextNVideos(videos, videos[0], 3, downloaded)
-        assertEquals(listOf("s1e3", "s1e4", "s1e5"), next.map { it.id })
+        assertEquals(listOf("s1e1", "s1e3", "s1e4"), next.map { it.id })
     }
 
     @Test

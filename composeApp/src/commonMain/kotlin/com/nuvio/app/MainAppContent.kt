@@ -911,6 +911,11 @@ internal fun MainAppContent(
                 return
             }
             val sourceUrl = completedUrl
+            // Watching a downloaded episode: auto-cleanup deletes downloaded
+            // episodes the user has moved more than one episode past
+            // (setting-gated inside the repository; no-op for movies and for
+            // anything that is not itself a completed download).
+            DownloadsRepository.onDownloadedPlaybackStarted(item)
             val resumeEntry = item.videoId
                 .takeIf { it.isNotBlank() }
                 ?.let(WatchProgressRepository::progressForVideo)
@@ -1075,6 +1080,7 @@ internal fun MainAppContent(
                 )
                 val localSourceUrl = downloadedItem?.let(DownloadsRepository::playableLocalFileUri)
                 if (!localSourceUrl.isNullOrBlank()) {
+                    downloadedItem?.let { DownloadsRepository.onDownloadedPlaybackStarted(it) }
                     val playerLaunch = PlayerLaunch(
                         profileId = activePlaybackProfileId,
                         title = title,

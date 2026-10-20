@@ -30,6 +30,8 @@ internal actual object P2pSettingsStorage {
     actual fun saveHideTorrentStats(enabled: Boolean) = prefs.putBoolean("hide_torrent_stats", enabled)
     actual fun loadTorrentProfile(): String? = prefs.getString("torrent_profile")
     actual fun saveTorrentProfile(profile: String) = prefs.putString("torrent_profile", profile)
+    actual fun loadTorrentProfileExplicitlySet(): Boolean? = prefs.getBoolean("torrent_profile_explicitly_set")
+    actual fun saveTorrentProfileExplicitlySet(explicitlySet: Boolean) = prefs.putBoolean("torrent_profile_explicitly_set", explicitlySet)
     actual fun loadCacheSize(): String? = prefs.getString("cache_size")
     actual fun saveCacheSize(size: String) = prefs.putString("cache_size", size)
 }

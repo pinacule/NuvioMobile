@@ -153,10 +153,16 @@ fun PosterDownloadCoordinator(
         ready: PosterDownloadUiState.Ready,
         onResult: suspend (SeasonDownloadResult) -> Unit,
     ) {
-        // "Download next X" skips what's already saved: the smart window starts
-        // after max(current episode, highest downloaded episode of the season).
+        // "Rest of season" skips anything already downloading, paused or saved.
         val isDownloaded: (Int, Int) -> Boolean = { season, episode ->
             DownloadsRepository.hasActiveOrCompletedDownload(req.parentMetaId, season, episode)
+        }
+        // "Download next X" skips only FINISHED episodes: the window walks
+        // from the current episode, which stays in the selection while its
+        // download is still in progress or paused (enqueue treats an
+        // already-active episode as covered, never a duplicate).
+        val isFullyDownloaded: (Int, Int) -> Boolean = { season, episode ->
+            DownloadsRepository.hasCompletedDownload(req.parentMetaId, season, episode)
         }
         val targets = when {
             !req.isSeries -> listOf(ready.startVideo)
@@ -168,7 +174,7 @@ fun PosterDownloadCoordinator(
                 ready.allVideos,
                 ready.startVideo,
                 ready.selectedScope.episodeCount ?: 3,
-                isDownloaded,
+                isFullyDownloaded,
             )
         }
         if (targets.isEmpty()) {
