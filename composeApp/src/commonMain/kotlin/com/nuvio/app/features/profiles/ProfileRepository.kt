@@ -291,6 +291,7 @@ object ProfileRepository {
         if (AuthRepository.state.value.isAnonymous) {
             val remaining = _state.value.profiles.filter { it.profileIndex != profileIndex }
             ProfilePinCacheStorage.removePayload(profileIndex)
+            CustomProfileAvatarRepository.removeCustomAvatar(profileIndex)
             ServerRepository.removeProfile(profileIndex)
             _state.value = _state.value.copy(
                 profiles = remaining,
@@ -308,6 +309,7 @@ object ProfileRepository {
                 putSyncOriginClientId()
             }
             SupabaseProvider.client.postgrest.rpc("sync_delete_profile_data", params)
+            CustomProfileAvatarRepository.removeCustomAvatar(profileIndex)
             ServerRepository.removeProfile(profileIndex)
             pullProfiles()
         } catch (e: Throwable) {
@@ -432,6 +434,9 @@ object ProfileRepository {
             activeProfileIndex = _state.value.activeProfile!!.profileIndex
         }
         syncPinCache(profiles)
+        CustomProfileAvatarRepository.reconcileWithProfiles(
+            profiles.map { it.profileIndex }.toSet(),
+        )
         persist()
     }
 
@@ -456,6 +461,9 @@ object ProfileRepository {
         )
         _state.value.activeProfile?.let { activeProfileIndex = it.profileIndex }
         syncPinCache(profiles)
+        CustomProfileAvatarRepository.reconcileWithProfiles(
+            profiles.map { it.profileIndex }.toSet(),
+        )
     }
 
     private fun rememberVerifiedPin(profileIndex: Int, pin: String) {

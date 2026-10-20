@@ -40,8 +40,11 @@ private const val STALL_TIMEOUT_MS = 10L * 60L * 1_000L
 private const val LOOPBACK_RETRIES_WITHOUT_PROGRESS = 3
 private const val LOOPBACK_RETRY_DELAY_MS = 2_000L
 /**
- * How many times a stale loopback stream (HTTP 403/404/410: the engine dropped the
- * session mid-transfer) is re-prepared via prepareStream before giving up.
+ * How many times in a row a stale loopback stream (HTTP 403/404/410: the engine dropped the
+ * session mid-transfer) is re-prepared via prepareStream before giving up. The budget is
+ * consecutive, not lifetime: a refresh followed by real download progress re-arms it (see
+ * [StreamRefreshBudget]), so a long download whose stream expires at well-spaced intervals
+ * survives, while a stream that keeps dying without progress still burns out.
  * Mirrors the HTTP download source-refresh budget (MAX_DOWNLOAD_SOURCE_REFRESHES).
  * Playback re-prepares on every play; downloads must do the same when the stream
  * goes stale, instead of retrying the dead URL.
@@ -110,6 +113,41 @@ internal val torrentDownloadHttpClient: OkHttpClient = downloadHttpClient.newBui
 
 /** A torrent failure retrying cannot fix; it fails the download with this message. */
 internal class TorrentDownloadException(message: String) : Exception(message)
+
+/**
+ * Budget for re-preparing a stale loopback stream during one torrent download run.
+ *
+ * The budget counts CONSECUTIVE refreshes without progress, not refreshes over the
+ * whole run: each consumed refresh records the transferred-byte high-water mark at
+ * that moment, and when a later attempt dies stale after transferring beyond that
+ * mark, the count resets to zero before the refresh is consumed. A stream that
+ * expires repeatedly at well-spaced points of a long download therefore never
+ * burns out, while a stream that keeps dying at the same byte position exhausts
+ * the budget after [maxConsecutiveRefreshes] refreshes, exactly like the old
+ * lifetime cap did for back-to-back deaths.
+ */
+internal class StreamRefreshBudget(private val maxConsecutiveRefreshes: Int) {
+    var consecutiveRefreshes: Int = 0
+        private set
+    private var bytesAtLastRefresh: Long = 0L
+
+    /**
+     * Records a stale-stream death at [transferredBytes] total bytes on disk and
+     * returns true when a re-preparation may be consumed. A failed re-preparation
+     * still counts as consumed, mirroring the previous lifetime counter.
+     */
+    fun tryConsumeRefresh(transferredBytes: Long): Boolean {
+        if (transferredBytes > bytesAtLastRefresh) {
+            // Real progress since the last refresh: the deaths are spaced out,
+            // not a no-progress loop, so the budget starts over.
+            consecutiveRefreshes = 0
+        }
+        if (consecutiveRefreshes >= maxConsecutiveRefreshes) return false
+        consecutiveRefreshes++
+        bytesAtLastRefresh = transferredBytes
+        return true
+    }
+}
 
 /**
  * Downloads one file of a torrent into [directory] by reading the engine's loopback stream into the
@@ -196,7 +234,7 @@ internal suspend fun transferTorrentDownload(
                 onResolvedFile(item.torrentOutputFileName(resolveFileExtension(activeEngine, lease, stream.fileIndex)))
                 val partial = File(directory, "${item.fileName}.part")
                 var failuresWithoutProgress = 0
-                var streamRefreshCount = 0
+                val streamRefreshBudget = StreamRefreshBudget(MAX_LOOPBACK_STREAM_REFRESHES)
                 while (true) {
                     val bytesBefore = partial.length()
                     try {
@@ -220,13 +258,13 @@ internal suspend fun transferTorrentDownload(
                         // loopback URL). Retrying the dead URL is futile; re-prepare through the engine
                         // for a fresh URL, exactly as playback does on every play. Same torrent/file, so
                         // the partial remains valid and the download resumes instead of restarting.
-                        // Budget mirrors the HTTP source-refresh (MAX_LOOPBACK_STREAM_REFRESHES).
+                        // The budget (MAX_LOOPBACK_STREAM_REFRESHES) counts consecutive refreshes
+                        // without progress: progress past the last refresh's byte mark re-arms it.
                         if (error is DownloadHttpException &&
                             error.statusCode in STALE_HTTP_STATUS_CODES &&
-                            streamRefreshCount < MAX_LOOPBACK_STREAM_REFRESHES
+                            streamRefreshBudget.tryConsumeRefresh(partial.length())
                         ) {
-                            streamRefreshCount++
-                            Log.w(TAG, "Torrent loopback stream stale (HTTP ${error.statusCode}); re-preparing ($streamRefreshCount/$MAX_LOOPBACK_STREAM_REFRESHES)", error)
+                            Log.w(TAG, "Torrent loopback stream stale (HTTP ${error.statusCode}); re-preparing (${streamRefreshBudget.consecutiveRefreshes}/$MAX_LOOPBACK_STREAM_REFRESHES)", error)
                             val refreshed = try {
                                 streamId?.let { id ->
                                     try {

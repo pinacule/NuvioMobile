@@ -271,7 +271,7 @@ internal class AndroidDownloadScheduler(val context: Context) {
                     return@withLock true
                 }
             }
-            val retry = shouldRetryAndroidDownload(error, transfer.retryCount)
+            val retry = shouldRetryAndroidDownload(error, transfer.retryCount, isTorrent = torrent)
             if (retry) updateActive(transfer) { it.copy(retryCount = it.retryCount + 1) }
             else fail(transfer, error)
             retry
@@ -330,10 +330,16 @@ internal class AndroidDownloadScheduler(val context: Context) {
     }
 }
 
-internal fun shouldRetryAndroidDownload(error: Exception, retries: Int): Boolean =
+internal fun shouldRetryAndroidDownload(error: Exception, retries: Int, isTorrent: Boolean): Boolean =
     retries < 4 && when {
         error.isStreamPreparationFailure() -> true
-        error is DownloadHttpException -> error.statusCode == 408 || error.statusCode == 429 || error.statusCode in 500..599
+        error is DownloadHttpException ->
+            error.statusCode == 408 || error.statusCode == 429 || error.statusCode in 500..599 ||
+                // A stale link (403/404/410) is only worth retrying for torrents:
+                // the retry re-enters execute(), which prepares a FRESH loopback
+                // stream through the engine. An HTTP retry would hit the same
+                // dead URL again (the source-refresh path above handles those).
+                (isTorrent && error.statusCode in STALE_HTTP_STATUS_CODES)
         error is IOException -> true
         else -> false
     }

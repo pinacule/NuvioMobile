@@ -45,6 +45,7 @@ import com.nuvio.app.features.p2p.P2pSettingsStorage
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.plugins.PluginStorage
 import com.nuvio.app.features.profiles.AvatarStorage
+import com.nuvio.app.features.profiles.CustomProfileAvatarStorage
 import com.nuvio.app.features.profiles.ProfilePinCacheStorage
 import com.nuvio.app.features.profiles.ProfileStorage
 import com.nuvio.app.features.details.SeasonViewModeStorage
@@ -113,6 +114,7 @@ open class MainActivity : AppCompatActivity() {
         SubtitleFileCache.initialize(applicationContext)
         ProfileStorage.initialize(applicationContext)
         AvatarStorage.initialize(applicationContext)
+        CustomProfileAvatarStorage.initialize(applicationContext)
         ProfilePinCacheStorage.initialize(applicationContext)
         MemberAssetStorage.initialize(applicationContext)
         DiscoverSelectionStorage.initialize(applicationContext)

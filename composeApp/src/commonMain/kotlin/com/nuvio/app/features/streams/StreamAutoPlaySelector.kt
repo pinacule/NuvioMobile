@@ -114,7 +114,16 @@ object StreamAutoPlaySelector {
         } else {
             emptyList()
         }
-        val preferredReadyStream = bingeGroupCandidates.firstOrNull { stream ->
+        // Dub over sub, always: within the binge group, English-audio releases
+        // rank first (stable sort, so the group's own order is otherwise kept).
+        val rankedBingeGroupCandidates = if (preferEnglishAudio) {
+            bingeGroupCandidates.sortedWith(
+                compareByDescending { AdaptiveStreamPicker.hasEnglishAudio(it) },
+            )
+        } else {
+            bingeGroupCandidates
+        }
+        val preferredReadyStream = rankedBingeGroupCandidates.firstOrNull { stream ->
             stream.isAutoPlayable(debridEnabled, activeResolverProviderId)
         }
         if (bingeGroupOnly) {
@@ -193,23 +202,24 @@ object StreamAutoPlaySelector {
                 .filterNot { it == preferredStream }
                 .forEach(::add)
         }
-        // Dub over sub, always: English-audio releases outrank everything else.
-        // HDR needs enough seeders for smooth playback; the gate falls back to
-        // the ungated list when nothing qualifies so we never pick nothing.
-        // Both sorts are stable, so the remaining order is preserved.
-        val rankedReadyStreams = readyStreams
-            .let { list ->
-                if (!requireHdrSeeders) list
-                else list.filter { stream ->
-                    !AdaptiveStreamPicker.isHdrStream(stream) ||
-                        (AdaptiveStreamPicker.parseSeeders(stream) ?: -1) >=
-                        AdaptiveStreamPicker.MIN_SEEDERS_FOR_HDR_AUTOPLAY
-                }.ifEmpty { list }
+        // Dub over sub, always: English-audio releases outrank everything else
+        // and are exempt from the HDR seeder gate (mirrors
+        // AdaptiveStreamPicker.pickBestSeeded). HDR needs enough seeders for
+        // smooth playback; the gate applies to the non-English pool and falls
+        // back to the ungated pool when nothing qualifies so we never pick
+        // nothing. Both partitions keep their existing order (stable).
+        val rankedReadyStreams = if (preferEnglishAudio) {
+            val (englishDubStreams, otherStreams) = readyStreams.partition {
+                AdaptiveStreamPicker.hasEnglishAudio(it)
             }
-            .let { list ->
-                if (!preferEnglishAudio) list
-                else list.sortedWith(compareByDescending { AdaptiveStreamPicker.hasEnglishAudio(it) })
+            if (englishDubStreams.isEmpty()) {
+                applyHdrSeederGate(otherStreams, requireHdrSeeders)
+            } else {
+                englishDubStreams + applyHdrSeederGate(otherStreams, requireHdrSeeders)
             }
+        } else {
+            applyHdrSeederGate(readyStreams, requireHdrSeeders)
+        }
         val selected = rankedReadyStreams.firstOrNull()
         if (selected != null) {
             return StreamAutoPlayEvaluation(
@@ -224,6 +234,23 @@ object StreamAutoPlaySelector {
                 it.isPendingDebridAutoPlay(debridEnabled, activeResolverProviderId)
             },
         )
+    }
+
+    /**
+     * HDR streams need at least [AdaptiveStreamPicker.MIN_SEEDERS_FOR_HDR_AUTOPLAY]
+     * known seeders to be eligible; if the gate leaves zero candidates it falls
+     * back to the ungated list so we never pick nothing when streams exist.
+     */
+    private fun applyHdrSeederGate(
+        streams: List<StreamItem>,
+        requireHdrSeeders: Boolean,
+    ): List<StreamItem> {
+        if (!requireHdrSeeders) return streams
+        return streams.filter { stream ->
+            !AdaptiveStreamPicker.isHdrStream(stream) ||
+                (AdaptiveStreamPicker.parseSeeders(stream) ?: -1) >=
+                AdaptiveStreamPicker.MIN_SEEDERS_FOR_HDR_AUTOPLAY
+        }.ifEmpty { streams }
     }
 
     private fun StreamItem.isAutoPlayable(

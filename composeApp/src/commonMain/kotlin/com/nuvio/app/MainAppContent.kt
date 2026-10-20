@@ -199,7 +199,7 @@ import org.jetbrains.compose.resources.stringResource
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 internal fun MainAppContent(
-    initialTab: AppScreenTab = AppScreenTab.Library,
+    initialTab: AppScreenTab = AppScreenTab.Home,
     initialRoute: AppRoute = TabsRoute,
     useNativeNavigation: Boolean = false,
     useNativeTabBar: Boolean = false,

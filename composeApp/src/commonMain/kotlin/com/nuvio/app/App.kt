@@ -28,7 +28,7 @@ fun disposeRoute(route: AppRoute) {
 @Composable
 @Preview
 fun App(
-    initialTab: AppScreenTab = AppScreenTab.Library,
+    initialTab: AppScreenTab = AppScreenTab.Home,
     initialRoute: AppRoute = TabsRoute,
     useNativeNavigation: Boolean = false,
     useNativeTabBar: Boolean = false,

@@ -14,7 +14,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,9 +49,8 @@ internal fun NavigationBarPreview(style: NavBarStyle, isTablet: Boolean, glowEna
     var selectedIndex by remember { mutableIntStateOf(0) }
     val items = listOf(
         FloatingNavigationItem(stringResource(Res.string.compose_nav_home), selectedIndex == 0, { selectedIndex = 0 }, icon = Icons.Default.Home),
-        FloatingNavigationItem(stringResource(Res.string.compose_nav_search), selectedIndex == 1, { selectedIndex = 1 }, drawable = Res.drawable.sidebar_search),
-        FloatingNavigationItem(stringResource(Res.string.compose_nav_library), selectedIndex == 2, { selectedIndex = 2 }, drawable = Res.drawable.sidebar_library),
-        FloatingNavigationItem(stringResource(Res.string.compose_nav_profile), selectedIndex == 3, { selectedIndex = 3 }, icon = Icons.Default.Person),
+        FloatingNavigationItem(stringResource(Res.string.compose_nav_library), selectedIndex == 1, { selectedIndex = 1 }, drawable = Res.drawable.sidebar_library),
+        FloatingNavigationItem(stringResource(Res.string.compose_nav_search), selectedIndex == 2, { selectedIndex = 2 }, drawable = Res.drawable.sidebar_search),
     )
     Column(Modifier.padding(horizontal = 16.dp)) {
         Box(Modifier.fillMaxWidth().height(156.dp).clip(tokens.shapes.card)) {

@@ -34,23 +34,78 @@ private val saneSizeBytesByQuality = mapOf(
 private val seedersPattern = Regex("[\uD83D\uDC64\uD83D\uDC65]\\s*(\\d[\\d,.]*)|\\b(\\d[\\d,.]*)\\s*seeders?\\b", RegexOption.IGNORE_CASE)
 private val sizePattern = Regex("[\uD83D\uDCBE]\\s*([\\d.,]+)\\s*(GB|MB)", RegexOption.IGNORE_CASE)
 
-// Dubbed / dual-audio / multi-audio / english-dub indicators (word-boundaried).
+// Dubbed / dual-audio / multi-audio / english-dub / english-audio indicators
+// (word-boundaried). Scanned against the UNSTRIPPED name/title/filename: a
+// subtitle tag sitting next to a dub tag ("[English Dub][Multi Subs]") must
+// not hide it. Description prose ("this release has multi audio options")
+// must not flag a release as English-dubbed by itself, so the description is
+// never scanned here.
 private val strongEnglishDubIndicators = Regex(
-    "\\bdubbed\\b|\\bdual[\\s\\-]?audio\\b|\\bmulti[\\s\\-]?audio\\b|\\benglish[\\s\\-]?dub\\b",
+    "\\bdubbed\\b|\\bdual[\\s\\-]?audio\\b|\\bmulti[\\s\\-]?audio\\b|\\benglish[\\s\\-]?dub\\b" +
+        "|\\benglish[\\s\\-]?audio\\b|\\ben[\\s\\-]?audio\\b",
     RegexOption.IGNORE_CASE,
 )
 // Standalone "dual"/"multi" are unambiguous multi-audio markers in release names
 // (e.g. "Re.Zero.S2.MULTi.1080p"), but can false-positive in description prose
-// ("dual timelines"), so they are only matched against name/title/filename.
+// ("dual timelines"), so they are only matched against name/title/filename,
+// with "Multi-Subs"-style subtitle tags stripped first (see multiSubtitleTag).
 private val standaloneMultiAudioIndicators = Regex(
     "\\bdual\\b|\\bmulti\\b",
     RegexOption.IGNORE_CASE,
 )
+// Standalone "dub" tag (e.g. "[DUB]" in Crunchyroll-style rips).
+// Name/title/filename only, like the other standalone indicators.
+private val standaloneDubIndicator = Regex(
+    "\\bdub\\b",
+    RegexOption.IGNORE_CASE,
+)
+// Combined language tags where "eng" is joined to another language code by a
+// separator instead of a word boundary ("JPNxENG", "ENGxJPN", "JPN/ENG",
+// "ENG+JPN", "JPN.ENG"): a plain \beng\b misses the x-joined forms because
+// "x" is a word character. The other side must be a bare 3-letter code, so
+// unrelated words containing "eng" cannot match — and it is never "sub":
+// "ENG.SUB" / "SUBxENG"-style tags describe subtitle tracks, not audio
+// (engSubtitleTag below removes the dotted/spaced forms before this check;
+// the (?!sub) guards cover the separator-joined ones).
+private val comboLanguageTag = Regex(
+    "\\beng\\s*[x/+]\\s*(?!sub)[a-z]{3}\\b|\\b(?!sub)[a-z]{3}\\s*[x/+]\\s*eng\\b" +
+        "|\\beng\\s*\\.\\s*(?!sub)[a-z]{3}\\b|\\b(?!sub)[a-z]{3}\\s*\\.\\s*eng\\b",
+    RegexOption.IGNORE_CASE,
+)
 // Standalone "eng" language tag ...
 private val engAudioTag = Regex("\\beng\\b", RegexOption.IGNORE_CASE)
-// ... but not when it's part of a subtitle mention ("english subtitles", "subs: eng").
-private val engSubtitleMention = Regex(
-    "\\beng(lish)?\\b.{0,16}?\\bsubs?(titles?)?\\b|\\bsubs?(titles?)?\\b.{0,16}?\\beng(lish)?\\b",
+// Subtitle mentions, stripped from the full text before the standalone "eng"
+// fallback check so subtitle metadata is never read as an audio signal: an
+// "eng" tag next to a subtitle word ("english subtitles", "subs: eng"),
+// subtitle tags carrying multi/multiple ("Multi-Subs", "Multi Subs",
+// "Multiple Subtitle" — Japanese releases with many subtitle tracks, NOT
+// multi-audio), and bare subtitle tokens. The eng-near-subs alternatives come
+// first so "subs: eng" is removed as one span instead of leaving a bare "eng"
+// behind. The span alternatives (.{0,16}?) can swallow words sitting between
+// the eng and subtitle tokens, which is why this strip feeds ONLY the "eng"
+// fallback — the other checks run on unstripped text or on the narrow token
+// strips below.
+private val subtitleMention = Regex(
+    "\\beng(lish)?\\b.{0,16}?\\bsubs?(titles?)?\\b|\\bsubs?(titles?)?\\b.{0,16}?\\beng(lish)?\\b" +
+        "|\\b(multi|multiple)[\\s\\-]?subs?(titles?)?\\b|\\bsubs?(titles?)?\\b",
+    RegexOption.IGNORE_CASE,
+)
+// "Multi-Subs" / "Multi Subs" / "Multiple Subtitle" tags only (subtitleMention's
+// third alternative): subtitle-track counts on usually-Japanese releases, NOT
+// multi-audio. This token strip is all the standalone dual/multi check needs —
+// unlike the span strip above it removes just the tag tokens, so it can never
+// swallow a neighbouring dub signal ("[Dual Audio][Multi Subs]").
+private val multiSubtitleTag = Regex(
+    "\\b(multi|multiple)[\\s\\-]?subs?(titles?)?\\b",
+    RegexOption.IGNORE_CASE,
+)
+// An "eng" token that directly carries a subtitle tag ("ENG.SUB", "ENG Sub"),
+// the tail of "JPN.ENG.SUB" included: that "eng" marks English subtitles, not
+// audio. Removed before the combined-language-tag check so "sub" is never
+// read as the combo partner. Only separators may sit between "eng" and the
+// subtitle token, so a real dub tag next to it is never eaten.
+private val engSubtitleTag = Regex(
+    "\\beng\\b[\\s.\\-+/]*subs?(titles?)?\\b",
     RegexOption.IGNORE_CASE,
 )
 
@@ -103,28 +158,54 @@ object AdaptiveStreamPicker {
 
     /**
      * Whether the English-dub-first ranking applies: follows the user's preferred
-     * audio language setting (default "en").
+     * audio language setting (default "en"). Any English regional variant counts
+     * ("en", "en-US", "en-GB", ...): the primary language subtag decides, so a
+     * synced "en-us" no longer disables dub-first ranking. The explicit
+     * non-language choices ("device", "original", "default") stay disabled.
      */
     fun shouldPreferEnglishAudio(preferredAudioLanguage: String): Boolean =
-        preferredAudioLanguage.trim().equals("en", ignoreCase = true)
+        preferredAudioLanguage.trim().lowercase()
+            .substringBefore('-')
+            .substringBefore('_') == "en"
 
     /**
      * True when the stream's metadata indicates English-dubbed/multi-audio.
-     * "English subtitles" / "eng subs" (subtitle mentions) do NOT count.
+     * Subtitle metadata does NOT count: "English subtitles" / "eng subs" and
+     * subtitle tags like "Multi-Subs" never flag a release by themselves.
+     *
+     * Which text each check sees matters. The strong indicators, the
+     * standalone "dub" tag and the combined language tags run against the
+     * UNSTRIPPED name/title/filename (filename included: addons often put
+     * the release tags only in behaviorHints.filename): the span-based
+     * subtitle strip below can start at an "eng"/"english" token and
+     * swallow a dub tag sitting in front of a subtitle tag
+     * ("[English Dub][Multi Subs]"). Only the two
+     * checks that genuinely need stripped text consume it — the standalone
+     * dual/multi check (the actual "Multi-Subs" false-positive source),
+     * stripped of just the multi-subtitle tag tokens, never a span, so a bare
+     * "Dual" next to a subtitle tag still counts; and the "eng"-tag fallback
+     * (the strip's original use), run on the full text. The description
+     * contributes via that "eng" check only, never via strong/standalone
+     * prose matches.
      */
     fun hasEnglishAudio(stream: StreamItem): Boolean {
-        // Scans name/title/description/filename (filename included: addons often
-        // put the release tags only in behaviorHints.filename).
         val text = listOfNotNull(stream.name, stream.title, stream.description, stream.behaviorHints.filename)
             .joinToString(" ")
         if (text.isBlank()) return false
-        if (strongEnglishDubIndicators.containsMatchIn(text)) return true
-        // Standalone "dual"/"multi": only name/title/filename (not description prose).
         val releaseText = listOfNotNull(stream.name, stream.title, stream.behaviorHints.filename)
             .joinToString(" ")
-        if (standaloneMultiAudioIndicators.containsMatchIn(releaseText)) return true
+        if (strongEnglishDubIndicators.containsMatchIn(releaseText)) return true
+        if (standaloneDubIndicator.containsMatchIn(releaseText)) return true
+        // Combined language tags: first drop "eng" tokens that directly carry
+        // a subtitle tag ("ENG.SUB", the tail of "JPN.ENG.SUB") so "sub" is
+        // never read as the combo partner; the pattern itself also refuses a
+        // "sub" partner for the separator-joined forms ("ENGxSUB").
+        val comboText = engSubtitleTag.replace(releaseText, " ")
+        if (comboLanguageTag.containsMatchIn(comboText)) return true
+        val releaseNoMultiSubs = multiSubtitleTag.replace(releaseText, " ")
+        if (standaloneMultiAudioIndicators.containsMatchIn(releaseNoMultiSubs)) return true
         // A standalone "eng" language tag counts, unless it's part of a subtitle mention.
-        val audioOnly = engSubtitleMention.replace(text, " ")
+        val audioOnly = subtitleMention.replace(text, " ")
         return engAudioTag.containsMatchIn(audioOnly)
     }
 

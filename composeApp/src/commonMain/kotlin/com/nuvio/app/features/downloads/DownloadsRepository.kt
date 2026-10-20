@@ -28,6 +28,17 @@ import org.jetbrains.compose.resources.getString
 private val staleHttpCodeInMessage =
     Regex("""HTTP\s+(${STALE_HTTP_STATUS_CODES.joinToString("|")})\b""")
 
+/**
+ * True when a plain-text failure message describes a transient torrent condition
+ * worth an automatic retry: a stream-preparation collision, or a stale loopback
+ * link — the engine expired the stream mid-download, so a retry prepares a fresh
+ * one. Uses the same stale-code detection as the repository's
+ * humanizeDownloadFailureMessage "link expired" mapping.
+ */
+internal fun isTransientTorrentFailureMessage(message: String): Boolean =
+    message.contains("stream preparation", ignoreCase = true) ||
+        staleHttpCodeInMessage.containsMatchIn(message)
+
 object DownloadsRepository {
     private val _uiState = MutableStateFlow(DownloadsUiState())
     val uiState: StateFlow<DownloadsUiState> = _uiState.asStateFlow()
@@ -37,14 +48,14 @@ object DownloadsRepository {
 
     private val activeHandles = mutableMapOf<String, DownloadsTaskHandle>()
     /**
-     * Stream-preparation retry budget per download id, mirroring
+     * Transient-failure retry budget per download id, mirroring
      * shouldRetryAndroidDownload's 4 retries for transient engine collisions.
      */
     private val torrentPrepRetryCounts = mutableMapOf<String, Int>()
 
-    /** How many times a torrent download retries a transient stream-preparation collision. */
+    /** How many times a torrent download retries a transient failure (preparation collision or stale link). */
     private const val MAX_TORRENT_PREP_RETRIES = 4
-    /** Base backoff between preparation-collision retries; multiplied by the attempt number. */
+    /** Base backoff between transient-failure retries; multiplied by the attempt number. */
     private const val TORRENT_PREP_RETRY_BASE_DELAY_MS = 5_000L
 
     private var hasLoaded = false
@@ -482,20 +493,21 @@ object DownloadsRepository {
     }
 
     /**
-     * True when a torrent download failed on a transient stream-preparation
-     * collision (e.g. "stream preparation already pending") and still has retry
-     * budget left. Mirrors shouldRetryAndroidDownload: up to 4 retries.
+     * True when a torrent download failed on a transient engine condition — a
+     * stream-preparation collision (e.g. "stream preparation already pending")
+     * or a stale loopback link (HTTP 403/404/410 in the message) — and still has
+     * retry budget left. Mirrors shouldRetryAndroidDownload: up to 4 retries.
      */
     private fun shouldRetryTorrentPreparationFailure(item: DownloadItem, message: String): Boolean {
         if (!item.isTorrent) return false
-        if (!message.contains("stream preparation", ignoreCase = true)) return false
+        if (!isTransientTorrentFailureMessage(message)) return false
         return torrentPrepRetryCounts.getOrDefault(item.id, 0) < MAX_TORRENT_PREP_RETRIES
     }
 
     /**
-     * Backs off and restarts a torrent download after a transient
-     * stream-preparation collision. The item stays Downloading; the humanized
-     * terminal message is only parked once the retry budget is exhausted.
+     * Backs off and restarts a torrent download after a transient failure
+     * (preparation collision or stale link). The item stays Downloading; the
+     * humanized terminal message is only parked once the retry budget is exhausted.
      */
     private fun scheduleTorrentPreparationRetry(item: DownloadItem) {
         val attempt = torrentPrepRetryCounts.getOrDefault(item.id, 0) + 1
@@ -559,9 +571,10 @@ object DownloadsRepository {
             },
             onFailure = { message ->
                 activeHandles.remove(item.id)
-                // Transient engine preparation collisions (e.g. "stream preparation
-                // already pending"): back off and retry instead of parking a terminal
-                // failure, mirroring shouldRetryAndroidDownload's budget of 4.
+                // Transient torrent failures (engine preparation collisions like
+                // "stream preparation already pending", or a stale loopback link):
+                // back off and retry instead of parking a terminal failure,
+                // mirroring shouldRetryAndroidDownload's budget of 4.
                 if (shouldRetryTorrentPreparationFailure(item, message)) {
                     scheduleTorrentPreparationRetry(item)
                 } else {

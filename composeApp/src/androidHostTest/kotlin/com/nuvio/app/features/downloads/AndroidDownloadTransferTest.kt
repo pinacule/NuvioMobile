@@ -120,12 +120,64 @@ class AndroidDownloadTransferTest {
     }
 
     @Test
+    fun streamRefreshBudgetBurnsOutWhenDeathsMakeNoProgress() {
+        val budget = StreamRefreshBudget(maxConsecutiveRefreshes = 2)
+        assertTrue(budget.tryConsumeRefresh(100L))
+        // Same byte position again: no progress since the refresh, budget drains.
+        assertTrue(budget.tryConsumeRefresh(100L))
+        assertFalse(budget.tryConsumeRefresh(100L))
+        assertEquals(2, budget.consecutiveRefreshes)
+    }
+
+    @Test
+    fun streamRefreshBudgetResetsAfterProgressPastTheRefreshMark() {
+        val budget = StreamRefreshBudget(maxConsecutiveRefreshes = 2)
+        assertTrue(budget.tryConsumeRefresh(100L))
+        assertTrue(budget.tryConsumeRefresh(100L))
+        // The next attempt transferred beyond the mark set at the last refresh
+        // before dying: the expiries are spaced out, so the budget starts over
+        // instead of killing a download that is making real progress.
+        assertTrue(budget.tryConsumeRefresh(250L))
+        assertEquals(1, budget.consecutiveRefreshes)
+        assertTrue(budget.tryConsumeRefresh(250L))
+        assertFalse(budget.tryConsumeRefresh(250L))
+    }
+
+    @Test
+    fun streamRefreshBudgetCountsADeathAtTheResumeOffsetAsProgressOnlyOnce() {
+        // A resumed download's first stale death sees the whole .part as
+        // "progress" past the initial zero mark; after that the mark is the
+        // resume offset, so repeated deaths there still burn out.
+        val budget = StreamRefreshBudget(maxConsecutiveRefreshes = 2)
+        assertTrue(budget.tryConsumeRefresh(500L))
+        assertTrue(budget.tryConsumeRefresh(500L))
+        assertFalse(budget.tryConsumeRefresh(500L))
+    }
+
+    @Test
     fun retryPolicyDistinguishesTransientAndPermanentFailures() {
-        assertTrue(shouldRetryAndroidDownload(IOException("connection lost"), 0))
-        assertTrue(shouldRetryAndroidDownload(DownloadHttpException(503), 0))
-        assertTrue(shouldRetryAndroidDownload(DownloadHttpException(429), 0))
-        assertFalse(shouldRetryAndroidDownload(DownloadHttpException(403), 0))
-        assertFalse(shouldRetryAndroidDownload(IOException("connection lost"), 4))
+        assertTrue(shouldRetryAndroidDownload(IOException("connection lost"), 0, isTorrent = false))
+        assertTrue(shouldRetryAndroidDownload(DownloadHttpException(503), 0, isTorrent = false))
+        assertTrue(shouldRetryAndroidDownload(DownloadHttpException(429), 0, isTorrent = false))
+        // A dead HTTP link stays non-retryable: retrying would hit the same URL.
+        assertFalse(shouldRetryAndroidDownload(DownloadHttpException(403), 0, isTorrent = false))
+        assertFalse(shouldRetryAndroidDownload(DownloadHttpException(404), 0, isTorrent = false))
+        assertFalse(shouldRetryAndroidDownload(DownloadHttpException(410), 0, isTorrent = false))
+        assertFalse(shouldRetryAndroidDownload(IOException("connection lost"), 4, isTorrent = false))
+    }
+
+    @Test
+    fun retryPolicyRetriesStaleLinksForTorrentsWithinBudget() {
+        // A torrent retry re-enters execute() and prepares a fresh loopback
+        // stream, so an expired link is transient there.
+        assertTrue(shouldRetryAndroidDownload(DownloadHttpException(403), 0, isTorrent = true))
+        assertTrue(shouldRetryAndroidDownload(DownloadHttpException(404), 0, isTorrent = true))
+        assertTrue(shouldRetryAndroidDownload(DownloadHttpException(410), 3, isTorrent = true))
+        // The shared retry budget still caps torrent stale-link retries.
+        assertFalse(shouldRetryAndroidDownload(DownloadHttpException(403), 4, isTorrent = true))
+        assertFalse(shouldRetryAndroidDownload(DownloadHttpException(410), 4, isTorrent = true))
+        // Non-stale permanent HTTP failures stay non-retryable for torrents too.
+        assertFalse(shouldRetryAndroidDownload(DownloadHttpException(401), 0, isTorrent = true))
     }
 }
 

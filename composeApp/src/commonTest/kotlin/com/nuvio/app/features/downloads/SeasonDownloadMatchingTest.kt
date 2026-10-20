@@ -43,6 +43,39 @@ class SeasonDownloadMatchingTest {
         assertNull(torrent("Addon", "Show WEB", packHash).streamResolution())
     }
 
+    @Test
+    fun englishDubAtAnotherResolutionBeatsSameResolutionSub() {
+        val template = torrent("Torrentio\n720p", "Show.S01E01.720p.WEB.x265-GRP", packHash)
+        val sameResSub = torrent("Torrentio\n720p", "Show.S01E05.720p.WEB.x265-GRP", "f".repeat(40))
+        val dub1080 = torrent("Torrentio\n1080p", "Show S01E05 1080p WEB Dual Audio x265-OTHER", "0".repeat(40))
+
+        // Dub over sub, always: the 1080p dub wins over the same-resolution sub.
+        assertEquals(
+            dub1080,
+            pickMatchingEpisodeStream(template, listOf(sameResSub, dub1080), preferEnglishAudio = true),
+        )
+        // Without the preference, the same-resolution release still wins.
+        assertEquals(
+            sameResSub,
+            pickMatchingEpisodeStream(template, listOf(sameResSub, dub1080), preferEnglishAudio = false),
+        )
+        assertEquals(sameResSub, pickMatchingEpisodeStream(template, listOf(sameResSub, dub1080)))
+    }
+
+    @Test
+    fun amongDubsTemplateResolutionIsTheDecidingKey() {
+        val template = torrent("Torrentio\n720p", "Show.S01E01.720p.WEB.x265-GRP", packHash)
+        val dub720 = torrent("Torrentio\n720p", "Show S01E05 720p WEB Dual Audio x265-OTHER", "1".repeat(40))
+        val dub1080 = torrent("Torrentio\n1080p", "Show S01E05 1080p WEB Dual Audio x265-GRP", "2".repeat(40))
+
+        // Both candidates are dubs; the one at the template's resolution wins
+        // even though the 1080p release name is closer to the template (GRP tag).
+        assertEquals(
+            dub720,
+            pickMatchingEpisodeStream(template, listOf(dub1080, dub720), preferEnglishAudio = true),
+        )
+    }
+
     private fun torrent(name: String, title: String, infoHash: String, fileIdx: Int? = null) = StreamItem(
         name = name,
         title = title,

@@ -93,6 +93,15 @@ fun ProfileEditScreen(
     LaunchedEffect(Unit) {
         AvatarRepository.refreshAvatars()
     }
+    // On-device profile picture (not synced): keyed by profile index, so it is
+    // only available when editing an existing profile.
+    val customAvatarProfileIndex = currentProfile?.profileIndex ?: -1
+    val deviceAvatarUri = rememberCustomProfileAvatarUri(customAvatarProfileIndex)
+    val launchCustomAvatarPicker = rememberCustomProfileAvatarPicker { bytes ->
+        if (customAvatarProfileIndex > 0) {
+            CustomProfileAvatarRepository.setCustomAvatar(customAvatarProfileIndex, bytes)
+        }
+    }
     LaunchedEffect(canChooseBackground) {
         if (canChooseBackground) ProfileBackgroundRepository.preloadLandscapeImages()
     }
@@ -134,9 +143,63 @@ fun ProfileEditScreen(
                 onUsesPrimaryAddonsChange = { usesPrimaryAddons = it },
                 selectedAvatar = visibleAvatarItem,
                 customAvatarUrl = customAvatarUrl,
+                deviceAvatarUri = deviceAvatarUri,
                 accentColor = previewAccent,
                 hasAvatarChoices = avatars.isNotEmpty(),
             )
+        }
+
+        if (!isNew) {
+            item {
+                NuvioSurfaceCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            // TODO: localize
+                            text = "Profile picture",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            // TODO: localize
+                            text = "Use a photo from this device as your profile picture. " +
+                                "It is stored only on this device and takes priority over the avatars below.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        NuvioPrimaryButton(
+                            // TODO: localize
+                            text = if (deviceAvatarUri != null) "Change picture" else "Choose picture",
+                            onClick = { launchCustomAvatarPicker() },
+                        )
+                        if (deviceAvatarUri != null) {
+                            Button(
+                                onClick = {
+                                    if (customAvatarProfileIndex > 0) {
+                                        CustomProfileAvatarRepository.removeCustomAvatar(
+                                            customAvatarProfileIndex,
+                                        )
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                ),
+                            ) {
+                                Text(
+                                    // TODO: localize
+                                    text = "Remove picture",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         item {
@@ -389,9 +452,14 @@ private fun ProfileIdentityCard(
     onUsesPrimaryAddonsChange: (Boolean) -> Unit,
     selectedAvatar: AvatarCatalogItem?,
     customAvatarUrl: String?,
+    deviceAvatarUri: String?,
     accentColor: Color,
     hasAvatarChoices: Boolean,
 ) {
+    // Same guard as the other avatar render sites: if the device picture
+    // fails to load (e.g. its file was swept), fall back down the chain.
+    var deviceAvatarLoadFailed by remember(deviceAvatarUri) { mutableStateOf(false) }
+    val showDeviceAvatar = deviceAvatarUri != null && !deviceAvatarLoadFailed
     NuvioSurfaceCard {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(
@@ -404,7 +472,7 @@ private fun ProfileIdentityCard(
                         .size(88.dp)
                         .clip(CircleShape)
                         .background(
-                            if (selectedAvatar != null || customAvatarUrl != null) {
+                            if (selectedAvatar != null || customAvatarUrl != null || showDeviceAvatar) {
                                 accentColor
                             } else {
                                 accentColor.copy(alpha = 0.18f)
@@ -412,7 +480,7 @@ private fun ProfileIdentityCard(
                         )
                         .border(
                             width = 2.dp,
-                            color = if (selectedAvatar == null && customAvatarUrl == null) {
+                            color = if (selectedAvatar == null && customAvatarUrl == null && !showDeviceAvatar) {
                                 accentColor.copy(alpha = 0.35f)
                             } else {
                                 Color.Transparent
@@ -421,7 +489,15 @@ private fun ProfileIdentityCard(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (customAvatarUrl != null) {
+                    if (showDeviceAvatar) {
+                        AsyncImage(
+                            model = deviceAvatarUri,
+                            contentDescription = name,
+                            modifier = Modifier.size(88.dp).clip(CircleShape),
+                            contentScale = ContentScale.Crop,
+                            onError = { deviceAvatarLoadFailed = true },
+                        )
+                    } else if (customAvatarUrl != null) {
                         AsyncImage(
                             model = customAvatarUrl,
                             contentDescription = name,
@@ -484,6 +560,8 @@ private fun ProfileIdentityCard(
                     )
                     Text(
                         text = when {
+                            // TODO: localize
+                            showDeviceAvatar -> "Device picture"
                             customAvatarUrl != null -> stringResource(Res.string.profile_custom_avatar_selected)
                             selectedAvatar != null -> stringResource(
                                 Res.string.profile_avatar_selected,

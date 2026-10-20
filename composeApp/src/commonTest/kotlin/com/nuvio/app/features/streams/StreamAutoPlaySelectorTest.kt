@@ -291,6 +291,129 @@ class StreamAutoPlaySelectorTest {
         assertEquals(stream, selected)
     }
 
+    @Test
+    fun `hdr english dub with few seeders beats well seeded non-hdr japanese stream`() {
+        // Dub over sub, always: the HDR seeder gate must not eliminate the
+        // English dub in favor of a well-seeded non-English stream (mirrors
+        // AdaptiveStreamPicker.pickBestSeeded's gate exemption).
+        val japanese = stream(
+            addonName = "AddonA",
+            url = "https://example.com/jp.m3u8",
+            name = "The Show 1080p \uD83D\uDC64 900",
+        )
+        val englishHdrDub = stream(
+            addonName = "AddonA",
+            url = "https://example.com/en.m3u8",
+            name = "The Show 1080p HDR Dual Audio \uD83D\uDC64 10",
+        )
+
+        val selected = StreamAutoPlaySelector.selectAutoPlayStream(
+            streams = listOf(japanese, englishHdrDub),
+            mode = StreamAutoPlayMode.FIRST_STREAM,
+            regexPattern = "",
+            source = StreamAutoPlaySource.ALL_SOURCES,
+            installedAddonNames = setOf("AddonA"),
+            selectedAddons = emptySet(),
+            selectedPlugins = emptySet(),
+            preferEnglishAudio = true,
+            requireHdrSeeders = true,
+        )
+
+        assertEquals(englishHdrDub, selected)
+    }
+
+    @Test
+    fun `hdr gate still filters the low seeder hdr dub when dub preference is off`() {
+        val japanese = stream(
+            addonName = "AddonA",
+            url = "https://example.com/jp.m3u8",
+            name = "The Show 1080p \uD83D\uDC64 900",
+        )
+        val englishHdrDub = stream(
+            addonName = "AddonA",
+            url = "https://example.com/en.m3u8",
+            name = "The Show 1080p HDR Dual Audio \uD83D\uDC64 10",
+        )
+
+        val selected = StreamAutoPlaySelector.selectAutoPlayStream(
+            streams = listOf(japanese, englishHdrDub),
+            mode = StreamAutoPlayMode.FIRST_STREAM,
+            regexPattern = "",
+            source = StreamAutoPlaySource.ALL_SOURCES,
+            installedAddonNames = setOf("AddonA"),
+            selectedAddons = emptySet(),
+            selectedPlugins = emptySet(),
+            preferEnglishAudio = false,
+            requireHdrSeeders = true,
+        )
+
+        assertEquals(japanese, selected)
+    }
+
+    @Test
+    fun `binge group only evaluation prefers the english dub in the group`() {
+        val japanese = stream(
+            addonName = "AddonA",
+            url = "https://example.com/jp.m3u8",
+            name = "The Show 1080p",
+            bingeGroup = "same-group",
+        )
+        val dub = stream(
+            addonName = "AddonA",
+            url = "https://example.com/en.m3u8",
+            name = "The Show 1080p Dual Audio",
+            bingeGroup = "same-group",
+        )
+
+        val evaluation = StreamAutoPlaySelector.evaluateAutoPlayStream(
+            streams = listOf(japanese, dub),
+            mode = StreamAutoPlayMode.MANUAL,
+            regexPattern = "",
+            source = StreamAutoPlaySource.ALL_SOURCES,
+            installedAddonNames = setOf("AddonA"),
+            selectedAddons = emptySet(),
+            selectedPlugins = emptySet(),
+            preferredBingeGroup = "same-group",
+            preferBingeGroupInSelection = true,
+            bingeGroupOnly = true,
+            preferEnglishAudio = true,
+        )
+
+        assertEquals(dub, evaluation.stream)
+    }
+
+    @Test
+    fun `binge group only evaluation keeps group order without dub preference`() {
+        val japanese = stream(
+            addonName = "AddonA",
+            url = "https://example.com/jp.m3u8",
+            name = "The Show 1080p",
+            bingeGroup = "same-group",
+        )
+        val dub = stream(
+            addonName = "AddonA",
+            url = "https://example.com/en.m3u8",
+            name = "The Show 1080p Dual Audio",
+            bingeGroup = "same-group",
+        )
+
+        val evaluation = StreamAutoPlaySelector.evaluateAutoPlayStream(
+            streams = listOf(japanese, dub),
+            mode = StreamAutoPlayMode.MANUAL,
+            regexPattern = "",
+            source = StreamAutoPlaySource.ALL_SOURCES,
+            installedAddonNames = setOf("AddonA"),
+            selectedAddons = emptySet(),
+            selectedPlugins = emptySet(),
+            preferredBingeGroup = "same-group",
+            preferBingeGroupInSelection = true,
+            bingeGroupOnly = true,
+            preferEnglishAudio = false,
+        )
+
+        assertEquals(japanese, evaluation.stream)
+    }
+
     private fun stream(
         addonName: String,
         url: String? = null,

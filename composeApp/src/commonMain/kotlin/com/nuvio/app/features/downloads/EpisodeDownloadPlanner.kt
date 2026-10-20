@@ -154,15 +154,30 @@ internal object EpisodeDownloadPlanner {
     }
 
     /**
-     * Best stream at [quality]: English-audio first (dub over sub, always — when
-     * [preferEnglishAudio]), then torrent streams (they carry the P2P path the
-     * download manager prefers), then best-seeded. Addon ordering breaks ties.
+     * Best stream for a download: when [preferEnglishAudio], an English-audio
+     * release wins across ALL qualities (dub over sub, always — a 480p dub beats
+     * a 1080p sub, as in playback's [AdaptiveStreamPicker.pickBestSeeded]). The
+     * ordering among dubs is the download path's own, though: torrent streams
+     * first (they carry the P2P path the download manager prefers), then
+     * best-seeded, with quality ignored — unlike pickBestSeeded, which prefers
+     * the dub closest to the target quality. Only when no dub exists anywhere
+     * does the pick fall back to the best stream at [quality]: English-audio
+     * first, then torrent, then best-seeded. Addon ordering breaks ties.
      */
     fun pickBestStreamAtQuality(
         streams: List<StreamItem>,
         quality: String,
         preferEnglishAudio: Boolean = false,
     ): StreamItem? {
+        if (preferEnglishAudio) {
+            val english = streams.filter { AdaptiveStreamPicker.hasEnglishAudio(it) }
+            if (english.isNotEmpty()) {
+                return english.sortedWith(
+                    compareBy<StreamItem> { if (it.isTorrentStream) 0 else 1 }
+                        .thenByDescending { AdaptiveStreamPicker.parseSeeders(it) ?: -1 },
+                ).firstOrNull()
+            }
+        }
         val pool = streams.filter { it.streamResolution() == quality }
         if (pool.isEmpty()) return null
         return pool.sortedWith(

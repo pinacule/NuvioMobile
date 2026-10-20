@@ -22,7 +22,7 @@ internal fun AppGateOverlay(
 
     AppEnvironment {
         AppGate(
-            initialTab = AppScreenTab.Library,
+            initialTab = AppScreenTab.Home,
             initialRoute = TabsRoute,
             useNativeNavigation = true,
             useNativeTabBar = true,

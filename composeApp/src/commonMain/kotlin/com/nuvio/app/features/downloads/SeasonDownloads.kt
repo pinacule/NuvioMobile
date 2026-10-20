@@ -166,7 +166,8 @@ object SeasonDownloads {
         DownloadsRepository.ensureLoaded()
         runCatching { PlayerSettingsRepository.ensureLoaded() }
         // Dub over sub, always: when matching other episodes to the template,
-        // prefer English-audio releases at the template's quality.
+        // prefer English-audio releases (across resolutions — see
+        // pickMatchingEpisodeStream).
         val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
             PlayerSettingsRepository.uiState.value.preferredAudioLanguage,
         )
@@ -209,7 +210,7 @@ object SeasonDownloads {
                     episodeTitle = video.title.takeIf(String::isNotBlank),
                     episodeThumbnail = video.thumbnail,
                     stream = it,
-                    downloadQuality = template.streamResolution(),
+                    downloadQuality = it.streamResolution() ?: template.streamResolution(),
                 )
             }
             if (result == DownloadEnqueueResult.Started || result == DownloadEnqueueResult.Replaced) {
@@ -290,6 +291,8 @@ object SeasonDownloads {
 /**
  * Picks the episode stream that best matches [template]: the same torrent (a season pack) first,
  * otherwise a stream of the same kind and resolution whose release name is closest.
+ * When [preferEnglishAudio], an English-audio release of the same kind wins across
+ * resolutions before that same-resolution matching runs (dub over sub, always).
  */
 internal fun pickMatchingEpisodeStream(
     template: StreamItem,
@@ -301,6 +304,24 @@ internal fun pickMatchingEpisodeStream(
         candidates.firstOrNull { it.p2pInfoHash?.lowercase() == templateHash }?.let { return it }
     }
     val templateResolution = template.streamResolution()
+    if (preferEnglishAudio) {
+        // Dub over sub, always: an English-audio release at ANY resolution beats
+        // a same-resolution non-English one. Among dubs, the template's own
+        // resolution wins first, then best-seeded, then the closest release
+        // name; ties keep the addon's own ordering (maxWithOrNull keeps the
+        // first of equal scores). The candidate set stays the template addon's
+        // streams, same kind as the template — only the ranking widens.
+        val englishTokens = template.releaseTokens()
+        candidates
+            .filter { it.isTorrentStream == template.isTorrentStream }
+            .filter { AdaptiveStreamPicker.hasEnglishAudio(it) }
+            .maxWithOrNull(
+                compareBy<StreamItem> { if (it.streamResolution() == templateResolution) 1 else 0 }
+                    .thenBy { AdaptiveStreamPicker.parseSeeders(it) ?: -1 }
+                    .thenBy { jaccard(englishTokens, it.releaseTokens()) },
+            )
+            ?.let { return it }
+    }
     val pool = candidates
         .filter { it.isTorrentStream == template.isTorrentStream }
         .filter { templateResolution == null || it.streamResolution() == templateResolution }

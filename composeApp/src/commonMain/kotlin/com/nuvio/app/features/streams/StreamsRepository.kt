@@ -331,6 +331,21 @@ object StreamsRepository {
                 ).firstOrNull() ?: badgeGroup
             }
 
+            // Regular addon completions get the same within-group dub-first
+            // ordering the plugin merge path applies, but only while the
+            // English-dub preference is active; otherwise the addon's own
+            // order is published untouched. Server-source groups are not
+            // addon completions and keep their own order.
+            fun sortAddonGroupForDisplay(group: AddonStreamGroup): AddonStreamGroup {
+                if (group.addonId !in installedAddonIds || group.streams.size < 2) return group
+                if (!AdaptiveStreamPicker.shouldPreferEnglishAudio(playerSettings.preferredAudioLanguage)) {
+                    return group
+                }
+                return group.copy(
+                    streams = group.streams.sortedForGroupedDisplay(preferEnglishAudio = true),
+                )
+            }
+
             fun publishAddonGroup(group: AddonStreamGroup) {
                 _uiState.update { current ->
                     val updated = StreamAutoPlaySelector.orderAddonStreams(
@@ -521,7 +536,7 @@ object StreamsRepository {
                 when (val completion = completions.receive()) {
                     is StreamLoadCompletion.Addon -> {
                         val result = completion.group
-                        publishAddonGroupAfterCacheCheck(result)
+                        publishAddonGroupAfterCacheCheck(sortAddonGroupForDisplay(result))
                     }
 
                     is StreamLoadCompletion.PluginScraper -> {

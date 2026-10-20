@@ -1,5 +1,7 @@
 package com.nuvio.app
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -7,10 +9,13 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -19,6 +24,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
@@ -30,21 +37,37 @@ import com.nuvio.app.core.ui.NuvioClassicNavigationBar
 import com.nuvio.app.core.ui.FloatingNavigationBar
 import com.nuvio.app.core.ui.FloatingNavigationItem
 import com.nuvio.app.core.ui.PlatformBackHandler
+import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.rememberNuvioNavBarScrollState
+import com.nuvio.app.features.profiles.ActiveProfileMiniAvatar
+import com.nuvio.app.features.profiles.AvatarRepository
 import com.nuvio.app.features.profiles.NuvioProfile
+import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.profiles.ProfileSwitcherTab
 import com.nuvio.app.features.settings.NavBarStyle
 import com.nuvio.app.features.settings.ThemeSettingsRepository
+import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.compose_nav_home
 import nuvio.composeapp.generated.resources.compose_nav_library
-import nuvio.composeapp.generated.resources.compose_nav_profile
 import nuvio.composeapp.generated.resources.compose_nav_search
 import nuvio.composeapp.generated.resources.sidebar_library
 import nuvio.composeapp.generated.resources.sidebar_search
 import org.jetbrains.compose.resources.stringResource
+
+/**
+ * Tabs shown in the bottom navigation bars (floating and classic), in
+ * left-to-right order. Profile is not a bar tab: it is reached from the
+ * profile button overlaid on the Home screen, which opens the
+ * [AppScreenTab.Settings] destination.
+ */
+internal val MainBottomBarTabs: List<AppScreenTab> = listOf(
+    AppScreenTab.Home,
+    AppScreenTab.Library,
+    AppScreenTab.Search,
+)
 
 @Composable
 internal fun MainTabsDestination(
@@ -79,41 +102,31 @@ internal fun MainTabsDestination(
         val navBarHazeState = rememberHazeState()
         val navBarStyleSetting by remember { ThemeSettingsRepository.navBarStyle }.collectAsStateWithLifecycle()
         val navBarGlowEnabled by ThemeSettingsRepository.navBarGlowEnabled.collectAsStateWithLifecycle()
-        val floatingNavigationItems = listOf(
-            FloatingNavigationItem(
-                selected = selectedTab == AppScreenTab.Library,
-                onClick = { onTabSelected(AppScreenTab.Library) },
-                drawable = Res.drawable.sidebar_library,
-                label = stringResource(Res.string.compose_nav_library),
-            ),
-            FloatingNavigationItem(
-                selected = selectedTab == AppScreenTab.Home,
-                onClick = { onTabSelected(AppScreenTab.Home) },
-                icon = Icons.Filled.Home,
-                label = stringResource(Res.string.compose_nav_home),
-            ),
-            FloatingNavigationItem(
-                selected = selectedTab == AppScreenTab.Search,
-                onClick = { onTabSelected(AppScreenTab.Search) },
-                drawable = Res.drawable.sidebar_search,
-                label = stringResource(Res.string.compose_nav_search),
-            ),
-            FloatingNavigationItem(
-                selected = selectedTab == AppScreenTab.Settings,
-                onClick = { onTabSelected(AppScreenTab.Settings) },
-                label = stringResource(Res.string.compose_nav_profile),
-                content = { onClick ->
-                    ProfileSwitcherTab(
-                        selected = selectedTab == AppScreenTab.Settings,
-                        onClick = onClick,
-                        onProfileSelected = onProfileSelected,
-                        onAddProfileRequested = onAddProfileRequested,
-                        hazeState = navBarHazeState,
-                        popupBelowAnchor = isTabletLayout,
-                    )
-                },
-            ),
-        )
+        val floatingNavigationItems = MainBottomBarTabs.map { tab ->
+            val itemSelected = selectedTab == tab
+            val itemOnClick = { onTabSelected(tab) }
+            when (tab) {
+                AppScreenTab.Home -> FloatingNavigationItem(
+                    selected = itemSelected,
+                    onClick = itemOnClick,
+                    icon = Icons.Filled.Home,
+                    label = stringResource(Res.string.compose_nav_home),
+                )
+                AppScreenTab.Library -> FloatingNavigationItem(
+                    selected = itemSelected,
+                    onClick = itemOnClick,
+                    drawable = Res.drawable.sidebar_library,
+                    label = stringResource(Res.string.compose_nav_library),
+                )
+                AppScreenTab.Search -> FloatingNavigationItem(
+                    selected = itemSelected,
+                    onClick = itemOnClick,
+                    drawable = Res.drawable.sidebar_search,
+                    label = stringResource(Res.string.compose_nav_search),
+                )
+                AppScreenTab.Settings -> error("Settings is not a bottom bar tab")
+            }
+        }
 
         Scaffold(
             modifier = Modifier
@@ -124,34 +137,28 @@ internal fun MainTabsDestination(
             bottomBar = {
                 if (!isTabletLayout && !useNativeBottomTabs && navBarStyleSetting == NavBarStyle.CLASSIC) {
                     NuvioClassicNavigationBar {
-                        NavItem(
-                            selected = selectedTab == AppScreenTab.Library,
-                            onClick = { onTabSelected(AppScreenTab.Library) },
-                            icon = Res.drawable.sidebar_library,
-                            contentDescription = stringResource(Res.string.compose_nav_library),
-                        )
-                        NavItem(
-                            selected = selectedTab == AppScreenTab.Home,
-                            onClick = { onTabSelected(AppScreenTab.Home) },
-                            icon = Icons.Filled.Home,
-                            contentDescription = stringResource(Res.string.compose_nav_home),
-                        )
-                        NavItem(
-                            selected = selectedTab == AppScreenTab.Search,
-                            onClick = { onTabSelected(AppScreenTab.Search) },
-                            icon = Res.drawable.sidebar_search,
-                            contentDescription = stringResource(Res.string.compose_nav_search),
-                        )
-                        NavItem(
-                            selected = selectedTab == AppScreenTab.Settings,
-                            onClick = { onTabSelected(AppScreenTab.Settings) },
-                        ) {
-                            ProfileSwitcherTab(
-                                selected = selectedTab == AppScreenTab.Settings,
-                                onClick = { onTabSelected(AppScreenTab.Settings) },
-                                onProfileSelected = onProfileSelected,
-                                onAddProfileRequested = onAddProfileRequested,
-                            )
+                        MainBottomBarTabs.forEach { tab ->
+                            when (tab) {
+                                AppScreenTab.Home -> NavItem(
+                                    selected = selectedTab == tab,
+                                    onClick = { onTabSelected(tab) },
+                                    icon = Icons.Filled.Home,
+                                    contentDescription = stringResource(Res.string.compose_nav_home),
+                                )
+                                AppScreenTab.Library -> NavItem(
+                                    selected = selectedTab == tab,
+                                    onClick = { onTabSelected(tab) },
+                                    icon = Res.drawable.sidebar_library,
+                                    contentDescription = stringResource(Res.string.compose_nav_library),
+                                )
+                                AppScreenTab.Search -> NavItem(
+                                    selected = selectedTab == tab,
+                                    onClick = { onTabSelected(tab) },
+                                    icon = Res.drawable.sidebar_search,
+                                    contentDescription = stringResource(Res.string.compose_nav_search),
+                                )
+                                AppScreenTab.Settings -> Unit
+                            }
                         }
                     }
                 }
@@ -205,7 +212,79 @@ internal fun MainTabsDestination(
                         glowEnabled = navBarGlowEnabled,
                     )
                 }
+
+                // Profile lives on Home now: a circular button floating over
+                // the hero, below the status bar. Only shown while a Compose
+                // bar is in use — with native navigation/tab bars the host
+                // provides its own profile tab and switcher.
+                if (
+                    selectedTab == AppScreenTab.Home &&
+                    rootRouteActive &&
+                    !useNativeNavigation &&
+                    !useNativeBottomTabs
+                ) {
+                    HomeProfileButton(
+                        onClick = { onTabSelected(AppScreenTab.Settings) },
+                        onProfileSelected = onProfileSelected,
+                        onAddProfileRequested = onAddProfileRequested,
+                        hazeState = navBarHazeState,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(
+                                top = WindowInsets.statusBars.asPaddingValues()
+                                    .calculateTopPadding() + 12.dp,
+                                end = 16.dp,
+                            ),
+                    )
+                }
             }
         }
     }
+}
+
+/**
+ * Circular profile button overlaid on the Home hero. Tapping opens the
+ * Profile (Settings) destination; long-pressing keeps the profile switcher
+ * popup the old Profile tab had. The avatar shows the active profile's
+ * custom on-device picture when one is set, then the regular avatar,
+ * then the initial letter.
+ */
+@Composable
+private fun HomeProfileButton(
+    onClick: () -> Unit,
+    onProfileSelected: (NuvioProfile) -> Unit,
+    onAddProfileRequested: () -> Unit,
+    hazeState: HazeState,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    ProfileSwitcherTab(
+        selected = false,
+        onClick = onClick,
+        onProfileSelected = onProfileSelected,
+        onAddProfileRequested = onAddProfileRequested,
+        hazeState = hazeState,
+        popupBelowAnchor = true,
+        modifier = modifier,
+        triggerContent = {
+            val profileState by ProfileRepository.state.collectAsStateWithLifecycle()
+            val avatars by AvatarRepository.avatars.collectAsStateWithLifecycle()
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .shadow(tokens.elevation.overlay, CircleShape)
+                    .clip(CircleShape)
+                    .background(tokens.colors.surfaceSheet.copy(alpha = 0.92f))
+                    .border(1.dp, tokens.colors.borderDefault, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                ActiveProfileMiniAvatar(
+                    profile = profileState.activeProfile,
+                    avatars = avatars,
+                    selected = false,
+                    size = 34,
+                )
+            }
+        },
+    )
 }

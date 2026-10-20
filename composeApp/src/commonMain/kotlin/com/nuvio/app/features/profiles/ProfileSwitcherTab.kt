@@ -585,8 +585,15 @@ private fun PopupProfileBubble(
     val avatarItem = remember(profile.avatarId, avatars) {
         profile.avatarId?.let { id -> avatars.find { it.id == id } }
     }
-    val avatarImageUrl = remember(profile.avatarUrl, avatarItem) {
+    val customAvatarUri = rememberCustomProfileAvatarUri(profile.profileIndex)
+    val fallbackAvatarImageUrl = remember(profile.avatarUrl, avatarItem) {
         profileAvatarImageUrl(profile, avatarItem)
+    }
+    var customAvatarLoadFailed by remember(customAvatarUri) { mutableStateOf(false) }
+    val avatarImageUrl = if (customAvatarLoadFailed) {
+        fallbackAvatarImageUrl
+    } else {
+        resolveProfileAvatarImageUrl(customAvatarUri, profile, avatarItem)
     }
 
     // Per-item entrance animation
@@ -677,6 +684,9 @@ private fun PopupProfileBubble(
                         contentDescription = profile.name,
                         modifier = Modifier.size(48.dp).clip(tokens.shapes.avatar),
                         contentScale = ContentScale.Crop,
+                        onError = {
+                            if (customAvatarUri != null) customAvatarLoadFailed = true
+                        },
                     )
                 } else if (profile.name.isNotBlank()) {
                     Text(
@@ -765,8 +775,15 @@ fun ActiveProfileMiniAvatar(
     val avatarItem = remember(profile.avatarId, avatars) {
         profile.avatarId?.let { id -> avatars.find { it.id == id } }
     }
-    val avatarImageUrl = remember(profile.avatarUrl, avatarItem) {
+    val customAvatarUri = rememberCustomProfileAvatarUri(profile.profileIndex)
+    val fallbackAvatarImageUrl = remember(profile.avatarUrl, avatarItem) {
         profileAvatarImageUrl(profile, avatarItem)
+    }
+    var customAvatarLoadFailed by remember(customAvatarUri) { mutableStateOf(false) }
+    val avatarImageUrl = if (customAvatarLoadFailed) {
+        fallbackAvatarImageUrl
+    } else {
+        resolveProfileAvatarImageUrl(customAvatarUri, profile, avatarItem)
     }
 
     val borderColor = if (selected) {
@@ -795,6 +812,9 @@ fun ActiveProfileMiniAvatar(
                 contentDescription = profile.name,
                 modifier = Modifier.size(size.dp).clip(tokens.shapes.avatar),
                 contentScale = ContentScale.Crop,
+                onError = {
+                    if (customAvatarUri != null) customAvatarLoadFailed = true
+                },
             )
         } else if (profile.name.isNotBlank()) {
             Text(

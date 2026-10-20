@@ -78,7 +78,7 @@ internal object EpisodePreloader {
             EpisodeDownloadPlanner.distinctQualities(allStreams),
             targetQuality,
         ) ?: return
-        // Dub over sub, always: prefer an English-audio release at the chosen quality.
+        // Dub over sub, always: with the dub preference on, an English-audio release at any quality wins; otherwise the chosen quality applies.
         runCatching { PlayerSettingsRepository.ensureLoaded() }
         val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
             PlayerSettingsRepository.uiState.value.preferredAudioLanguage,

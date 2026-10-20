@@ -333,8 +333,15 @@ private fun ProfileAvatarCard(
     val avatarItem = remember(profile.avatarId, avatars) {
         profile.avatarId?.let { id -> avatars.find { it.id == id } }
     }
-    val avatarImageUrl = remember(profile.avatarUrl, avatarItem) {
+    val customAvatarUri = rememberCustomProfileAvatarUri(profile.profileIndex)
+    val fallbackAvatarImageUrl = remember(profile.avatarUrl, avatarItem) {
         profileAvatarImageUrl(profile, avatarItem)
+    }
+    var customAvatarLoadFailed by remember(customAvatarUri) { mutableStateOf(false) }
+    val avatarImageUrl = if (customAvatarLoadFailed) {
+        fallbackAvatarImageUrl
+    } else {
+        resolveProfileAvatarImageUrl(customAvatarUri, profile, avatarItem)
     }
 
     val animAlpha = remember { Animatable(0f) }
@@ -408,6 +415,9 @@ private fun ProfileAvatarCard(
                         contentDescription = avatarItem?.displayName ?: profile.name,
                         modifier = Modifier.size(100.dp).clip(CircleShape),
                         contentScale = ContentScale.Crop,
+                        onError = {
+                            if (customAvatarUri != null) customAvatarLoadFailed = true
+                        },
                     )
                 } else if (profile.name.isNotBlank()) {
                     Text(
