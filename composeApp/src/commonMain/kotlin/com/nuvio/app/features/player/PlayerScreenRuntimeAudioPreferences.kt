@@ -4,14 +4,20 @@ package com.nuvio.app.features.player
  * English indicators in audio track labels, for tracks whose container carries no
  * language tag (common in scene releases): e.g. "Track 2 (AAC) - English Dub".
  * Only used as a fallback when no language-tagged English track was selected.
+ *
+ * The label must carry actual English evidence ("english" / "eng"). A bare
+ * "dub"/"dubs"/"dubbed" is NOT evidence: it says a track is a dub without saying
+ * into which language, so counting it misclassifies e.g. an untagged track
+ * labeled "Japanese Dub" as English and the real English track is never picked.
+ * A label with no English evidence is treated as unknown, not English.
  */
 private val englishTrackLabelKeywords = Regex(
-    "\\benglish\\b|\\beng\\b|\\bdubs?\\b|\\bdubbed\\b",
+    "\\benglish\\b|\\beng\\b",
     RegexOption.IGNORE_CASE,
 )
 
 /** True when the track is English: by language tag, or (for untagged tracks) by label keywords. */
-private fun isEnglishAudioTrack(track: AudioTrack): Boolean {
+internal fun isEnglishAudioTrack(track: AudioTrack): Boolean {
     val language = normalizeLanguageCode(track.language)
     // Compare the primary subtag so regional tags ("en-US", "en-GB") count as English.
     if (language?.substringBefore('-') == "en") return true

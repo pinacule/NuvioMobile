@@ -107,7 +107,8 @@ object ProfileSettingsSync {
 
     suspend fun pull(profileId: Int): Boolean {
         ensureRepositoriesLoaded()
-        return syncMutex.withLock {
+        var pushLocalAfterPull = false
+        val applied = syncMutex.withLock {
             if (ProfileRepository.activeProfileId != profileId) {
                 log.d { "pull(profileId=$profileId) — skipped because profile is no longer active" }
                 return@withLock false
@@ -132,21 +133,36 @@ object ProfileSettingsSync {
                     return@withLock false
                 }
 
-                isApplyingRemoteBlob = true
-                try {
-                    val remoteBlob = runCatching {
-                        json.decodeFromJsonElement(MobileProfileSettingsBlob.serializer(), remoteJson)
-                    }.getOrElse { error ->
-                        log.e(error) { "pull(profileId=$profileId) — failed to decode remote settings blob" }
-                        return@withLock false
-                    }
-                    val remoteSignature = buildSignature(remoteBlob)
-                    if (remoteSignature == localSignature) {
+                val remoteBlob = runCatching {
+                    json.decodeFromJsonElement(MobileProfileSettingsBlob.serializer(), remoteJson)
+                }.getOrElse { error ->
+                    log.e(error) { "pull(profileId=$profileId) — failed to decode remote settings blob" }
+                    return@withLock false
+                }
+                val remoteSignature = buildSignature(remoteBlob)
+
+                // The user may have changed settings while the RPC was in flight.
+                // Re-read the current local signature before deciding: if it moved
+                // since the pre-fetch snapshot, the local change wins and the
+                // remote blob must not overwrite it.
+                if (ProfileRepository.activeProfileId != profileId) return@withLock false
+                val postFetchLocalSignature = currentObservedStateSignature()
+                when (val decision = decideProfileSettingsPull(localSignature, postFetchLocalSignature, remoteSignature)) {
+                    ProfileSettingsPullDecision.SkipRemoteMatchesLocal -> {
                         log.d { "pull(profileId=$profileId) — remote matches local" }
                         return@withLock false
                     }
+                    ProfileSettingsPullDecision.SkipLocalChangedDuringPull -> {
+                        log.i { "pull(profileId=$profileId) — local settings changed during pull; keeping local state" }
+                        pushLocalAfterPull = shouldPushLocalAfterPull(decision, postFetchLocalSignature, remoteSignature)
+                        return@withLock false
+                    }
+                    ProfileSettingsPullDecision.ApplyRemote -> Unit
+                }
 
-                    if (ProfileRepository.activeProfileId != profileId) return@withLock false
+                if (ProfileRepository.activeProfileId != profileId) return@withLock false
+                isApplyingRemoteBlob = true
+                try {
                     applyRemoteBlob(remoteBlob)
                     skipNextPushSignature = currentObservedStateSignature()
                 } finally {
@@ -162,6 +178,13 @@ object ProfileSettingsSync {
                 isServerSyncInFlight = false
             }
         }
+        if (pushLocalAfterPull) {
+            // The local-change observer drops events while a sync is in flight, so a
+            // change made during the pull may never re-fire it. Push the winning
+            // local state explicitly once the sync lock has been released.
+            scope.launch { pushCurrentProfileToRemote() }
+        }
+        return applied
     }
 
     suspend fun pushCurrentProfileToRemote(): Boolean {

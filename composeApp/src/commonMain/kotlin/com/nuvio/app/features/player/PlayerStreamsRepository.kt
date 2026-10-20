@@ -25,7 +25,9 @@ import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLoadCompletion
 import com.nuvio.app.features.streams.StreamParser
 import com.nuvio.app.features.streams.StreamsUiState
+import com.nuvio.app.features.streams.partitionedDubFirstForDisplay
 import com.nuvio.app.features.streams.runCatchingUnlessCancelled
+import com.nuvio.app.features.streams.sortedDubFirstForDisplay
 import com.nuvio.app.features.streams.sortedForGroupedDisplay
 import com.nuvio.app.features.streams.streamAddonInstanceId
 import com.nuvio.app.features.streams.supportsStream
@@ -212,6 +214,8 @@ object PlayerStreamsRepository {
         stateFlow.value = StreamsUiState()
 
         val streamBadgeRules = StreamBadgeSettingsRepository.snapshot()
+        PlayerSettingsRepository.ensureLoaded()
+        val playerSettings = PlayerSettingsRepository.uiState.value
         val embeddedStreams = MetaDetailsRepository.findEmbeddedStreams(videoId)
         if (embeddedStreams.isNotEmpty()) {
             log.d { "Using ${embeddedStreams.size} embedded streams for type=$type id=$videoId" }
@@ -225,8 +229,17 @@ object PlayerStreamsRepository {
                 groups = listOf(group),
                 rules = streamBadgeRules,
             ).firstOrNull() ?: group
+            // Embedded groups publish directly, without the completion
+            // pipeline, so apply the same dub-first display sort here while
+            // the English-audio preference is active; with the preference off
+            // the embedded order is published untouched.
+            val displayGroup = presentedGroup.sortedDubFirstForDisplay(
+                preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                    playerSettings.preferredAudioLanguage,
+                ),
+            )
             stateFlow.value = StreamsUiState(
-                groups = listOf(presentedGroup),
+                groups = listOf(displayGroup),
                 activeAddonIds = setOf("embedded"),
                 isAnyLoading = false,
             )
@@ -237,8 +250,6 @@ object PlayerStreamsRepository {
         val serverSources = ServerStreams.sources(type, videoId, season, episode, forceRefresh)
         val preferredGroupIds = serverSources.filter { it.preferred }.mapTo(mutableSetOf()) { it.addonId }
         val installedAddons = if (isNativeServerRequest) emptyList() else AddonRepository.uiState.value.addons.enabledAddons()
-        PlayerSettingsRepository.ensureLoaded()
-        val playerSettings = PlayerSettingsRepository.uiState.value
         val debridSettings = DebridSettingsRepository.snapshot()
         val pluginScrapers = if (AppFeaturePolicy.pluginsEnabled && !isNativeServerRequest) {
             PluginRepository.getEnabledScrapersForType(type)
@@ -323,10 +334,25 @@ object PlayerStreamsRepository {
                     groups = listOf(group),
                     rules = streamBadgeRules,
                 ).firstOrNull() ?: group
-                return DebridStreamPresentation.apply(
+                val presentedGroup = DebridStreamPresentation.apply(
                     groups = listOf(badgeGroup),
                     settings = debridSettings,
                 ).firstOrNull() ?: badgeGroup
+                // Debrid presentation regroups the group debrid-block-first
+                // (and custom debrid sort criteria have no language key),
+                // which undoes the dub-first order applied before publishing.
+                // While the English-audio preference is active, finish with a
+                // stable English-first partition so the manual list stays
+                // dub-first across the debrid/passthrough blocks; the
+                // presented order survives inside each language tier.
+                // Server-source groups are not addon groups and keep their
+                // own order, exactly as before.
+                if (group.addonId !in installedAddonIds) return presentedGroup
+                return presentedGroup.partitionedDubFirstForDisplay(
+                    preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                        playerSettings.preferredAudioLanguage,
+                    ),
+                )
             }
 
             // Regular addon completions get the same within-group dub-first

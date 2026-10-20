@@ -313,24 +313,6 @@ object DownloadsRepository {
         }
     }
 
-    /**
-     * Auto-cleanup hook, called when playback of a downloaded item starts:
-     * once the user is watching episode N of a season, the fully downloaded
-     * episodes they have moved past (numbered <= N - 2) are deleted through
-     * the normal delete path ([cancelDownload]), so files and records are
-     * cleaned exactly like a manual delete. The started episode and the one
-     * right before it are always kept. No-op unless the auto-delete setting
-     * is on and the started item is itself a completed download.
-     */
-    fun onDownloadedPlaybackStarted(startedItem: DownloadItem) {
-        ensureLoaded()
-        if (!DownloadsSettingsRepository.isAutoDeleteOlderEpisodesEnabled()) return
-        val current = _uiState.value.items.firstOrNull { it.id == startedItem.id } ?: return
-        if (current.status != DownloadStatus.Completed) return
-        episodesToAutoCleanup(_uiState.value.items, current)
-            .forEach { cancelDownload(it.id) }
-    }
-
     fun pauseDownload(downloadId: String) {
         ensureLoaded()
         val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return

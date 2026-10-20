@@ -137,17 +137,63 @@ internal fun PluginRuntimeResult.toStreamItem(
 
 internal fun List<StreamItem>.sortedForGroupedDisplay(
     preferEnglishAudio: Boolean = false,
-): List<StreamItem> =
-    sortedWith(
-        compareBy<StreamItem> { it.sourceName.orEmpty().lowercase() }
-            // Dub over sub, always: English-audio streams first (when the user prefers English).
-            .thenBy { stream -> if (preferEnglishAudio && AdaptiveStreamPicker.hasEnglishAudio(stream)) 0 else 1 }
-            // Best-seeded first; unknown counts last. The sort is stable,
-            // so the addon's own order breaks remaining ties.
-            .thenByDescending { AdaptiveStreamPicker.parseSeeders(it) ?: -1 }
-            .thenBy { it.streamLabel.lowercase() }
-            .thenBy { it.streamSubtitle.orEmpty().lowercase() },
-    )
+): List<StreamItem> {
+    // Best-seeded first; unknown counts last. The sort is stable,
+    // so the addon's own order breaks remaining ties.
+    val seedersThenLabel = compareByDescending<StreamItem> { AdaptiveStreamPicker.parseSeeders(it) ?: -1 }
+        .thenBy { it.streamLabel.lowercase() }
+        .thenBy { it.streamSubtitle.orEmpty().lowercase() }
+    return if (preferEnglishAudio) {
+        // Dub over sub, always: English-audio streams first across the WHOLE
+        // group. In repo-merged plugin groups the scraper sourceName must not
+        // outrank language (a non-English stream from scraper "A…" used to
+        // stay above an English dub from scraper "Z…"), so the English key is
+        // primary here and sourceName only orders within a language tier.
+        sortedWith(
+            compareBy<StreamItem> { stream -> if (AdaptiveStreamPicker.hasEnglishAudio(stream)) 0 else 1 }
+                .thenBy { it.sourceName.orEmpty().lowercase() }
+                .then(seedersThenLabel),
+        )
+    } else {
+        // Preference off: ordering is exactly what it has always been —
+        // scraper sourceName groups first, then seeders/label.
+        sortedWith(
+            compareBy<StreamItem> { it.sourceName.orEmpty().lowercase() }
+                .then(seedersThenLabel),
+        )
+    }
+}
+
+/**
+ * Full dub-first display sort for a whole group (used by the embedded-streams
+ * path, which publishes a group without any other ordering step). Returns the
+ * group untouched when the English-audio preference is off, so the original
+ * order is preserved byte-for-byte in that case.
+ */
+internal fun AddonStreamGroup.sortedDubFirstForDisplay(
+    preferEnglishAudio: Boolean,
+): AddonStreamGroup {
+    if (!preferEnglishAudio || streams.size < 2) return this
+    return copy(streams = streams.sortedForGroupedDisplay(preferEnglishAudio = true))
+}
+
+/**
+ * Stable English-audio-first partition of an already-presented group. Debrid
+ * presentation regroups a group debrid-block-first (and custom debrid sort
+ * criteria know nothing about language), which undoes the dub-first sort
+ * applied earlier in the pipeline; running this as the final step restores
+ * English-first across the debrid/passthrough blocks while preserving the
+ * presented order inside each language tier. Returns the group untouched when
+ * the English-audio preference is off.
+ */
+internal fun AddonStreamGroup.partitionedDubFirstForDisplay(
+    preferEnglishAudio: Boolean,
+): AddonStreamGroup {
+    if (!preferEnglishAudio || streams.size < 2) return this
+    val (english, other) = streams.partition { AdaptiveStreamPicker.hasEnglishAudio(it) }
+    if (english.isEmpty() || other.isEmpty()) return this
+    return copy(streams = english + other)
+}
 
 private fun String.fallbackRepositoryLabel(): String {
     val withoutQuery = substringBefore("?")

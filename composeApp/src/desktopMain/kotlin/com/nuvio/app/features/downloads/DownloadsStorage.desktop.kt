@@ -5,7 +5,6 @@ import com.nuvio.app.core.storage.ProfileScopedKey
 
 internal actual object DownloadsStorage {
     private const val payloadKey = "downloads_payload"
-    private const val settingsPayloadKey = "downloads_settings_payload"
 
     private val prefs = DesktopPreferences("downloads")
 
@@ -16,10 +15,4 @@ internal actual object DownloadsStorage {
         prefs.putString(ProfileScopedKey.of(payloadKey), payload)
     }
 
-    actual fun loadSettingsPayload(): String? =
-        prefs.getString(ProfileScopedKey.of(settingsPayloadKey))
-
-    actual fun saveSettingsPayload(payload: String) {
-        prefs.putString(ProfileScopedKey.of(settingsPayloadKey), payload)
-    }
 }

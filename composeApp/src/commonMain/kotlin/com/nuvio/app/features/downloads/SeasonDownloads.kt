@@ -291,6 +291,8 @@ object SeasonDownloads {
 /**
  * Picks the episode stream that best matches [template]: the same torrent (a season pack) first,
  * otherwise a stream of the same kind and resolution whose release name is closest.
+ * When no stream exists at the template's resolution, the closest available quality
+ * is used instead of giving up (see [matchingResolutionPool]).
  * When [preferEnglishAudio], an English-audio release of the same kind wins across
  * resolutions before that same-resolution matching runs (dub over sub, always).
  */
@@ -322,9 +324,8 @@ internal fun pickMatchingEpisodeStream(
             )
             ?.let { return it }
     }
-    val pool = candidates
-        .filter { it.isTorrentStream == template.isTorrentStream }
-        .filter { templateResolution == null || it.streamResolution() == templateResolution }
+    val sameKind = candidates.filter { it.isTorrentStream == template.isTorrentStream }
+    val pool = matchingResolutionPool(sameKind, templateResolution)
     if (pool.isEmpty()) return null
     // Dub over sub: prefer English-audio releases at the template's quality.
     val rankedPool = if (preferEnglishAudio) {
@@ -337,6 +338,42 @@ internal fun pickMatchingEpisodeStream(
     // maxByOrNull keeps the first of equal scores, so the addon's own ordering breaks ties.
     return rankedPool.maxByOrNull { jaccard(templateTokens, it.releaseTokens()) }
 }
+
+/**
+ * The fallback pool for [pickMatchingEpisodeStream]: the same-kind streams at the
+ * template's resolution when any exist. When none do, the closest available quality
+ * takes their place — nearest tier, at-or-below the template first, then above (the
+ * ordering [AdaptiveStreamPicker.pickBestSeeded] uses for its quality fallback) — so
+ * an episode that only exists at another quality is still downloaded instead of
+ * landing in missingEpisodes. Streams whose resolution cannot be parsed are a last
+ * resort, used only when no parseable candidate exists at any tier. A null
+ * [templateResolution] keeps every same-kind stream eligible, as before.
+ */
+private fun matchingResolutionPool(
+    sameKind: List<StreamItem>,
+    templateResolution: String?,
+): List<StreamItem> {
+    if (templateResolution == null) return sameKind
+    val exact = sameKind.filter { it.streamResolution() == templateResolution }
+    if (exact.isNotEmpty()) return exact
+    val parseable = sameKind.filter { it.streamResolution() != null }
+    if (parseable.isEmpty()) return sameKind
+    val closest = closestQualityLabel(
+        available = parseable.mapNotNull { it.streamResolution() }.distinct(),
+        target = templateResolution,
+    ) ?: return parseable
+    return parseable.filter { it.streamResolution() == closest }
+}
+
+/** Quality tiers from lowest to highest, mirroring AdaptiveStreamPicker's ranking. */
+private val qualityTierRank = listOf("480p", "576p", "720p", "1080p", "1440p", "2160p")
+
+/** Closest of [available] to [target]: smallest tier distance, ties to the lower tier. */
+private fun closestQualityLabel(available: List<String>, target: String): String? =
+    available.minWithOrNull(
+        compareBy<String> { kotlin.math.abs(qualityTierRank.indexOf(it) - qualityTierRank.indexOf(target)) }
+            .thenBy { qualityTierRank.indexOf(it) },
+    )
 
 private val episodeMarker = Regex("\\bs\\d{1,2}\\s*e\\d{1,3}\\b|\\b\\d{1,2}x\\d{1,3}\\b|\\be(p(isode)?)?\\s*\\d{1,3}\\b")
 

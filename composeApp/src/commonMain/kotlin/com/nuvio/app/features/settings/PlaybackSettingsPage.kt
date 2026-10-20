@@ -89,7 +89,6 @@ import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingEngine
 import com.nuvio.app.features.p2p.P2pStreamingState
 import com.nuvio.app.features.p2p.P2pTorrentProfile
-import com.nuvio.app.features.downloads.DownloadsSettingsRepository
 import com.nuvio.app.features.plugins.PluginsUiState
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.streams.StreamAutoPlayMode
@@ -378,10 +377,6 @@ private fun PlaybackSettingsSection(
     val p2pSettings by remember {
         P2pSettingsRepository.ensureLoaded()
         P2pSettingsRepository.uiState
-    }.collectAsStateWithLifecycle()
-    val downloadsSettings by remember {
-        DownloadsSettingsRepository.ensureLoaded()
-        DownloadsSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
     val p2pCacheState by P2pStreamingEngine.cacheState.collectAsStateWithLifecycle()
     val p2pStreamingState by P2pStreamingEngine.state.collectAsStateWithLifecycle()
@@ -820,24 +815,6 @@ private fun PlaybackSettingsSection(
                         },
                     )
                 }
-            }
-        }
-
-        // TODO: migrate the downloads strings back to string resources once the
-        // generated Res class picks up new strings.xml entries (same batch-16
-        // workaround as DownloadOptionsSheet's hardcoded literals).
-        SettingsSection(
-            title = "DOWNLOADS",
-            isTablet = isTablet,
-        ) {
-            SettingsGroup(isTablet = isTablet) {
-                SettingsSwitchRow(
-                    title = "Auto-delete older episodes",
-                    description = "When you start watching a downloaded episode, delete downloaded episodes more than one behind it",
-                    checked = downloadsSettings.autoDeleteOlderEpisodes,
-                    isTablet = isTablet,
-                    onCheckedChange = DownloadsSettingsRepository::setAutoDeleteOlderEpisodes,
-                )
             }
         }
 

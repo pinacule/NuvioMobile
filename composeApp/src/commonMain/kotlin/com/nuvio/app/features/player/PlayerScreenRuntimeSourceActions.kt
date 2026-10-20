@@ -397,7 +397,6 @@ internal fun PlayerScreenRuntime.switchToEpisodeStream(
 
 internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: DownloadItem, episode: MetaVideo) {
     val localFileUri = DownloadsRepository.playableLocalFileUri(downloadItem) ?: return
-    DownloadsRepository.onDownloadedPlaybackStarted(downloadItem)
     resetEpisodePanelAndNextEpisodeState()
     flushWatchProgress()
     stopActiveP2pStream()

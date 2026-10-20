@@ -149,9 +149,18 @@ object StreamsRepository {
                 groups = listOf(group),
                 rules = streamBadgeRules,
             ).firstOrNull() ?: group
+            // Embedded groups publish directly, without the completion
+            // pipeline, so apply the same dub-first display sort here while
+            // the English-audio preference is active; with the preference off
+            // the embedded order is published untouched.
+            val displayGroup = presentedGroup.sortedDubFirstForDisplay(
+                preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                    playerSettings.preferredAudioLanguage,
+                ),
+            )
             _uiState.value = StreamsUiState(
                 requestToken = requestToken,
-                groups = listOf(presentedGroup),
+                groups = listOf(displayGroup),
                 autoPlayDecided = true,
                 activeAddonIds = setOf("embedded"),
                 isAnyLoading = false,
@@ -325,10 +334,25 @@ object StreamsRepository {
                     groups = listOf(group),
                     rules = streamBadgeRules,
                 ).firstOrNull() ?: group
-                return DebridStreamPresentation.apply(
+                val presentedGroup = DebridStreamPresentation.apply(
                     groups = listOf(badgeGroup),
                     settings = debridSettings,
                 ).firstOrNull() ?: badgeGroup
+                // Debrid presentation regroups the group debrid-block-first
+                // (and custom debrid sort criteria have no language key),
+                // which undoes the dub-first order applied before publishing.
+                // While the English-audio preference is active, finish with a
+                // stable English-first partition so the manual list stays
+                // dub-first across the debrid/passthrough blocks; the
+                // presented order survives inside each language tier.
+                // Server-source groups are not addon groups and keep their
+                // own order, exactly as before.
+                if (group.addonId !in installedAddonIds) return presentedGroup
+                return presentedGroup.partitionedDubFirstForDisplay(
+                    preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+                        playerSettings.preferredAudioLanguage,
+                    ),
+                )
             }
 
             // Regular addon completions get the same within-group dub-first

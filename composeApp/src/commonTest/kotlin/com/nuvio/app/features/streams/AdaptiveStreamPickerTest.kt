@@ -326,4 +326,228 @@ class AdaptiveStreamPickerTest {
         )
         assertEquals("JP.B.1080p", picked?.name)
     }
+
+    // hasEnglishAudio — named-language vetoes (audit M-S1 / LOW #13)
+
+    @Test
+    fun hasEnglishAudio_namedNonEnglishDubIsNotEnglish() {
+        // A dub tag next to a named non-English language is THAT language's
+        // dub, not the English one.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Re Zero S01E01 Hindi Dub 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("The Simpsons S01E01 JPN DUB 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Hindi Dubbed 1080p")))
+        // A bare dub tag with NO language named still counts (anime convention)...
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [DUB] 1080p")))
+        // ...and so does a dub where English is named alongside the other language.
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 JPN ENG Dub 1080p")))
+    }
+
+    @Test
+    fun hasEnglishAudio_dualAudioListingOnlyNonEnglishLanguagesIsNotEnglish() {
+        // Dual/multi audio implies English only while no language list says
+        // otherwise; an explicit list without English settles it.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Re Zero S01E01 Dual Audio JPN POR 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Multi Audio JPN 1080p")))
+        // English among the listed languages keeps it a dub.
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Dual Audio JPN ENG 1080p")))
+        // No languages listed: plain "Dual Audio" still counts (existing rule).
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Dual Audio 1080p")))
+    }
+
+    // hasEnglishAudio — subtitle-bound languages and the veto (review fix)
+
+    @Test
+    fun hasEnglishAudio_subtitleBoundEnglishDoesNotRescueNonEnglishDub() {
+        // The ENG/EN here belongs to a Subs tag: it describes subtitle
+        // tracks, not audio, so it must not cancel the JPN veto — the dub
+        // is Japanese.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [JPN Dub][ENG Subs] 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 JPN DUB ENG SUBS 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 JPN Dub EN Subs 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [JPN Dub][EN Subs] 1080p")))
+    }
+
+    @Test
+    fun hasEnglishAudio_subtitleBoundNonEnglishDoesNotVetoNeutralTags() {
+        // Mirror image: a JPN bound to a Subs tag describes subtitles, so
+        // it must not veto a bare [DUB] or a Dual Audio tag (regression —
+        // both counted as English audio before the veto existed in this
+        // form).
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [DUB] [JPN Subs] 1080p")))
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Dual Audio [JPN Subs] 1080p")))
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [DUB] [ENG Subs] 1080p")))
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [ENG Dub][JPN Subs] 1080p")))
+        // A JPN that is NOT subtitle-bound still vetoes...
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [DUB][JPN Audio]")))
+        // ...and an audio-bound JPN is not rescued by a subtitle ENG.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [JPN Audio][ENG Subs]")))
+    }
+
+    @Test
+    fun hasEnglishAudio_additionalVetoLanguages() {
+        // Spanish/Latin-American dub tags and the pt/bul codes name their
+        // language just like Hindi/JPN do: the dub is not English.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Latino Dub 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Castellano Dub 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Espanol Dub 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 PT-BR Dub 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 BUL Dub 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Dual Audio Latino 1080p")))
+    }
+
+    @Test
+    fun hasEnglishAudio_standaloneDualFollowedByYearOrChannelsIsTagPosition() {
+        // A channel layout or a year sits where a resolution tag would:
+        // both are tag position for a standalone dual/multi token.
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Dual 5.1 1080p")))
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Dual 7.1 1080p")))
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show DUAL 2024 1080p")))
+        // An ordinary title word after "Dual" still is not a tag.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 Dual Destinies 1080p")))
+    }
+
+    // hasEnglishAudio — underscore-joined filenames (audit M-S2)
+
+    @Test
+    fun hasEnglishAudio_underscoreJoinedFilename() {
+        // "_" is a regex word character, so without normalization these
+        // filenames read as one long word and every tag check missed.
+        val englishDub = StreamItem(
+            name = "Re Zero - 01 (1080p)",
+            addonName = "Torrentio",
+            addonId = "torrentio",
+            behaviorHints = StreamBehaviorHints(filename = "Re_Zero_01_English_Dub_1080p.mkv"),
+        )
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(englishDub))
+        val dualAudio = StreamItem(
+            name = "Re Zero - 01 (1080p)",
+            addonName = "Torrentio",
+            addonId = "torrentio",
+            behaviorHints = StreamBehaviorHints(filename = "Re_Zero_01_Dual_Audio_1080p.mkv"),
+        )
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(dualAudio))
+    }
+
+    // hasEnglishAudio — subtitle strip span (audit M-S3)
+
+    @Test
+    fun hasEnglishAudio_engTagFarFromTrailingSubsIsStillSubtitleMention() {
+        // The ENG sits 19 chars from the trailing "Subs" (resolution/codec
+        // tokens in between) — beyond the old 16-char strip span, it leaked
+        // through the "eng" fallback as a fake audio tag.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Re Zero S01E01 ENG 1080p WEB-DL x264 Subs")))
+    }
+
+    // hasEnglishAudio — episode-title words (audit LOW #8)
+
+    @Test
+    fun hasEnglishAudio_episodeTitleWordsAreNotTags() {
+        // "Dual" here is an episode-title word, followed by another ordinary
+        // word — not a release tag. (Real standalone tags sit in tag
+        // position: followed by a separator, another tag, a resolution, a
+        // group suffix, or the end of the text.)
+        val titled = StreamItem(
+            name = "Torrentio",
+            title = "Re Zero - 01 - Dual Destinies (1080p) [English Subtitles]",
+            addonName = "Torrentio",
+            addonId = "torrentio",
+        )
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(titled))
+        assertFalse(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                stream("Re Zero - 01 - Dual Destinies (1080p) [English Subtitles]"),
+            ),
+        )
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show.S01E01.DUAL-GRP")))
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 DUAL")))
+    }
+
+    // hasEnglishAudio — description-only dub phrases (audit LOW #9)
+
+    @Test
+    fun hasEnglishAudio_descriptionEnglishDubPhrase() {
+        // The dub is stated ONLY in the description, as an explicit phrase.
+        val descOnly = StreamItem(
+            name = "Torrentio 1080p",
+            title = "Re Zero - 01",
+            description = "English Dub | DDP5.1",
+            addonName = "Torrentio",
+            addonId = "torrentio",
+        )
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(descOnly))
+        // "English subtitles" in a description is not a dub phrase.
+        val subsOnly = StreamItem(
+            name = "Torrentio 1080p",
+            title = "Re Zero - 01",
+            description = "English subtitles",
+            addonName = "Torrentio",
+            addonId = "torrentio",
+        )
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(subsOnly))
+    }
+
+    // hasEnglishAudio — bare language tags (audit LOW #10)
+
+    @Test
+    fun hasEnglishAudio_bareEnglishTagAndDotSeparatedEnAudio() {
+        // Tag-position bare "English" (after the episode marker / year).
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Re.Zero.S01E01.English.1080p.WEB-DL")))
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Movie.Name.2020.English.1080p")))
+        // Dot-separated "EN.Audio".
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Re.Zero.S01E01.EN.Audio.1080p")))
+        // "English" inside the show's name (before every tag anchor) is not a tag.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("The.English.Game.S01E01.1080p.WEB-DL")))
+    }
+
+    // hasEnglishAudio — batch-18 regression battery (remaining cases)
+
+    @Test
+    fun hasEnglishAudio_batch18RegressionBattery() {
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("[Multi-Subs][English Dub] Show 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [Multi Subs]")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 [JPN Audio][ENG Subs]")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 MULTiSUBS 1080p")))
+        // "Subs: ENG" stated in the description is a subtitle line, not audio.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 1080p", "Subs: ENG")))
+    }
+
+    // pickBestSeeded — unparseable resolutions (audit LOW #11)
+
+    @Test
+    fun pickBestSeeded_unparseableResolutionDubIsSelectableAsLastTier() {
+        // The only English dub carries no resolution token anywhere; the
+        // well-seeded Japanese release does. The dub must still win —
+        // previously the unknown-resolution pool was unreachable.
+        val streams = listOf(
+            stream("JP.1080p", "\uD83D\uDC64 900 \uD83D\uDCBE 2.0 GB"),
+            stream("Show S01E01 English Dub", "\uD83D\uDC64 10 \uD83D\uDCBE 1.0 GB"),
+        )
+        val picked = AdaptiveStreamPicker.pickBestSeeded(
+            streams, "1080p", preferEnglishAudio = true,
+        )
+        assertEquals("Show S01E01 English Dub", picked?.name)
+    }
+
+    @Test
+    fun pickBestSeeded_parseableBeatsUnparseableWithinSameLanguagePool() {
+        // The unparseable dub has far more seeders, but a parseable
+        // candidate in the same (English) pool always outranks the last tier.
+        val streams = listOf(
+            stream("EN Dub Show S01E01", "\uD83D\uDC64 999 \uD83D\uDCBE 1.0 GB"),
+            stream("EN.720p.Dub", "\uD83D\uDC64 5 \uD83D\uDCBE 1.0 GB"),
+        )
+        val picked = AdaptiveStreamPicker.pickBestSeeded(
+            streams, "1080p", preferEnglishAudio = true,
+        )
+        assertEquals("EN.720p.Dub", picked?.name)
+    }
+
+    @Test
+    fun pickBestSeeded_allUnparseableResolutions_picksBestSeeded() {
+        val streams = listOf(
+            stream("A Show S01E01", "\uD83D\uDC64 10 \uD83D\uDCBE 1.0 GB"),
+            stream("B Show S01E01", "\uD83D\uDC64 300 \uD83D\uDCBE 1.2 GB"),
+        )
+        assertEquals("B Show S01E01", AdaptiveStreamPicker.pickBestSeeded(streams, "1080p")?.name)
+    }
 }

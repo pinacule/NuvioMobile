@@ -64,9 +64,10 @@ internal val torrentDownloadSlots = Semaphore(MAX_CONCURRENT_TORRENT_DOWNLOADS)
  * episode grab a free slot first; the ordered queue guarantees first-episode-first no matter the
  * arrival order.
  *
- * Entries are (item, token): the token identifies one acquire attempt so a cancelled attempt
- * removes exactly its own entry. The queue is in-memory only; across a process restart workers
- * re-insert themselves in episode order as they arrive.
+ * Entries are (item, token): the token identifies one acquire attempt — acquisition matches the
+ * queue head by token identity, and a cancelled attempt removes exactly its own entry. The queue
+ * is in-memory only; across a process restart workers re-insert themselves in episode order as
+ * they arrive.
  */
 private val torrentSlotQueueMutex = Mutex()
 private val torrentSlotQueue = ArrayDeque<Pair<DownloadItem, Any>>()
@@ -83,24 +84,41 @@ internal suspend fun acquireOrderedTorrentSlot(item: DownloadItem, token: Any) {
     try {
         while (true) {
             val acquired = torrentSlotQueueMutex.withLock {
-                if (torrentSlotQueue.firstOrNull()?.let { (head, _) -> head.id == item.id } == true &&
-                    torrentDownloadSlots.tryAcquire()
-                ) {
-                    torrentSlotQueue.removeFirst()
-                    true
-                } else {
-                    false
-                }
+                tryTakeTorrentSlotQueueHead(torrentSlotQueue, token, torrentDownloadSlots)
             }
             if (acquired) return
             delay(TORRENT_SLOT_POLL_MS)
         }
     } catch (cancellation: CancellationException) {
-        torrentSlotQueueMutex.withLock {
-            torrentSlotQueue.removeAll { (_, queuedToken) -> queuedToken === token }
+        // NonCancellable: this coroutine is already being torn down, so a plain withLock here
+        // could itself throw CancellationException under contention and leak the queue entry.
+        withContext(NonCancellable) {
+            torrentSlotQueueMutex.withLock {
+                torrentSlotQueue.removeAll { (_, queuedToken) -> queuedToken === token }
+            }
         }
         throw cancellation
     }
+}
+
+/**
+ * Takes a download slot for the attempt identified by [token] when — and only when — that
+ * attempt's own entry heads [queue] and a slot permit is free; removes exactly that entry.
+ * Matching by token identity rather than item id matters: the preload path can queue two
+ * attempts for the same item id (pause cancels one attempt, resume starts another), and an
+ * attempt that consumed the *other* attempt's head entry would leave its own entry behind as
+ * a permanent phantom head blocking every later torrent download until process restart.
+ * Callers must hold the queue mutex.
+ */
+internal fun tryTakeTorrentSlotQueueHead(
+    queue: ArrayDeque<Pair<DownloadItem, Any>>,
+    token: Any,
+    slots: Semaphore,
+): Boolean {
+    if (queue.firstOrNull()?.second !== token) return false
+    if (!slots.tryAcquire()) return false
+    queue.removeFirst()
+    return true
 }
 
 /**

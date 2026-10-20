@@ -368,6 +368,55 @@ class OriginalAudioPreferenceTest {
         assertEquals(listOf(1, 0), controller.subtitleSelections)
     }
 
+    @Test
+    fun untaggedJapaneseDubDoesNotBlockEnglishDubTrack() {
+        val controller = RecordingController(listOf(
+            AudioTrack(0, "1", "Japanese Dub", "und", true),
+            AudioTrack(1, "2", "English Dub", "und"),
+        ))
+        val runtime = runtime(controller, preferredAudioLanguage = "en")
+
+        runtime.refreshTracks()
+
+        // "Japanese Dub" carries no English evidence, so the fallback must move
+        // on and select the track that does (previously the bare "Dub" keyword
+        // made it deem the selected Japanese track English and return early).
+        assertEquals(listOf(1), controller.audioSelections)
+        runtime.refreshAudioTracksIfChanged()
+        assertEquals(1, runtime.selectedAudioIndex)
+        assertEquals(listOf(1), controller.audioSelections)
+    }
+
+    @Test
+    fun untaggedDubOnlyLabelDoesNotBlockEnglishDubTrack() {
+        val controller = RecordingController(listOf(
+            AudioTrack(0, "1", "Dub", "und", true),
+            AudioTrack(1, "2", "English Dub", "und"),
+        ))
+        val runtime = runtime(controller, preferredAudioLanguage = "en")
+
+        runtime.refreshTracks()
+
+        // A label of just "Dub" is unknown, not English — selection moves on.
+        assertEquals(listOf(1), controller.audioSelections)
+    }
+
+    @Test
+    fun japaneseDubLabelIsNotSelectedOverUntaggedTrackWithoutEnglishEvidence() {
+        val controller = RecordingController(listOf(
+            AudioTrack(0, "1", "Track 1", null, true),
+            AudioTrack(1, "2", "Japanese Dub", "und"),
+        ))
+        val runtime = runtime(controller, preferredAudioLanguage = "en")
+
+        runtime.refreshTracks()
+
+        // No track carries English evidence: the fallback must not actively
+        // switch to the "Japanese Dub" track (the old keyword list did).
+        assertEquals(emptyList(), controller.audioSelections)
+        assertEquals(0, runtime.selectedAudioIndex)
+    }
+
     private fun reportRequestedOriginalSelection(runtime: PlayerScreenRuntime, controller: RecordingController) {
         assertEquals(originalLanguage, controller.audioLanguagePreferences.last().first())
         assertEquals(emptyList(), controller.audioSelections)
@@ -409,7 +458,11 @@ class OriginalAudioPreferenceTest {
         settings = TmdbSettings(enabled = true, useDetails = true),
     )
 
-    private fun runtime(controller: RecordingController, contentLanguage: String? = null) =
+    private fun runtime(
+        controller: RecordingController,
+        contentLanguage: String? = null,
+        preferredAudioLanguage: String = AudioLanguageOption.ORIGINAL,
+    ) =
         PlayerScreenRuntime(
             PlayerScreenArgs(
                 profileId = 1,
@@ -452,7 +505,7 @@ class OriginalAudioPreferenceTest {
             playerController = controller
             playbackSnapshot = PlayerPlaybackSnapshot(isLoading = false, isPlaying = true)
             playerSettingsUiState = PlayerSettingsUiState(
-                preferredAudioLanguage = AudioLanguageOption.ORIGINAL,
+                preferredAudioLanguage = preferredAudioLanguage,
                 preferredSubtitleLanguage = SubtitleLanguageOption.NONE,
             )
             trackPreferenceRestoreApplied = true
