@@ -93,14 +93,9 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     val nextVideo = allEpisodes.firstOrNull { video -> video.id == nextVideoId } ?: return null
     if (nextEpisodeInfo.hasAired != true) return null
 
-    // Silent preload cache wins over both downloads and streams: it was fetched
-    // ahead (video + subtitles) for exactly this episode.
-    val cachedPreload = PreloadCache.lookup(nextVideo.id)
-    if (cachedPreload != null) {
-        onCachedPreloadSelected(cachedPreload, nextVideo)
-        return null
-    }
-
+    // A real, playable download wins over the silent preload cache. The cache
+    // is only fetched when no download exists (checked at fetch start), so a
+    // stale cached copy must never shadow a download that finished later.
     val downloadedNextEpisode = DownloadsRepository.findPlayableDownload(
         parentMetaId = parentMetaId,
         seasonNumber = nextVideo.season,
@@ -109,6 +104,12 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     )
     if (downloadedNextEpisode != null) {
         onDownloadedEpisodeSelected(downloadedNextEpisode, nextVideo)
+        return null
+    }
+
+    val cachedPreload = PreloadCache.lookup(nextVideo.id)
+    if (cachedPreload != null) {
+        onCachedPreloadSelected(cachedPreload, nextVideo)
         return null
     }
 
