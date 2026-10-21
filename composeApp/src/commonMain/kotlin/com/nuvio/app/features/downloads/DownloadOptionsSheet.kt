@@ -141,11 +141,14 @@ fun PosterDownloadCoordinator(
     val unsupportedText = stringResource(Res.string.season_download_unsupported)
     val nothingNewText = stringResource(Res.string.season_download_nothing_new)
     val startedText = stringResource(Res.string.season_download_started)
-    // TODO: migrate custom-download strings back to string resources once the
+    // TODO: migrate custom-download and movie download strings back to string resources once the
     // generated Res class picks up new strings.xml entries (runs #33-#36:
     // Res.string.* unresolved for strings added in batch-16; hardcoded as workaround).
     val nothingSelectedText = "Select episodes to download"
     val unavailableSelectedText = "Selected episodes are not available for download"
+    val movieStartedText = "Finding a matching stream…"
+    val movieAlreadyDownloadedText = "This movie is already downloaded"
+    val movieQueuedText = "Download queued"
 
     // Local functions are declared before their call sites (Kotlin requirement).
     fun enqueueReady(
@@ -215,7 +218,7 @@ fun PosterDownloadCoordinator(
             NuvioToastController.show(noStreamsText)
             return
         }
-        NuvioToastController.show(startedText)
+        NuvioToastController.show(if (req.isSeries) startedText else movieStartedText)
         posterDownloadScope.launch {
             val result = SeasonDownloads.enqueueVideos(
                 contentType = req.contentType,
@@ -249,7 +252,15 @@ fun PosterDownloadCoordinator(
             SeasonDownloadResult.UnsupportedSource -> NuvioToastController.show(unsupportedText)
             is SeasonDownloadResult.Queued -> NuvioToastController.show(
                 when {
-                    result.queued == 0 && result.missingEpisodes.isEmpty() -> nothingNewText
+                    // The only target was a movie and it could not be started:
+                    // say so instead of claiming it is already downloaded.
+                    result.queued == 0 && result.missingEpisodes.isEmpty() && result.missingMovie ->
+                        noStreamsText
+                    result.queued == 0 && result.missingEpisodes.isEmpty() ->
+                        if (!request.isSeries) movieAlreadyDownloadedText else nothingNewText
+                    !request.isSeries && result.queued > 0 &&
+                        result.missingEpisodes.isEmpty() && !result.missingMovie ->
+                        movieQueuedText
                     result.missingEpisodes.isEmpty() ->
                         getString(Res.string.season_download_queued, result.queued)
                     else -> getString(

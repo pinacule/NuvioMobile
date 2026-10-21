@@ -27,6 +27,8 @@ sealed class SeasonDownloadResult {
         val queued: Int,
         val alreadyDownloaded: Int,
         val missingEpisodes: List<Int>,
+        /** A target with no episode number (a movie) could not be started. */
+        val missingMovie: Boolean = false,
     ) : SeasonDownloadResult()
 
     /** The chosen stream needs P2P, which is turned off. */
@@ -147,8 +149,8 @@ object SeasonDownloads {
     }
 
     /**
-     * Downloads exactly [targets] (already resolved episode list, may span seasons),
-     * matching each episode's stream to [template].
+     * Downloads exactly [targets] (already resolved list, may span seasons; a target
+     * with no episode number is a movie), matching each target's stream to [template].
      */
     suspend fun enqueueVideos(
         contentType: String,
@@ -193,8 +195,9 @@ object SeasonDownloads {
 
         var queued = 0
         val missing = mutableListOf<Int>()
+        var missingMovie = false
         picks.forEach { (video, stream) ->
-            val episodeNumber = video.episode ?: return@forEach
+            val episodeNumber = video.episode
             val result = stream?.let {
                 DownloadsRepository.enqueueFromStream(
                     contentType = contentType,
@@ -215,14 +218,18 @@ object SeasonDownloads {
             }
             if (result == DownloadEnqueueResult.Started || result == DownloadEnqueueResult.Replaced) {
                 queued += 1
-            } else {
+            } else if (episodeNumber != null) {
                 missing += episodeNumber
+            } else {
+                // No episode number: the target is a movie that could not be started.
+                missingMovie = true
             }
         }
         return SeasonDownloadResult.Queued(
             queued = queued,
             alreadyDownloaded = alreadyDownloaded.size,
             missingEpisodes = missing,
+            missingMovie = missingMovie,
         )
     }
 
