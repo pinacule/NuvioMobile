@@ -107,6 +107,7 @@ import com.nuvio.app.core.poster.CustomPosterUrlRepository
 import com.nuvio.app.core.poster.withCustomPosterUrl
 import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.features.home.HomeContinueWatchingMaxRecentProgressItems
+import com.nuvio.app.features.home.OfflineHomeRepository
 import com.nuvio.app.features.home.buildHomeContinueWatchingItems
 import com.nuvio.app.features.home.filterEntriesForContinueWatchingWindow
 import com.nuvio.app.features.home.toContinueWatchingItem
@@ -328,6 +329,9 @@ fun LibraryScreen(
 
     ScreenActivityEffect(networkStatusUiState.condition, isRemoteSource) { screenActive ->
         if (!screenActive) return@ScreenActivityEffect
+        // The offline-home toggle lives on this screen: keep its state in
+        // step with connectivity while Library is visible.
+        OfflineHomeRepository.refresh()
         when (networkStatusUiState.condition) {
             NetworkCondition.NoInternet,
             NetworkCondition.ServersUnreachable,
@@ -597,6 +601,7 @@ fun LibraryScreen(
                                 onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
                                 modifier = libraryContentTransitionModifier()
                                     .padding(horizontal = 16.dp),
+                                trailingContent = { OfflineHomeToggle() },
                             )
                         }
                         when (displaySettings.layoutMode) {

@@ -51,13 +51,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.nuvio.app.core.i18n.localizedByteUnit
+import com.nuvio.app.core.ui.NuvioAnimatedWatchedBadge
+import com.nuvio.app.core.ui.NuvioProgressBar
 import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioScreenHeader
 import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.rememberEpisodeImageModel
+import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.formatP2pSpeed
+import com.nuvio.app.features.watched.WatchedRepository
+import com.nuvio.app.features.watching.application.WatchingState
+import com.nuvio.app.features.watchprogress.WatchProgressEntry
+import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.stringResource
 
@@ -75,6 +82,26 @@ fun DownloadsScreen(
     }.collectAsStateWithLifecycle()
     LaunchedEffect(uiState.completedItems.size) {
         DownloadsRepository.markCompletedSeen()
+    }
+
+    val watchProgressUiState by remember {
+        WatchProgressRepository.ensureLoaded()
+        WatchProgressRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val watchedUiState by remember {
+        WatchedRepository.ensureLoaded()
+        WatchedRepository.uiState
+    }.collectAsStateWithLifecycle()
+    // Watched/progress display state per completed download. Playback already records
+    // into these stores for downloaded playback too; the screen just never read them.
+    val completedWatchStates = remember(
+        uiState.completedItems,
+        watchProgressUiState.entries,
+        watchedUiState.watchedKeys,
+    ) {
+        uiState.completedItems.associate { item ->
+            item.id to item.downloadWatchState(watchedUiState.watchedKeys)
+        }
     }
 
     var selectedShowId by rememberSaveable(initialShowId) { mutableStateOf(initialShowId) }
@@ -128,6 +155,7 @@ fun DownloadsScreen(
         if (selectedShowId == null) {
             downloadsRootContent(
                 uiState = uiState,
+                watchStates = completedWatchStates,
                 onOpenDownload = onOpenDownload,
                 onOpenShow = { showId, title ->
                     onNavigateToShow?.invoke(showId, title) ?: run { selectedShowId = showId }
@@ -138,6 +166,7 @@ fun DownloadsScreen(
             downloadsShowContent(
                 showId = selectedShowId.orEmpty(),
                 episodes = completedEpisodes,
+                watchStates = completedWatchStates,
                 onOpenDownload = onOpenDownload,
                 onDeleteDownload = { downloadPendingDeletionId = it },
             )
@@ -164,6 +193,7 @@ fun DownloadsScreen(
 
 private fun LazyListScope.downloadsRootContent(
     uiState: DownloadsUiState,
+    watchStates: Map<String, DownloadWatchState>,
     onOpenDownload: (DownloadItem) -> Unit,
     onOpenShow: (showId: String, title: String) -> Unit,
     onDeleteDownload: (String) -> Unit,
@@ -215,14 +245,24 @@ private fun LazyListScope.downloadsRootContent(
     if (completedShows.isNotEmpty()) {
         item { SectionTitle(stringResource(Res.string.downloads_section_shows)) }
         items(items = completedShows, key = { (item, _) -> item.parentMetaId }) { (item, episodes) ->
+            val watchedCount = episodes.count { episode -> watchStates[episode.id]?.isWatched == true }
+            val allWatched = episodes.isNotEmpty() && watchedCount == episodes.size
             LibraryCard(
                 artwork = item.poster ?: item.background,
                 title = item.title,
-                detail = stringResource(
-                    Res.string.downloads_show_summary,
-                    episodes.size,
-                    formatBytes(episodes.sumOf { it.sizeOnDisk() }),
-                ),
+                detail = listOfNotNull(
+                    stringResource(
+                        Res.string.downloads_show_summary,
+                        episodes.size,
+                        formatBytes(episodes.sumOf { it.sizeOnDisk() }),
+                    ),
+                    when {
+                        allWatched -> "All watched"
+                        watchedCount > 0 -> "$watchedCount of ${episodes.size} watched"
+                        else -> null
+                    },
+                ).joinToString(" · "),
+                showWatchedBadge = allWatched,
                 onClick = { onOpenShow(item.parentMetaId, item.title) },
                 trailing = {
                     Icon(
@@ -238,10 +278,13 @@ private fun LazyListScope.downloadsRootContent(
     if (completedMovies.isNotEmpty()) {
         item { SectionTitle(stringResource(Res.string.downloads_section_movies)) }
         items(items = completedMovies, key = { it.id }) { item ->
+            val watchState = watchStates[item.id]
             LibraryCard(
                 artwork = item.poster ?: item.background,
                 title = item.title,
                 detail = formatBytes(item.sizeOnDisk()),
+                showWatchedBadge = watchState?.isWatched == true,
+                progressEntry = watchState?.visibleProgressEntry,
                 onClick = { onOpenDownload(item) },
                 trailing = { CompletedActions(onPlay = { onOpenDownload(item) }, onDelete = { onDeleteDownload(item.id) }) },
             )
@@ -252,6 +295,7 @@ private fun LazyListScope.downloadsRootContent(
 private fun LazyListScope.downloadsShowContent(
     showId: String,
     episodes: List<DownloadItem>,
+    watchStates: Map<String, DownloadWatchState>,
     onOpenDownload: (DownloadItem) -> Unit,
     onDeleteDownload: (String) -> Unit,
 ) {
@@ -296,6 +340,7 @@ private fun LazyListScope.downloadsShowContent(
         items(items = entries.sortedForSeriesDownloads(), key = { it.id }) { item ->
             EpisodeCard(
                 item = item,
+                watchState = watchStates[item.id],
                 onPlay = { onOpenDownload(item) },
                 onDelete = { onDeleteDownload(item.id) },
             )
@@ -538,6 +583,7 @@ private fun rememberTransferSpeed(item: DownloadItem): Long? {
 @Composable
 private fun EpisodeCard(
     item: DownloadItem,
+    watchState: DownloadWatchState?,
     onPlay: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -553,12 +599,33 @@ private fun EpisodeCard(
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Artwork(
-                url = item.episodeThumbnail,
-                fallbackUrl = item.background ?: item.poster,
-                width = 120.dp,
-                aspectRatio = 16f / 9f,
-            )
+            Box(modifier = Modifier.clip(RoundedCornerShape(8.dp))) {
+                Artwork(
+                    url = item.episodeThumbnail,
+                    fallbackUrl = item.background ?: item.poster,
+                    width = 120.dp,
+                    aspectRatio = 16f / 9f,
+                )
+                // Same watched language as the episode grid: badge top-end over the
+                // artwork, progress bar along its bottom edge.
+                NuvioAnimatedWatchedBadge(
+                    isVisible = watchState?.isWatched == true,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp),
+                )
+                watchState?.visibleProgressEntry?.let { entry ->
+                    NuvioProgressBar(
+                        progress = entry.progressFraction,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth(),
+                        height = 3.dp,
+                        trackColor = Color.White.copy(alpha = 0.22f),
+                        fillColor = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
             Spacer(Modifier.width(12.dp))
             Column(
                 modifier = Modifier.weight(1f),
@@ -591,6 +658,8 @@ private fun LibraryCard(
     title: String,
     detail: String,
     onClick: () -> Unit,
+    showWatchedBadge: Boolean = false,
+    progressEntry: WatchProgressEntry? = null,
     trailing: @Composable () -> Unit,
 ) {
     Surface(
@@ -605,7 +674,26 @@ private fun LibraryCard(
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Artwork(url = artwork, width = 56.dp, aspectRatio = 2f / 3f)
+            Box(modifier = Modifier.clip(RoundedCornerShape(8.dp))) {
+                Artwork(url = artwork, width = 56.dp, aspectRatio = 2f / 3f)
+                NuvioAnimatedWatchedBadge(
+                    isVisible = showWatchedBadge,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(2.dp),
+                )
+                progressEntry?.let { entry ->
+                    NuvioProgressBar(
+                        progress = entry.progressFraction,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth(),
+                        height = 3.dp,
+                        trackColor = Color.White.copy(alpha = 0.22f),
+                        fillColor = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
             Spacer(Modifier.width(14.dp))
             Column(
                 modifier = Modifier.weight(1f),
@@ -681,6 +769,47 @@ private fun Artwork(url: String?, fallbackUrl: String? = null, tmdbStillUrl: Str
             )
         }
     }
+}
+
+/** Watched state + in-progress entry for one completed download. */
+private data class DownloadWatchState(
+    val progressEntry: WatchProgressEntry?,
+    val isWatched: Boolean,
+) {
+    /** The entry worth drawing a progress bar for — the episode grid's visible-entry rule. */
+    val visibleProgressEntry: WatchProgressEntry?
+        get() = progressEntry?.takeIf { it.durationMs > 0L && !it.isCompleted }
+}
+
+private fun DownloadItem.downloadWatchState(watchedKeys: Set<String>): DownloadWatchState {
+    val entry = WatchProgressRepository.progressForVideo(
+        videoId = videoId,
+        parentMetaId = parentMetaId,
+        seasonNumber = seasonNumber,
+        episodeNumber = episodeNumber,
+    )
+    // Same watched rule as the episode grid (DetailSeriesContent): a completed
+    // progress entry, or WatchingState's check over the published watched keys.
+    // Unlike the bare WatchedRepository.isWatched this also resolves
+    // franchise-parent anime (mal:/kitsu:) through the Simkl fallback when the
+    // parent meta id differs from the Simkl entry id, so fallback-only marks
+    // badge here exactly as they do in the grid. The MetaVideo is rebuilt from
+    // the download's own ids — videoId is the episode's MetaVideo.id (see
+    // SeasonDownloads) — and season/episode are null for movies, where the
+    // check reduces to the same content-level key lookup as before (the
+    // fallback only fires for a non-null episode number).
+    val watched = entry?.isEffectivelyCompleted == true || WatchingState.isEpisodeWatched(
+        watchedKeys = watchedKeys,
+        metaType = parentMetaType,
+        metaId = parentMetaId,
+        episode = MetaVideo(
+            id = videoId,
+            title = title,
+            season = seasonNumber,
+            episode = episodeNumber,
+        ),
+    )
+    return DownloadWatchState(progressEntry = entry, isWatched = watched)
 }
 
 private fun DownloadItem.displayTitle(): String =

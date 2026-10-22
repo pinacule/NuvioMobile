@@ -326,7 +326,11 @@ private fun PlayerScreenRuntime.RenderPlayerControls(
             onRuntimeClick = { showRemainingTime = !showRemainingTime },
             releaseInfo = metaUiState.meta?.takeIf { it.id == parentMetaId }?.releaseInfo,
             hideDetails = activeSkipInterval != null && !skipIntervalDismissed,
-            onNextEpisodeClick = if (nextEpisodeInfo?.hasAired == true && !nextEpisodeAutoPlaySearching && nextEpisodeAutoPlayCountdown == null) {
+            // The button is shown whenever an aired next episode exists. It is
+            // deliberately not hidden while an autoplay search/countdown is in
+            // flight: playNextEpisode() already refuses to start in that state,
+            // so a tap then is a safe no-op instead of the button vanishing.
+            onNextEpisodeClick = if (nextEpisodeInfo?.hasAired == true) {
                 {
                     if (!partyBlocksControl()) playNextEpisode()
                 }

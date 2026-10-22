@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,6 +49,7 @@ import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.details.SeriesPrimaryAction
 import com.nuvio.app.features.details.seriesPrimaryAction
+import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.home.components.HomeCatalogRowSection
 import com.nuvio.app.features.home.components.HomeContinueWatchingSection
@@ -108,6 +111,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import com.nuvio.app.features.home.components.continueWatchingHeroViewportReserveHeight
 import com.nuvio.app.features.home.components.homeSectionHorizontalPaddingForWidth
+import com.nuvio.app.features.home.components.PosterGridRow
+import com.nuvio.app.features.home.components.posterGridColumnCountForWidth
 import com.nuvio.app.features.home.components.rememberContinueWatchingLayout
 import kotlinx.coroutines.CancellationException
 import nuvio.composeapp.generated.resources.*
@@ -123,6 +128,7 @@ fun HomeScreen(
     onPosterLongClick: ((MetaPreview) -> Unit)? = null,
     onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
+    onDownloadedItemClick: ((DownloadItem) -> Unit)? = null,
     continueWatchingDisintegrationRequest: DisintegrationRequest<String>? = null,
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
     onFirstCatalogRendered: (() -> Unit)? = null,
@@ -130,6 +136,7 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         AddonRepository.initialize()
         CollectionRepository.initialize()
+        OfflineHomeRepository.ensureStarted()
         ContinueWatchingPreferencesRepository.ensureLoaded()
         WatchedRepository.ensureLoaded()
         WatchProgressRepository.ensureLoaded()
@@ -147,6 +154,7 @@ fun HomeScreen(
     }.collectAsStateWithLifecycle()
     val homeListState = rememberLazyListState()
     val continueWatchingListState = rememberLazyListState()
+    val offlineContinueWatchingListState = rememberLazyListState()
     val upcomingListState = rememberLazyListState()
     ScreenActivityEffect(homeListState, continueWatchingListState, upcomingListState) { active ->
         if (!active) {
@@ -163,6 +171,13 @@ fun HomeScreen(
     val effectiveWatchProgressSource = watchProgressUiState.source
     val cloudLibraryUiState by CloudLibraryRepository.uiState.collectAsStateWithLifecycle()
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
+    val offlineHomeState by OfflineHomeRepository.uiState.collectAsStateWithLifecycle()
+
+    ScreenActivityEffect(Unit) { active ->
+        // Returning to Home re-samples the transport, so a Wi-Fi <-> mobile
+        // data switch made elsewhere re-applies the offline-home default.
+        if (active) OfflineHomeRepository.refresh()
+    }
     val downloadsUiState by remember {
         DownloadsRepository.ensureLoaded()
         DownloadsRepository.uiState
@@ -182,6 +197,9 @@ fun HomeScreen(
 
     ScreenActivityEffect(networkStatusUiState.condition) { active ->
         if (!active) return@ScreenActivityEffect
+        // Keep the offline-home default in step with connectivity while Home
+        // is on screen (the repository also re-samples on probe emissions).
+        OfflineHomeRepository.refresh()
         when (networkStatusUiState.condition) {
             NetworkCondition.NoInternet,
             NetworkCondition.ServersUnreachable,
@@ -552,6 +570,21 @@ fun HomeScreen(
     // Local content that works without internet: completed/active downloads and
     // continue watching rows backed by on-device progress.
     val hasLocalOfflineContent = downloadsUiState.items.isNotEmpty() || hasContinueWatchingRows
+
+    // Offline homepage data: the same Continue Watching items, filtered to
+    // what is actually downloaded, plus one tile per downloaded show/movie.
+    val offlineContinueWatchingItems = remember(continueWatchingItems, downloadsUiState.items) {
+        filterContinueWatchingForOfflineHome(
+            items = continueWatchingItems,
+            downloads = downloadsUiState.items,
+        )
+    }
+    val offlineDownloadTiles = remember(downloadsUiState.items, offlineContinueWatchingItems) {
+        buildOfflineHomeDownloadTiles(
+            downloads = downloadsUiState.items,
+            offlineContinueWatchingItems = offlineContinueWatchingItems,
+        )
+    }
 
     ScreenActivityEffect(activeProfileId, continueWatchingItems.isNotEmpty(), hasUserScrolledContinueWatching) { active ->
         if (!active) return@ScreenActivityEffect
@@ -955,6 +988,8 @@ fun HomeScreen(
         val homeSectionPadding = homeSectionHorizontalPaddingForWidth(maxWidth.value)
         val posterCardStyle = rememberPosterCardStyleUiState()
         val continueWatchingLayout = rememberContinueWatchingLayout(maxWidth.value, posterCardStyle, homeSectionPadding)
+        val offlineGridColumns = posterGridColumnCountForWidth(maxWidth)
+        val offlineTileRows = offlineDownloadTiles.chunked(offlineGridColumns)
         val nativeBottomNavigationOverlayHeight =
             if (LocalNuvioBottomNavigationOverlayPadding.current > 0.dp) {
                 nuvioSafeBottomPadding()
@@ -998,7 +1033,7 @@ fun HomeScreen(
             topPadding = if (showHeroSlot) 0.dp else null,
             listState = homeListState,
         ) {
-            if (showHeroSlot) {
+            if (showHeroSlot && !offlineHomeState.isActive) {
                 item(key = "home_hero", contentType = "hero") {
                     Crossfade(
                         targetState = showHeroSkeleton,
@@ -1032,7 +1067,82 @@ fun HomeScreen(
                 }
             }
 
+            if (offlineHomeState.isActive) {
+                // Offline homepage: downloads only. Continue Watching is the
+                // separate downloads-only row (same items, same click path,
+                // so resume works exactly as online), followed by a poster
+                // grid of everything downloaded.
+                if (continueWatchingPreferences.isVisible && offlineContinueWatchingItems.isNotEmpty()) {
+                    item(key = "offline_home_continue_watching", contentType = "continue_watching") {
+                        HomeContinueWatchingSection(
+                            items = offlineContinueWatchingItems,
+                            dataSourceKey = effectiveWatchProgressSource,
+                            style = continueWatchingPreferences.style,
+                            useEpisodeThumbnails = continueWatchingPreferences.useEpisodeThumbnails,
+                            blurNextUp = continueWatchingPreferences.blurNextUp,
+                            modifier = Modifier.padding(bottom = HomeContinueWatchingSectionBottomPadding),
+                            sectionPadding = homeSectionPadding,
+                            layout = continueWatchingLayout,
+                            listState = offlineContinueWatchingListState,
+                            onItemClick = onContinueWatchingClick,
+                            onItemLongPress = onContinueWatchingLongPress,
+                            disintegrationRequest = null,
+                        )
+                    }
+                }
+
+                if (offlineDownloadTiles.isNotEmpty()) {
+                    item(key = "offline_home_downloads_header", contentType = "offline_header") {
+                        Text(
+                            text = "Downloads",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(
+                                start = homeSectionPadding,
+                                end = homeSectionPadding,
+                                top = 8.dp,
+                                bottom = 12.dp,
+                            ),
+                        )
+                    }
+                    items(
+                        count = offlineTileRows.size,
+                        key = { rowIndex -> "offline_home_row_${offlineTileRows[rowIndex].first().key}" },
+                        contentType = { "offline_downloads" },
+                    ) { rowIndex ->
+                        val rowTiles = offlineTileRows[rowIndex]
+                        PosterGridRow(
+                            items = rowTiles.map { tile -> tile.toMetaPreview() },
+                            columns = offlineGridColumns,
+                            watchedKeys = watchedUiState.watchedKeys,
+                            fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
+                            modifier = Modifier.padding(
+                                horizontal = homeSectionPadding,
+                                bottom = 12.dp,
+                            ),
+                            onPosterClick = { preview ->
+                                rowTiles.firstOrNull { tile ->
+                                    tile.parentMetaId == preview.id && tile.parentMetaType == preview.type
+                                }?.let { tile -> onDownloadedItemClick?.invoke(tile.download) }
+                            },
+                        )
+                    }
+                }
+
+                if (offlineContinueWatchingItems.isEmpty() && offlineDownloadTiles.isEmpty()) {
+                    item(key = "offline_home_empty", contentType = "empty") {
+                        HomeEmptyStateCard(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            title = "No downloads yet",
+                            message = "Movies and episodes you download will appear here, ready to watch offline.",
+                        )
+                    }
+                }
+            }
+
             when {
+                offlineHomeState.isActive -> Unit
+
                 isInitialHomeContentLoading -> {
                     homeContinueWatchingSections(
                         preferences = continueWatchingPreferences,

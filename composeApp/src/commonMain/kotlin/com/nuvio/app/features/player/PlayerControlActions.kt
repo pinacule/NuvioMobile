@@ -124,12 +124,6 @@ internal fun PlayerControlActions(
     onInteraction: () -> Unit,
 ) {
     val actions = listOfNotNull(
-        onNextEpisodeClick?.let {
-            PlayerControlAction(
-                stringResource(Res.string.player_next_episode), it,
-                icon = Icons.Rounded.SkipNext, iconSize = 40.dp,
-            )
-        },
         PlayerControlAction(
             stringResource(Res.string.compose_player_subtitles), onSubtitleClick,
             painter = appIconPainter(AppIconResource.PlayerSubtitles),
@@ -203,39 +197,58 @@ internal fun PlayerControlActions(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(
-                modifier = Modifier.weight(1f).offset(x = startOffset).horizontalScroll(scrollState),
+                modifier = Modifier.weight(1f).offset(x = startOffset),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                actions.take(if (expanded) actions.size else 5).forEach { action ->
+                // The next-episode button is pinned at the bottom-left of the
+                // bar, outside the scrollable/collapsible action row, so it is
+                // always the first control whenever a next episode exists.
+                if (onNextEpisodeClick != null) {
                     PlayerAction(
-                        description = action.description,
+                        description = stringResource(Res.string.player_next_episode),
                         onClick = {
                             onInteraction()
-                            action.onClick()
+                            onNextEpisodeClick()
                         },
-                        icon = action.icon,
-                        painter = action.painter,
-                        iconSize = action.iconSize,
-                        modifier = if (action.isSpeedAction && onSpeedButtonPlaced != null) {
-                            Modifier.onGloballyPositioned { coordinates ->
-                                onSpeedButtonPlaced(coordinates.boundsInRoot())
-                            }
-                        } else {
-                            Modifier
-                        },
+                        icon = Icons.Rounded.SkipNext,
+                        iconSize = 40.dp,
                     )
                 }
-                if (hasOverflow) {
-                    PlayerAction(
-                        description = stringResource(
-                            if (expanded) Res.string.compose_player_fewer_actions else Res.string.compose_player_more_actions,
-                        ),
-                        onClick = {
-                            expanded = !expanded
-                            onInteraction()
-                        },
-                        icon = if (expanded) Icons.AutoMirrored.Rounded.KeyboardArrowLeft else Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    )
+                Row(
+                    modifier = Modifier.weight(1f).horizontalScroll(scrollState),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    actions.take(if (expanded) actions.size else 5).forEach { action ->
+                        PlayerAction(
+                            description = action.description,
+                            onClick = {
+                                onInteraction()
+                                action.onClick()
+                            },
+                            icon = action.icon,
+                            painter = action.painter,
+                            iconSize = action.iconSize,
+                            modifier = if (action.isSpeedAction && onSpeedButtonPlaced != null) {
+                                Modifier.onGloballyPositioned { coordinates ->
+                                    onSpeedButtonPlaced(coordinates.boundsInRoot())
+                                }
+                            } else {
+                                Modifier
+                            },
+                        )
+                    }
+                    if (hasOverflow) {
+                        PlayerAction(
+                            description = stringResource(
+                                if (expanded) Res.string.compose_player_fewer_actions else Res.string.compose_player_more_actions,
+                            ),
+                            onClick = {
+                                expanded = !expanded
+                                onInteraction()
+                            },
+                            icon = if (expanded) Icons.AutoMirrored.Rounded.KeyboardArrowLeft else Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        )
+                    }
                 }
             }
             Box(
