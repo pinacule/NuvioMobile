@@ -1325,10 +1325,6 @@
     <string name="theme_violet">Фиолетовый</string>
     <string name="theme_white">Белый</string>
     <string name="player_next_episode">Следующий эпизод</string>
-    <string name="player_next_episode_finding_source">Поиск источника…</string>
-    <string name="player_next_episode_playing_via_countdown">Воспроизведение через %1$s начнется через %2$d с…</string>
-    <string name="player_next_episode_thumbnail">Миниатюра следующей серии</string>
-    <string name="player_next_episode_unaired">Еще не вышел</string>
     <string name="player_skip">Пропустить</string>
     <string name="player_skip_intro">Пропустить заставку</string>
     <string name="player_skip_outro">Пропустить концовку</string>

@@ -587,6 +587,7 @@ private fun EpisodeCard(
     onPlay: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val artworkWidth = 120.dp
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -599,11 +600,11 @@ private fun EpisodeCard(
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(modifier = Modifier.clip(RoundedCornerShape(8.dp))) {
+            Box(modifier = Modifier.width(artworkWidth).clip(RoundedCornerShape(8.dp))) {
                 Artwork(
                     url = item.episodeThumbnail,
                     fallbackUrl = item.background ?: item.poster,
-                    width = 120.dp,
+                    width = artworkWidth,
                     aspectRatio = 16f / 9f,
                 )
                 // Same watched language as the episode grid: badge top-end over the
@@ -662,6 +663,7 @@ private fun LibraryCard(
     progressEntry: WatchProgressEntry? = null,
     trailing: @Composable () -> Unit,
 ) {
+    val artworkWidth = 56.dp
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -674,8 +676,8 @@ private fun LibraryCard(
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(modifier = Modifier.clip(RoundedCornerShape(8.dp))) {
-                Artwork(url = artwork, width = 56.dp, aspectRatio = 2f / 3f)
+            Box(modifier = Modifier.width(artworkWidth).clip(RoundedCornerShape(8.dp))) {
+                Artwork(url = artwork, width = artworkWidth, aspectRatio = 2f / 3f)
                 NuvioAnimatedWatchedBadge(
                     isVisible = showWatchedBadge,
                     modifier = Modifier

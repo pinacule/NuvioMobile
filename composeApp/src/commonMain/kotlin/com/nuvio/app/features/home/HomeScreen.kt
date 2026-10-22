@@ -573,15 +573,20 @@ fun HomeScreen(
 
     // Offline homepage data: the same Continue Watching items, filtered to
     // what is actually downloaded, plus one tile per downloaded show/movie.
-    val offlineContinueWatchingItems = remember(continueWatchingItems, downloadsUiState.items) {
+    // Only downloads whose file is verified on disk count — a Completed
+    // record whose file was deleted outside the app is not offline content.
+    val offlineDownloads = remember(downloadsUiState.items) {
+        DownloadsRepository.playableLocalDownloads()
+    }
+    val offlineContinueWatchingItems = remember(continueWatchingItems, offlineDownloads) {
         filterContinueWatchingForOfflineHome(
             items = continueWatchingItems,
-            downloads = downloadsUiState.items,
+            downloads = offlineDownloads,
         )
     }
-    val offlineDownloadTiles = remember(downloadsUiState.items, offlineContinueWatchingItems) {
+    val offlineDownloadTiles = remember(offlineDownloads, offlineContinueWatchingItems) {
         buildOfflineHomeDownloadTiles(
-            downloads = downloadsUiState.items,
+            downloads = offlineDownloads,
             offlineContinueWatchingItems = offlineContinueWatchingItems,
         )
     }

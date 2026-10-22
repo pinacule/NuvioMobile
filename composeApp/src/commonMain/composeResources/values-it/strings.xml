@@ -704,10 +704,6 @@
   <string name="theme_color_rose">Rosa</string>
   <string name="theme_color_white">Bianco</string>
   <string name="player_next_episode">Prossimo episodio</string>
-  <string name="player_next_episode_finding_source">Ricerca sorgente…</string>
-  <string name="player_next_episode_playing_via_countdown">In riproduzione tramite %1$s tra %2$ds…</string>
-  <string name="player_next_episode_thumbnail">Miniatura prossimo episodio</string>
-  <string name="player_next_episode_unaired">Non ancora trasmesso</string>
   <string name="player_skip">Salta</string>
   <string name="player_skip_intro">Salta Intro</string>
   <string name="player_skip_outro">Salta Finale</string>

@@ -518,8 +518,6 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         lastManualSkipSeekPositions = null
         activeSkipInterval = null
         skipIntervalDismissed = false
-        showNextEpisodeCard = false
-        nextEpisodeCardDismissed = false
         cancelNextEpisodeAutoPlay()
 
         val season = activeSeasonNumber
@@ -668,15 +666,6 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         } else null
     }
 
-    LaunchedEffect(playbackSnapshot.isEnded) {
-        if (playbackSnapshot.isEnded && nextEpisodeCardDismissed &&
-            playerSettingsUiState.streamAutoPlayNextEpisodeEnabled &&
-            nextEpisodeInfo?.hasAired == true
-        ) {
-            nextEpisodeCardDismissed = false
-        }
-    }
-
     LaunchedEffect(
         activePlaybackKey,
         playbackSnapshot,
@@ -689,23 +678,12 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         playerSettingsUiState.nextEpisodeThresholdMode,
         playerSettingsUiState.nextEpisodeThresholdPercent,
         playerSettingsUiState.nextEpisodeThresholdMinutesBeforeEnd,
-        playerSettingsUiState.streamAutoPlayNextEpisodeEnabled,
-        nextEpisodeCardDismissed,
     ) {
-        val shouldShow = nextEpisodeInfo != null && !nextEpisodeCardDismissed && isAtNextEpisodeThreshold()
-        if (nextEpisodeAutoPlayAutomatic &&
-            (!shouldShow || !playerSettingsUiState.streamAutoPlayNextEpisodeEnabled)
-        ) {
-            cancelNextEpisodeAutoPlay()
-        }
-        if (shouldShow && !showNextEpisodeCard) {
-            showNextEpisodeCard = true
-            if (playerSettingsUiState.streamAutoPlayNextEpisodeEnabled && nextEpisodeInfo?.hasAired == true && !isPartyControlLocked) {
-                playNextEpisode(automatic = true)
-            }
-        } else if (!shouldShow) {
-            showNextEpisodeCard = false
-        }
+        // Manual-only next episode: nothing is shown and nothing auto-plays at
+        // the threshold. Evaluating the threshold here is what starts
+        // next-episode source preloading, so a later SkipNext tap reuses the
+        // already-loaded streams instead of searching cold.
+        isAtNextEpisodeThreshold()
     }
 }
 

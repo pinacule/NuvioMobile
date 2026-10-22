@@ -911,10 +911,6 @@
     <string name="theme_violet">Ibolya</string>
     <string name="theme_white">Fehér</string>
     <string name="player_next_episode">Következő epizód</string>
-    <string name="player_next_episode_finding_source">Forrás keresése…</string>
-    <string name="player_next_episode_playing_via_countdown">Lejátszás a(z) %1$s segítségével %2$d másodperc múlva…</string>
-    <string name="player_next_episode_thumbnail">Következő epizód bélyegképe</string>
-    <string name="player_next_episode_unaired">Még nem sugárzott</string>
     <string name="player_skip">Kihagyás</string>
     <string name="player_skip_intro">Intró kihagyása</string>
     <string name="player_skip_outro">Outró kihagyása</string>

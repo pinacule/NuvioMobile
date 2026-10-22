@@ -25,7 +25,6 @@ import com.nuvio.app.features.watching.domain.isShortPlaceholderDuration
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -35,7 +34,8 @@ internal fun PlayerScreenRuntime.isAtNextEpisodeThreshold(): Boolean {
         !initialSeekApplied || isScrubbingTimeline || errorMessage != null ||
         isShortPlaceholderDuration(playbackSnapshot.durationMs)
     ) return false
-    // Preload: trigger source fetch before the button appears
+    // Preload: fetch next-episode sources ahead of time so a SkipNext tap
+    // does not start its stream search cold.
     if (playerSettingsUiState.preloadNextEpisodeSources && !nextEpisodePreloadTriggered && nextEpisodeInfo != null) {
         val preloadLeadMs = playerSettingsUiState.streamAutoPlayTimeoutSeconds.toLong() * 1_000L
         val shouldPreloadByCard = PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
@@ -65,10 +65,7 @@ internal fun PlayerScreenRuntime.isAtNextEpisodeThreshold(): Boolean {
 internal fun PlayerScreenRuntime.cancelNextEpisodeAutoPlay() {
     nextEpisodeAutoPlayJob?.cancel()
     nextEpisodeAutoPlayJob = null
-    nextEpisodeAutoPlayAutomatic = false
     nextEpisodeAutoPlaySearching = false
-    nextEpisodeAutoPlaySourceName = null
-    nextEpisodeAutoPlayCountdown = null
 }
 
 internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
@@ -85,9 +82,6 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     onEpisodeStreamSelected: (StreamItem, MetaVideo) -> Unit,
     onManualSelectionRequired: (MetaVideo) -> Unit,
     onSearchingChanged: (Boolean) -> Unit,
-    onSourceNameChanged: (String?) -> Unit,
-    onCountdownChanged: (Int?) -> Unit,
-    onNextEpisodeCardVisibleChanged: (Boolean) -> Unit,
 ): Job? {
     val nextVideoId = nextEpisodeInfo?.videoId ?: return null
     val nextVideo = allEpisodes.firstOrNull { video -> video.id == nextVideoId } ?: return null
@@ -115,8 +109,6 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
 
     previousJob?.cancel()
     onSearchingChanged(true)
-    onSourceNameChanged(null)
-    onCountdownChanged(null)
 
     val type = contentType ?: parentMetaType
     val shouldAutoSelectInManualMode =
@@ -187,7 +179,6 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
 
         if (effectiveMode == StreamAutoPlayMode.MANUAL) {
             onSearchingChanged(false)
-            onNextEpisodeCardVisibleChanged(false)
             onManualSelectionRequired(nextVideo)
             return@launch
         }
@@ -391,18 +382,9 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         }
         onSearchingChanged(false)
         if (selected != null) {
-            onSourceNameChanged((selected.name?.takeIf { it.isNotBlank() } ?: selected.addonName).trim())
-            for (i in 3 downTo 1) {
-                onCountdownChanged(i)
-                delay(1000)
-            }
             onEpisodeStreamSelected(selected, nextVideo)
-            onNextEpisodeCardVisibleChanged(false)
-            onCountdownChanged(null)
-            onSourceNameChanged(null)
         } else {
             onManualSelectionRequired(nextVideo)
-            onNextEpisodeCardVisibleChanged(false)
         }
     }
 }

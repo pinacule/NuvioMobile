@@ -1425,10 +1425,6 @@
     <string name="custom_theme_preview">Pré-visualização</string>
     <string name="custom_theme_preview_accent">Seu destaque</string>
     <string name="player_next_episode">Próximo Episódio</string>
-    <string name="player_next_episode_finding_source">Buscando fonte…</string>
-    <string name="player_next_episode_playing_via_countdown">Reproduzindo via %1$s em %2$ds…</string>
-    <string name="player_next_episode_thumbnail">Thumbnail do próximo episódio</string>
-    <string name="player_next_episode_unaired">Não exibido</string>
     <string name="player_skip">Pular</string>
     <string name="player_skip_intro">Pular Intro</string>
     <string name="player_skip_outro">Pular Outro</string>

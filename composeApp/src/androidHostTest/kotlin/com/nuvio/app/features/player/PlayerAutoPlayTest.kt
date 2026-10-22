@@ -62,7 +62,7 @@ class PlayerAutoPlayTest {
     fun freshEpisodeSnapshotDoesNotStartAnotherAutoPlay() {
         val runtime = startRuntime()
         compose.runOnIdle { runtime.updatePlaybackSnapshot(nearEnd) }
-        compose.runOnIdle { assertTrue(runtime.nextEpisodeAutoPlaySearching) }
+        compose.runOnIdle { assertFalse(runtime.nextEpisodeAutoPlaySearching) }
         switchEpisode(runtime, 2)
         compose.runOnIdle {
             runtime.updatePlaybackSnapshot(nearEnd.copy(positionMs = 0L))
@@ -77,7 +77,7 @@ class PlayerAutoPlayTest {
     fun loadingSnapshotsCannotStartAutoPlayForAnEpisodeThatHasNotPlayed() {
         val runtime = startRuntime()
         compose.runOnIdle { runtime.updatePlaybackSnapshot(nearEnd) }
-        compose.runOnIdle { assertTrue(runtime.nextEpisodeAutoPlaySearching) }
+        compose.runOnIdle { assertFalse(runtime.nextEpisodeAutoPlaySearching) }
         for (episode in 2..4) {
             switchEpisode(runtime, episode)
             compose.runOnIdle {
@@ -91,19 +91,18 @@ class PlayerAutoPlayTest {
     }
 
     @Test
-    fun freshPositionCancelsAnAutomaticRequest() {
+    fun nearEndAndFreshPositionsStartNoNextEpisodeRequest() {
         val runtime = startRuntime()
         switchEpisode(runtime, 2)
         compose.runOnIdle { runtime.updatePlaybackSnapshot(nearEnd) }
-        val autoPlayJob = compose.runOnIdle {
-            assertTrue(runtime.nextEpisodeAutoPlaySearching)
-            runtime.nextEpisodeAutoPlayJob
+        compose.runOnIdle {
+            assertFalse(runtime.nextEpisodeAutoPlaySearching)
+            assertNull(runtime.nextEpisodeAutoPlayJob)
         }
         compose.runOnIdle { runtime.updatePlaybackSnapshot(nearEnd.copy(positionMs = 0L)) }
         compose.runOnIdle {
-            assertFalse(runtime.showNextEpisodeCard)
             assertFalse(runtime.nextEpisodeAutoPlaySearching)
-            assertTrue(autoPlayJob?.isCancelled == true)
+            assertNull(runtime.nextEpisodeAutoPlayJob)
         }
     }
 
@@ -155,23 +154,6 @@ class PlayerAutoPlayTest {
     }
 
     @Test
-    fun lateSnapshotsDoNotCancelTheCurrentEpisodesAutoPlay() {
-        val runtime = startRuntime()
-        val previousKey = runtime.activePlaybackKey
-        switchEpisode(runtime, 2)
-        compose.runOnIdle { runtime.updatePlaybackSnapshot(nearEnd) }
-        val job = compose.runOnIdle { runtime.nextEpisodeAutoPlayJob }
-        compose.runOnIdle {
-            assertFalse(runtime.updatePlaybackSnapshot(nearEnd.copy(positionMs = 0L), previousKey))
-        }
-        compose.runOnIdle {
-            assertTrue(runtime.nextEpisodeAutoPlaySearching)
-            assertSame(job, runtime.nextEpisodeAutoPlayJob)
-            assertTrue(job?.isActive == true)
-        }
-    }
-
-    @Test
     fun manualNextEpisodeRequestSurvivesPositionUpdates() {
         val runtime = startRuntime()
         compose.runOnIdle { runtime.playNextEpisode() }
@@ -185,20 +167,7 @@ class PlayerAutoPlayTest {
     }
 
     @Test
-    fun endedAndThresholdUpdatesKeepASingleAutoPlayRequest() {
-        val runtime = startRuntime()
-        compose.runOnIdle { runtime.updatePlaybackSnapshot(nearEnd) }
-        val job = compose.runOnIdle { runtime.nextEpisodeAutoPlayJob }
-        compose.runOnIdle { runtime.updatePlaybackSnapshot(nearEnd.copy(isEnded = true)) }
-        compose.runOnIdle {
-            assertTrue(runtime.nextEpisodeAutoPlaySearching)
-            assertSame(job, runtime.nextEpisodeAutoPlayJob)
-            assertTrue(job?.isActive == true)
-        }
-    }
-
-    @Test
-    fun autoPlayWaitsForTheInitialSeekToFinish() {
+    fun nearEndSnapshotDoesNotStartNextEpisodeRequestAroundInitialSeek() {
         val runtime = startRuntime()
         compose.runOnIdle {
             runtime.initialSeekApplied = false
@@ -208,7 +177,7 @@ class PlayerAutoPlayTest {
             assertFalse(runtime.nextEpisodeAutoPlaySearching)
             runtime.initialSeekApplied = true
         }
-        compose.runOnIdle { assertTrue(runtime.nextEpisodeAutoPlaySearching) }
+        compose.runOnIdle { assertFalse(runtime.nextEpisodeAutoPlaySearching) }
     }
 
     @Test
@@ -230,7 +199,6 @@ class PlayerAutoPlayTest {
             compose.runOnIdle {
                 assertEquals(episode + 1, runtime.nextEpisodeInfo?.episode)
                 assertFalse(runtime.nextEpisodeAutoPlaySearching)
-                assertFalse(runtime.showNextEpisodeCard)
             }
         }
     }
@@ -255,7 +223,6 @@ class PlayerAutoPlayTest {
                     assertFalse(runtime.hasSentCompletionScrobbleForCurrentItem)
                     assertTrue(WatchProgressRepository.uiState.value.entries.isEmpty())
                     assertFalse(runtime.nextEpisodeAutoPlaySearching)
-                    assertFalse(runtime.showNextEpisodeCard)
                     assertNull(runtime.activeSkipInterval)
                 }
             }
@@ -290,7 +257,7 @@ class PlayerAutoPlayTest {
     }
 
     @Test
-    fun savedProgressInsideTheMinutesThresholdImmediatelyStartsAutoPlay() {
+    fun savedProgressInsideTheMinutesThresholdDoesNotStartAutoPlay() {
         val runtime = startRuntime(PlayerSettingsUiState(
             skipIntroEnabled = false,
             streamAutoPlayNextEpisodeEnabled = true,
@@ -314,7 +281,7 @@ class PlayerAutoPlayTest {
         }
         compose.runOnIdle {
             assertEquals(3, runtime.nextEpisodeInfo?.episode)
-            assertTrue(runtime.nextEpisodeAutoPlaySearching)
+            assertFalse(runtime.nextEpisodeAutoPlaySearching)
         }
     }
 
@@ -387,8 +354,8 @@ class PlayerAutoPlayTest {
     private fun startRuntime(settings: PlayerSettingsUiState? = null): PlayerScreenRuntime {
         WatchProgressStorage.initialize(RuntimeEnvironment.getApplication())
         WatchProgressRepository.clearLocalState()
-        // The auto-play tests predate the WiFi-only gate for automatic up-next: simulate WiFi
-        // so the auto-play state machine under test is exercised. Reset in cleanup().
+        // Simulate WiFi so the runtime under test sees a deterministic network
+        // environment on the test host. Reset in cleanup().
         DeviceEnvironment.testWifiOverride = true
         val runtime = runtime()
         if (settings != null) runtime.playerSettingsUiState = settings

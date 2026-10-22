@@ -1253,10 +1253,6 @@
     <string name="theme_violet">Mor</string>
     <string name="theme_white">Beyaz</string>
     <string name="player_next_episode">Sonraki bölüm</string>
-    <string name="player_next_episode_finding_source">Kaynak bulunuyor…</string>
-    <string name="player_next_episode_playing_via_countdown">%1$s üzerinden %2$d sn içinde oynatılıyor…</string>
-    <string name="player_next_episode_thumbnail">Sonraki bölüm küçük görseli</string>
-    <string name="player_next_episode_unaired">Yayınlanmadı</string>
     <string name="player_skip">Geç</string>
     <string name="player_skip_intro">Intro'yu geç</string>
     <string name="player_skip_outro">Outro'yu geç</string>

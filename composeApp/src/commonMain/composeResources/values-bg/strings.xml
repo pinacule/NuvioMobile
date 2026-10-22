@@ -1325,10 +1325,6 @@
     <string name="theme_violet">Виолетов</string>
     <string name="theme_white">Бял</string>
     <string name="player_next_episode">Следващ епизод</string>
-    <string name="player_next_episode_finding_source">Търсене на източник…</string>
-    <string name="player_next_episode_playing_via_countdown">Пускане чрез %1$s след %2$d с…</string>
-    <string name="player_next_episode_thumbnail">Миниатюра на следващ епизод</string>
-    <string name="player_next_episode_unaired">Неизлъчен</string>
     <string name="player_skip">Пропусни</string>
     <string name="player_skip_intro">Пропусни въведението</string>
     <string name="player_skip_outro">Пропусни финала</string>

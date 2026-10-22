@@ -977,10 +977,6 @@
     <string name="theme_violet">Lavender</string>
     <string name="theme_white">Melati</string>
     <string name="player_next_episode">Episode Berikutnya</string>
-    <string name="player_next_episode_finding_source">Mencari sumber…</string>
-    <string name="player_next_episode_playing_via_countdown">Memutar melalui %1$s dalam %2$dd…</string>
-    <string name="player_next_episode_thumbnail">Thumbnail episode berikutnya</string>
-    <string name="player_next_episode_unaired">Belum Tayang</string>
     <string name="player_skip">Lewati</string>
     <string name="player_skip_intro">Lewati Intro</string>
     <string name="player_skip_outro">Lewati Outro</string>
