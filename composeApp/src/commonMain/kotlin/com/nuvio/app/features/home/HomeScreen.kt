@@ -1117,7 +1117,8 @@ fun HomeScreen(
                             watchedKeys = watchedUiState.watchedKeys,
                             fullyWatchedSeriesKeys = fullyWatchedSeriesKeys,
                             modifier = Modifier.padding(
-                                horizontal = homeSectionPadding,
+                                start = homeSectionPadding,
+                                end = homeSectionPadding,
                                 bottom = 12.dp,
                             ),
                             onPosterClick = { preview ->
