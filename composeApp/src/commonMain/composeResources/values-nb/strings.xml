@@ -1109,10 +1109,6 @@ Du bruker denne funksjonen helt på eget ansvar. P2P kan deaktiveres når som he
     <string name="player_loading_subtitles_from">Henter undertekster fra %1$d tillegg…</string>
     <string name="player_loading_subtitles_progress">Henter undertekster… (%1$d / %2$d)</string>
     <string name="player_next_episode">Neste episode</string>
-    <string name="player_next_episode_finding_source">Finner kilde…</string>
-    <string name="player_next_episode_playing_via_countdown">Spiller via %1$s om %2$ds…</string>
-    <string name="player_next_episode_thumbnail">Neste episode miniatyr</string>
-    <string name="player_next_episode_unaired">Ikke sendt</string>
     <string name="player_seek_position">Avspillingsposisjon</string>
     <string name="player_skip">Hopp over</string>
     <string name="player_skip_intro">Hopp over intro</string>

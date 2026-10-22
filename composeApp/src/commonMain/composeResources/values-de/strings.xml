@@ -810,10 +810,6 @@
     <string name="theme_violet">Violett</string>
     <string name="theme_white">Weiß</string>
     <string name="player_next_episode">Nächste Episode</string>
-    <string name="player_next_episode_finding_source">Quelle wird gesucht…</string>
-    <string name="player_next_episode_playing_via_countdown">Abspielen über %1$s in %2$ds…</string>
-    <string name="player_next_episode_thumbnail">Thumbnail der nächsten Episode</string>
-    <string name="player_next_episode_unaired">Noch nicht ausgestrahlt</string>
     <string name="player_skip">Überspringen</string>
     <string name="player_skip_intro">Intro überspringen</string>
     <string name="player_skip_outro">Outro überspringen</string>

@@ -1098,10 +1098,6 @@
     <string name="theme_violet">Violet</string>
     <string name="theme_white">Blanc</string>
     <string name="player_next_episode">Épisode suivant</string>
-    <string name="player_next_episode_finding_source">Recherche de la source…</string>
-    <string name="player_next_episode_playing_via_countdown">Lecture via %1$s dans %2$ds…</string>
-    <string name="player_next_episode_thumbnail">Miniature de l’épisode suivant</string>
-    <string name="player_next_episode_unaired">Non diffusé</string>
     <string name="player_skip">Passer</string>
     <string name="player_skip_intro">Passer l’intro</string>
     <string name="player_skip_outro">Passer l’outro</string>

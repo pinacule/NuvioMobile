@@ -144,20 +144,6 @@ class PlayerScreenRuntimeStateTest {
     }
 
     @Test
-    fun tappingNextEpisodeDuringCountdownKeepsTheCurrentJob() {
-        val runtime = PlayerScreenRuntime(testPlayerScreenArgs())
-        val job = Job()
-        runtime.nextEpisodeAutoPlayJob = job
-        runtime.nextEpisodeAutoPlayCountdown = 2
-
-        runtime.playNextEpisode()
-
-        assertSame(job, runtime.nextEpisodeAutoPlayJob)
-        assertTrue(job.isActive)
-        job.cancel()
-    }
-
-    @Test
     fun parentalGuideDoesNotRevealPlaybackControls() {
         val runtime = PlayerScreenRuntime(testPlayerScreenArgs())
         runtime.parentalWarnings = listOf(ParentalWarning(label = "Violence", severity = "Mild"))

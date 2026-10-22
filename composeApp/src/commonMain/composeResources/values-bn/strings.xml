@@ -1393,10 +1393,6 @@
     <string name="custom_theme_preview">পূর্বরূপ</string>
     <string name="custom_theme_preview_accent">আপনার অ্যাকসেন্ট কালার</string>
     <string name="player_next_episode">পরবর্তী পর্ব</string>
-    <string name="player_next_episode_finding_source">সোর্স খোঁজা হচ্ছে…</string>
-    <string name="player_next_episode_playing_via_countdown">%2$d সেকেন্ডে %1$s-এর মাধ্যমে প্লে হবে…</string>
-    <string name="player_next_episode_thumbnail">পরবর্তী পর্বের থাম্বনেইল</string>
-    <string name="player_next_episode_unaired">সম্প্রচারিত হয়নি</string>
     <string name="player_skip">স্কিপ</string>
     <string name="player_skip_intro">ইন্ট্রো স্কিপ করুন</string>
     <string name="player_skip_outro">আউটরো স্কিপ করুন</string>

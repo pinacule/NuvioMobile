@@ -1406,25 +1406,6 @@ private fun PlaybackSettingsSection(
         ) {
             SettingsGroup(isTablet = isTablet) {
                 SettingsSwitchRow(
-                    title = stringResource(Res.string.settings_playback_auto_play_next_episode),
-                    description = stringResource(Res.string.settings_playback_auto_play_next_episode_description),
-                    checked = autoPlayPlayerSettings.streamAutoPlayNextEpisodeEnabled,
-                    isTablet = isTablet,
-                    onCheckedChange = PlayerSettingsRepository::setStreamAutoPlayNextEpisodeEnabled,
-                )
-                if (autoPlayPlayerSettings.streamAutoPlayNextEpisodeEnabled &&
-                    autoPlayPlayerSettings.streamAutoPlayMode == StreamAutoPlayMode.MANUAL) {
-                    SettingsGroupDivider(isTablet = isTablet)
-                    SettingsSwitchRow(
-                        title = stringResource(Res.string.settings_playback_auto_play_next_episode_fallback),
-                        description = stringResource(Res.string.settings_playback_auto_play_next_episode_fallback_description),
-                        checked = autoPlayPlayerSettings.streamAutoPlayNextEpisodeFallbackEnabled,
-                        isTablet = isTablet,
-                        onCheckedChange = PlayerSettingsRepository::setStreamAutoPlayNextEpisodeFallbackEnabled,
-                    )
-                }
-                SettingsGroupDivider(isTablet = isTablet)
-                SettingsSwitchRow(
                     title = stringResource(Res.string.settings_playback_prefer_binge_group),
                     description = stringResource(Res.string.settings_playback_prefer_binge_group_description),
                     checked = autoPlayPlayerSettings.streamAutoPlayPreferBingeGroup,

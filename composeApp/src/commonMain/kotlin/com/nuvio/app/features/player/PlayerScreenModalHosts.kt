@@ -17,8 +17,6 @@ internal fun PlayerScreenModalHosts(
     onP2pEpisodeStreamSelected: (StreamItem, MetaVideo, Boolean) -> Unit,
     onP2pSourceStreamSelected: (StreamItem) -> Unit,
     onNextEpisodeAutoPlaySearchingChanged: (Boolean) -> Unit,
-    onNextEpisodeAutoPlayCountdownChanged: (Int?) -> Unit,
-    onNextEpisodeAutoPlaySourceNameChanged: (String?) -> Unit,
     showAudioModal: Boolean,
     audioTracks: List<AudioTrack>,
     selectedAudioIndex: Int,
@@ -106,8 +104,6 @@ internal fun PlayerScreenModalHosts(
             onDismiss = {
                 if (pendingP2pSwitch.isAutoPlay) {
                     onNextEpisodeAutoPlaySearchingChanged(false)
-                    onNextEpisodeAutoPlayCountdownChanged(null)
-                    onNextEpisodeAutoPlaySourceNameChanged(null)
                 }
                 onPendingP2pSwitchChanged(null)
             },

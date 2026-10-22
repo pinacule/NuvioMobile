@@ -1054,10 +1054,6 @@
     <string name="theme_violet">Fialová</string>
     <string name="theme_white">Biela</string>
     <string name="player_next_episode">Ďalšia epizóda</string>
-    <string name="player_next_episode_finding_source">Hľadanie zdroja…</string>
-    <string name="player_next_episode_playing_via_countdown">Prehráva sa cez %1$s za %2$ds…</string>
-    <string name="player_next_episode_thumbnail">Miniatúra ďalšej epizódy</string>
-    <string name="player_next_episode_unaired">Nevysielané</string>
     <string name="player_skip">Preskočiť</string>
     <string name="player_skip_intro">Preskočiť intro</string>
     <string name="player_skip_outro">Preskočiť outro</string>

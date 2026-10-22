@@ -1397,10 +1397,6 @@
     <string name="custom_theme_preview">Pretpregled</string>
     <string name="custom_theme_preview_accent">Vaš naglasak</string>
     <string name="player_next_episode">Sljedeća epizoda</string>
-    <string name="player_next_episode_finding_source">Pronalaženje izvora…</string>
-    <string name="player_next_episode_playing_via_countdown">Reproducira se putem %1$s za %2$ds…</string>
-    <string name="player_next_episode_thumbnail">Sličica sljedeće epizode</string>
-    <string name="player_next_episode_unaired">Neemitirano</string>
     <string name="player_skip">Preskoči</string>
     <string name="player_skip_intro">Preskoči uvod</string>
     <string name="player_skip_outro">Preskoči odjavu</string>

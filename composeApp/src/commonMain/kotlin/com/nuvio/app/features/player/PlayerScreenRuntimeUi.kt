@@ -327,7 +327,7 @@ private fun PlayerScreenRuntime.RenderPlayerControls(
             releaseInfo = metaUiState.meta?.takeIf { it.id == parentMetaId }?.releaseInfo,
             hideDetails = activeSkipInterval != null && !skipIntervalDismissed,
             // The button is shown whenever an aired next episode exists. It is
-            // deliberately not hidden while an autoplay search/countdown is in
+            // deliberately not hidden while an autoplay search is in
             // flight: playNextEpisode() already refuses to start in that state,
             // so a tap then is a safe no-op instead of the button vanishing.
             onNextEpisodeClick = if (nextEpisodeInfo?.hasAired == true) {
@@ -510,21 +510,6 @@ private fun BoxScope.RenderPlaybackOverlays(
         onDismissSkipInterval = { skipIntervalDismissed = true },
         sliderEdgePadding = sliderEdgePadding,
         overlayBottomPadding = overlayBottomPadding,
-        isSeries = isSeries,
-        nextEpisodeInfo = nextEpisodeInfo,
-        showNextEpisodeCard = showNextEpisodeCard,
-        nextEpisodeAutoPlaySearching = nextEpisodeAutoPlaySearching,
-        nextEpisodeAutoPlaySourceName = nextEpisodeAutoPlaySourceName,
-        nextEpisodeAutoPlayCountdown = nextEpisodeAutoPlayCountdown,
-        blurUnwatchedEpisodes = metaScreenSettingsUiState.blurUnwatchedEpisodes,
-        onPlayNextEpisode = {
-            if (!partyBlocksControl()) playNextEpisode()
-        },
-        onDismissNextEpisode = {
-            cancelNextEpisodeAutoPlay()
-            nextEpisodeCardDismissed = true
-            showNextEpisodeCard = false
-        },
         errorMessage = errorMessage,
             onDismissError = {
                 flushWatchProgress()
@@ -561,8 +546,6 @@ private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long, sp
         },
         onP2pSourceStreamSelected = { stream -> switchToP2pSourceStream(stream) },
         onNextEpisodeAutoPlaySearchingChanged = { nextEpisodeAutoPlaySearching = it },
-        onNextEpisodeAutoPlayCountdownChanged = { nextEpisodeAutoPlayCountdown = it },
-        onNextEpisodeAutoPlaySourceNameChanged = { nextEpisodeAutoPlaySourceName = it },
         showAudioModal = showAudioModal,
         audioTracks = serverAudioTracks.ifEmpty { audioTracks },
         selectedAudioIndex = serverAudioTracks.firstOrNull { it.isSelected }?.index ?: selectedAudioIndex,

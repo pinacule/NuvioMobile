@@ -1425,10 +1425,6 @@
     <string name="custom_theme_preview">Xem trước</string>
     <string name="custom_theme_preview_accent">Màu nhấn của bạn</string>
     <string name="player_next_episode">Tập tiếp theo</string>
-    <string name="player_next_episode_finding_source">Đang tìm nguồn…</string>
-    <string name="player_next_episode_playing_via_countdown">Phát qua %1$s sau %2$d giây…</string>
-    <string name="player_next_episode_thumbnail">Ảnh thu nhỏ tập tiếp theo</string>
-    <string name="player_next_episode_unaired">Chưa phát sóng</string>
     <string name="player_skip">Bỏ qua</string>
     <string name="player_skip_intro">Bỏ qua Giới thiệu</string>
     <string name="player_skip_outro">Bỏ qua Đoạn kết</string>
