@@ -932,10 +932,6 @@
     <string name="custom_theme_preview">Προεπισκόπηση</string>
     <string name="custom_theme_preview_accent">Το χρώμα έμφασής σας</string>
     <string name="player_next_episode">Επόμενο επεισόδιο</string>
-    <string name="player_next_episode_finding_source">Εύρεση πηγής…</string>
-    <string name="player_next_episode_playing_via_countdown">Αναπαραγωγή μέσω %1$s σε %2$ds…</string>
-    <string name="player_next_episode_thumbnail">Μικρογραφία επόμενου επεισοδίου</string>
-    <string name="player_next_episode_unaired">Δεν έχει προβληθεί</string>
     <string name="player_seek_position">Θέση αναπαραγωγής</string>
     <string name="player_skip">Παράλειψη</string>
     <string name="player_skip_intro">Παράλειψη εισαγωγής</string>

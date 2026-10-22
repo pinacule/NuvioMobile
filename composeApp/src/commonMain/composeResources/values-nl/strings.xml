@@ -1342,10 +1342,6 @@
     <string name="custom_theme_preview">Voorbeeld</string>
     <string name="custom_theme_preview_accent">Je accentkleur</string>
     <string name="player_next_episode">Volgende aflevering</string>
-    <string name="player_next_episode_finding_source">Bron zoeken...</string>
-    <string name="player_next_episode_playing_via_countdown">Afspelen via %1$s over %2$ds...</string>
-    <string name="player_next_episode_thumbnail">Miniatuur volgende aflevering</string>
-    <string name="player_next_episode_unaired">Nog niet uitgezonden</string>
     <string name="player_skip">Overslaan</string>
     <string name="player_skip_intro">Intro overslaan</string>
     <string name="player_skip_outro">Outro overslaan</string>

@@ -1,7 +1,5 @@
 package com.nuvio.app.features.player
 
-import com.nuvio.app.core.device.DataSaverRepository
-import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
@@ -509,25 +507,14 @@ internal fun PlayerScreenRuntime.switchToCachedPreloadEpisode(cached: CachedPrel
     scope.launch { PreloadCache.evictEligibleExcept(activeVideoId) }
 }
 
-internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
-    if (nextEpisodeAutoPlaySearching || nextEpisodeAutoPlayCountdown != null) return
-    // "Up next" auto-play is WiFi-only: on mobile data or with data saver on, the
-    // next-episode card still appears, but the user starts the episode manually.
-    if (automatic) {
-        DataSaverRepository.ensureLoaded()
-        if (!DeviceEnvironment.isWifi() || DataSaverRepository.isActiveNow()) return
-    }
+internal fun PlayerScreenRuntime.playNextEpisode() {
+    if (nextEpisodeAutoPlaySearching) return
     nextEpisodePreloadTriggered = false
     val playbackKey = activePlaybackKey
     val nextVideoId = nextEpisodeInfo?.takeIf { it.hasAired }?.videoId ?: return
     fun isCurrentRequest(): Boolean = playbackKey == activePlaybackKey &&
-        nextEpisodeInfo?.videoId == nextVideoId &&
-        (!automatic || (
-            playerSettingsUiState.streamAutoPlayNextEpisodeEnabled &&
-                !nextEpisodeCardDismissed && isAtNextEpisodeThreshold()
-            ))
+        nextEpisodeInfo?.videoId == nextVideoId
     if (!isCurrentRequest()) return
-    nextEpisodeAutoPlayAutomatic = automatic
 
     scope.launchPlayerNextEpisodeAutoPlay(
         previousJob = nextEpisodeAutoPlayJob,
@@ -549,7 +536,6 @@ internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
         },
         onManualSelectionRequired = { nextVideo ->
             if (isCurrentRequest()) {
-                nextEpisodeCardDismissed = true
                 episodeStreamsPanelState = EpisodeStreamsPanelState(
                     showStreams = true,
                     selectedEpisode = nextVideo,
@@ -559,15 +545,6 @@ internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
         },
         onSearchingChanged = {
             if (playbackKey == activePlaybackKey) nextEpisodeAutoPlaySearching = it
-        },
-        onSourceNameChanged = {
-            if (playbackKey == activePlaybackKey) nextEpisodeAutoPlaySourceName = it
-        },
-        onCountdownChanged = {
-            if (playbackKey == activePlaybackKey) nextEpisodeAutoPlayCountdown = it
-        },
-        onNextEpisodeCardVisibleChanged = {
-            if (playbackKey == activePlaybackKey) showNextEpisodeCard = it
         },
     )?.let { job ->
         nextEpisodeAutoPlayJob = job
@@ -633,7 +610,6 @@ internal fun PlayerScreenRuntime.openEpisodesPanel() {
 private data class EpisodeResume(val positionMs: Long, val fraction: Float?)
 
 private fun PlayerScreenRuntime.resetEpisodePanelAndNextEpisodeState() {
-    showNextEpisodeCard = false
     showSourcesPanel = false
     showEpisodesPanel = false
     episodeStreamsPanelState = EpisodeStreamsPanelState()

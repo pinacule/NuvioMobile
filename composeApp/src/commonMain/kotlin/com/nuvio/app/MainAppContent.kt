@@ -1534,6 +1534,7 @@ internal fun MainAppContent(
                                     }
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
+                                onOfflineHomeToggleClick = { activateTab(AppScreenTab.Home) },
                                 onContinueWatchingClick = onContinueWatchingClick,
                                 onContinueWatchingLongPress = onContinueWatchingLongPress,
                                 onDownloadedItemClick = ::openDownloadedItem,

@@ -147,27 +147,35 @@ internal fun filterContinueWatchingForOfflineHome(
 ): List<ContinueWatchingItem> {
     val playable = downloads.filter { it.isPlayable }
     if (playable.isEmpty()) return emptyList()
-    val downloadedEpisodes = playable
-        .filter { it.isEpisode }
-        .mapTo(mutableSetOf()) { download ->
-            Triple(
-                download.parentMetaId.trim(),
-                download.seasonNumber ?: 0,
-                download.episodeNumber ?: 0,
-            )
+    val downloadedEpisodes = playable.mapNotNullTo(mutableSetOf()) { download ->
+        val season = download.seasonNumber
+        val episode = download.episodeNumber
+        if (season == null || episode == null) {
+            null
+        } else {
+            Triple(download.parentMetaId.trim(), season, episode)
         }
-    val downloadedContentIds = playable
+    }
+    // Movie downloads only: an episode download must never validate a
+    // content-level match for its show.
+    val downloadedMovieContentIds = playable
+        .filter { download -> download.seasonNumber == null && download.episodeNumber == null }
         .mapTo(mutableSetOf()) { download -> download.parentMetaId.trim() }
 
     return items.filter { item ->
         val season = item.seasonNumber
         val episode = item.episodeNumber
-        if (season != null && episode != null) {
-            Triple(item.parentMetaId.trim(), season, episode) in downloadedEpisodes
-        } else {
-            // Movies (and any item without episode coordinates) match on the
-            // content itself being downloaded.
-            item.parentMetaId.trim() in downloadedContentIds
+        when {
+            season != null && episode != null ->
+                Triple(item.parentMetaId.trim(), season, episode) in downloadedEpisodes
+            // Only a genuine movie item (movie type, no episode coordinates)
+            // may match on the content alone, and only against a movie
+            // download of that content. An episode item with a missing
+            // coordinate is not a movie and must not pass just because part
+            // of its show is downloaded.
+            season == null && episode == null && item.parentMetaType.equals("movie", ignoreCase = true) ->
+                item.parentMetaId.trim() in downloadedMovieContentIds
+            else -> false
         }
     }
 }

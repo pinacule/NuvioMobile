@@ -1378,10 +1378,6 @@
     <string name="custom_theme_preview">Vista previa</string>
     <string name="custom_theme_preview_accent">Tu color de acento</string>
     <string name="player_next_episode">Siguiente episodio</string>
-    <string name="player_next_episode_finding_source">Buscando fuente…</string>
-    <string name="player_next_episode_playing_via_countdown">Reproduciendo vía %1$s en %2$ds…</string>
-    <string name="player_next_episode_thumbnail">Miniatura del siguiente episodio</string>
-    <string name="player_next_episode_unaired">No emitido</string>
     <string name="player_skip">Saltar</string>
     <string name="player_skip_intro">Saltar intro</string>
     <string name="player_skip_outro">Saltar outro</string>

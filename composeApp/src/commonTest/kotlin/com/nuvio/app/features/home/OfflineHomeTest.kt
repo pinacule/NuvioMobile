@@ -167,6 +167,50 @@ class OfflineHomeTest {
     }
 
     @Test
+    fun `cw filter excludes series items with missing coordinates even when the show is downloaded`() {
+        val downloads = listOf(episodeDownload(showId = "show-a", season = 1, episode = 3))
+        val missingEpisode = episodeCwItem(showId = "show-a", season = 1, episode = 3)
+            .copy(episodeNumber = null)
+        val missingSeason = episodeCwItem(showId = "show-a", season = 1, episode = 3)
+            .copy(seasonNumber = null)
+        val missingBoth = episodeCwItem(showId = "show-a", season = 1, episode = 3)
+            .copy(seasonNumber = null, episodeNumber = null)
+
+        val filtered = filterContinueWatchingForOfflineHome(
+            items = listOf(missingEpisode, missingSeason, missingBoth),
+            downloads = downloads,
+        )
+
+        assertTrue(filtered.isEmpty())
+    }
+
+    @Test
+    fun `cw filter keeps a movie item matched by its own movie download`() {
+        val downloads = listOf(movieDownload(movieId = "movie-a"))
+
+        val filtered = filterContinueWatchingForOfflineHome(
+            items = listOf(movieCwItem(movieId = "movie-a")),
+            downloads = downloads,
+        )
+
+        assertEquals(listOf("movie-a"), filtered.map { it.parentMetaId })
+    }
+
+    @Test
+    fun `cw filter excludes movie item when only an episode carries its id`() {
+        // An episode record whose parent id equals the movie's id is not a
+        // download of the movie.
+        val downloads = listOf(episodeDownload(showId = "movie-a", season = 1, episode = 1))
+
+        val filtered = filterContinueWatchingForOfflineHome(
+            items = listOf(movieCwItem(movieId = "movie-a")),
+            downloads = downloads,
+        )
+
+        assertTrue(filtered.isEmpty())
+    }
+
+    @Test
     fun `cw filter preserves resume position of kept items`() {
         val downloads = listOf(episodeDownload(showId = "show-a", season = 2, episode = 5))
         val item = episodeCwItem(showId = "show-a", season = 2, episode = 5)

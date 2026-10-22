@@ -1078,10 +1078,6 @@
     <string name="theme_violet">バイオレット</string>
     <string name="theme_white">ホワイト</string>
     <string name="player_next_episode">次のエピソード</string>
-    <string name="player_next_episode_finding_source">ソースを検索中…</string>
-    <string name="player_next_episode_playing_via_countdown">%1$s で %2$d 秒後に再生…</string>
-    <string name="player_next_episode_thumbnail">次のエピソードのサムネイル</string>
-    <string name="player_next_episode_unaired">未放送</string>
     <string name="player_skip">スキップ</string>
     <string name="player_skip_intro">イントロをスキップ</string>
     <string name="player_skip_outro">アウトロをスキップ</string>

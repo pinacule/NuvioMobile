@@ -1106,10 +1106,6 @@
     <string name="theme_violet">Violet</string>
     <string name="theme_white">Alb</string>
     <string name="player_next_episode">Episodul următor</string>
-    <string name="player_next_episode_finding_source">Se caută sursa…</string>
-    <string name="player_next_episode_playing_via_countdown">Redare prin %1$s în %2$ds…</string>
-    <string name="player_next_episode_thumbnail">Miniatură episodul următor</string>
-    <string name="player_next_episode_unaired">Nedifuzat</string>
     <string name="player_skip">Sari peste</string>
     <string name="player_skip_intro">Sari peste Intro</string>
     <string name="player_skip_outro">Sari peste Outro</string>

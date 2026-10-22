@@ -132,6 +132,7 @@ fun LibraryScreen(
     onPreviewClick: ((MetaPreview) -> Unit)? = null,
     onPreviewLongClick: ((MetaPreview) -> Unit)? = null,
     onDownloadsClick: (() -> Unit)? = null,
+    onOfflineHomeToggleClick: (() -> Unit)? = null,
     onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
     continueWatchingDisintegrationRequest: DisintegrationRequest<String>? = null,
@@ -601,7 +602,9 @@ fun LibraryScreen(
                                 onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
                                 modifier = libraryContentTransitionModifier()
                                     .padding(horizontal = 16.dp),
-                                trailingContent = { OfflineHomeToggle() },
+                                trailingContent = {
+                                    OfflineHomeToggle(onToggled = onOfflineHomeToggleClick)
+                                },
                             )
                         }
                         when (displaySettings.layoutMode) {

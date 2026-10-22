@@ -138,6 +138,17 @@ object DownloadsRepository {
         }
     }
 
+    /**
+     * Downloads verified playable from disk right now: status Completed AND
+     * the local file still exists (the same check playback lookups use).
+     * The offline homepage consumes only these — a Completed record whose
+     * file was deleted outside the app is not downloaded content anymore.
+     */
+    fun playableLocalDownloads(): List<DownloadItem> {
+        ensureLoaded()
+        return _uiState.value.items.filter { it.hasPlayableLocalFile() }
+    }
+
     /** True when the episode is already downloading, paused or downloaded (failed ones may be retried). */
     fun hasActiveOrCompletedDownload(parentMetaId: String, seasonNumber: Int?, episodeNumber: Int?): Boolean {
         ensureLoaded()

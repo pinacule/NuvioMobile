@@ -432,10 +432,6 @@
     <string name="theme_violet">סגול</string>
     <string name="theme_white">לבן</string>
     <string name="player_next_episode">פרק הבא</string>
-    <string name="player_next_episode_finding_source">מחפש מקור...</string>
-    <string name="player_next_episode_playing_via_countdown">מנגן דרך %1$s בעוד %2$d שנ׳…</string>
-    <string name="player_next_episode_thumbnail">Thumbnail של הפרק הבא</string>
-    <string name="player_next_episode_unaired">טרם שודר</string>
     <string name="player_skip">דלג</string>
     <string name="player_skip_intro">דלג על ההקדמה</string>
     <string name="player_skip_outro">דלג על הסיום</string>

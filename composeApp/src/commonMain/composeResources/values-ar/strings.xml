@@ -1243,10 +1243,6 @@
     <string name="theme_violet">البنفسجي</string>
     <string name="theme_white">الأبيض</string>
     <string name="player_next_episode">الحلقة التالية</string>
-    <string name="player_next_episode_finding_source">جارٍ البحث عن مصدر…</string>
-    <string name="player_next_episode_playing_via_countdown">سيبدأ التشغيل عبر %1$s خلال %2$d ث…</string>
-    <string name="player_next_episode_thumbnail">الصورة المصغرة للحلقة التالية</string>
-    <string name="player_next_episode_unaired">لم يعرض بعد</string>
     <string name="player_skip">تخطي</string>
     <string name="player_skip_intro">تخطي المقدمة</string>
     <string name="player_skip_outro">تخطي النهاية</string>
