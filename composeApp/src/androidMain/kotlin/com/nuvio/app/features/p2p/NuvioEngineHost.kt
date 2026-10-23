@@ -278,7 +278,7 @@ internal object NuvioEngineHost {
      * before it could take delivery of it. Must be called with torrentMutex
      * held (from [acquireTorrent]).
      */
-    private fun forgetLeaseLocked(lease: TorrentLease, removeTorrentWhenUnused: Boolean) {
+    private suspend fun forgetLeaseLocked(lease: TorrentLease, removeTorrentWhenUnused: Boolean) {
         if (!lease.released.compareAndSet(false, true)) return
         val shouldRemove = synchronized(stateLock) {
             if (engine !== lease.engine) return@synchronized false
@@ -291,10 +291,16 @@ internal object NuvioEngineHost {
             true
         }
         if (shouldRemove) {
-            try {
-                lease.engine.removeTorrent(lease.torrentId)
-            } catch (error: Exception) {
-                Log.w(HOST_TAG, "Error removing torrent ${lease.torrentId.take(12)}", error)
+            // The caller is already cancelled (that is why this guard runs at
+            // all) but must hand the reference back before the cancellation
+            // propagates, so the removal itself runs non-cancellably — the
+            // same treatment releaseTorrent gives its own removal.
+            withContext(NonCancellable) {
+                try {
+                    lease.engine.removeTorrent(lease.torrentId)
+                } catch (error: Exception) {
+                    Log.w(HOST_TAG, "Error removing torrent ${lease.torrentId.take(12)}", error)
+                }
             }
         }
     }
