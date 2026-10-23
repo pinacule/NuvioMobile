@@ -449,7 +449,7 @@ class SimklSyncEngineTest {
 
         assertEquals(
             listOf("Unkeyed Movie", "Unkeyed Show"),
-            result.entries.map { it.media?.title }.sorted(),
+            result.entries.map { it.media?.title }.sortedWith(compareBy { it }),
         )
         assertTrue(remote.isExhausted)
     }
