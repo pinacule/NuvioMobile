@@ -18,6 +18,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -217,13 +218,28 @@ internal object NuvioEngineHost {
         val torrentId = knownTorrentId ?: activeEngine.addMagnet(
             buildP2pMagnetUri(canonicalHash, (P2P_DEFAULT_TRACKERS + trackers).distinct()),
         )
-        synchronized(stateLock) {
+        val lease = synchronized(stateLock) {
             check(engine === activeEngine) { "The torrent engine was restarted" }
             knownTorrents[canonicalHash] = torrentId
             TorrentLease(activeEngine, canonicalHash, torrentId).also { lease ->
                 torrentLeases.getOrPut(torrentId) { mutableSetOf() } += lease
             }
         }
+        // Cancellation can land while addMagnet is suspended (the metadata
+        // prefetch bounds that wait with a timeout): when the native bridge
+        // ignores cancellation and delivers the torrent anyway, the lease
+        // above is already registered — but a cancelled caller discards the
+        // return value, so the lease would stay registered while held by
+        // nobody, pinning the torrent in the engine for its whole lifetime
+        // and defeating removeWhenUnused for every later holder. Hand the
+        // reference back before propagating the cancellation: a torrent this
+        // call just added is removed again, one that was already known is
+        // only unreferenced, exactly like a release that keeps it warm.
+        if (!currentCoroutineContext().isActive) {
+            forgetLeaseLocked(lease, removeTorrentWhenUnused = knownTorrentId == null)
+            currentCoroutineContext().ensureActive()
+        }
+        lease
     }
 
     /**
@@ -251,6 +267,34 @@ internal object NuvioEngineHost {
                         Log.w(HOST_TAG, "Error removing torrent ${lease.torrentId.take(12)}", error)
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Unregisters [lease] again, removing its torrent from the engine when
+     * [removeTorrentWhenUnused] is set and no holder remains. Mirrors
+     * [releaseTorrent]'s bookkeeping for a lease whose acquirer was cancelled
+     * before it could take delivery of it. Must be called with torrentMutex
+     * held (from [acquireTorrent]).
+     */
+    private fun forgetLeaseLocked(lease: TorrentLease, removeTorrentWhenUnused: Boolean) {
+        if (!lease.released.compareAndSet(false, true)) return
+        val shouldRemove = synchronized(stateLock) {
+            if (engine !== lease.engine) return@synchronized false
+            val holders = torrentLeases[lease.torrentId] ?: return@synchronized false
+            holders.remove(lease)
+            if (holders.isNotEmpty()) return@synchronized false
+            torrentLeases.remove(lease.torrentId)
+            if (!removeTorrentWhenUnused) return@synchronized false
+            knownTorrents.remove(lease.infoHash)
+            true
+        }
+        if (shouldRemove) {
+            try {
+                lease.engine.removeTorrent(lease.torrentId)
+            } catch (error: Exception) {
+                Log.w(HOST_TAG, "Error removing torrent ${lease.torrentId.take(12)}", error)
             }
         }
     }

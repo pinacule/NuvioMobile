@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 internal actual object TrackingScrobbleOutboxStorage {
     private const val PREFERENCES_NAME = "nuvio_scrobble_outbox"
     private const val PAYLOAD_KEY = "scrobble_outbox_payload"
+    private const val CORRUPT_BACKUP_KEY = "scrobble_outbox_corrupt_backup"
 
     private var preferences: SharedPreferences? = null
 
@@ -17,6 +18,10 @@ internal actual object TrackingScrobbleOutboxStorage {
 
     actual fun savePayload(payload: String) {
         preferences?.edit()?.putString(PAYLOAD_KEY, payload)?.apply()
+    }
+
+    actual fun saveCorruptPayloadBackup(payload: String) {
+        preferences?.edit()?.putString(CORRUPT_BACKUP_KEY, payload)?.apply()
     }
 
     actual fun removeProfile(profileId: Int) {

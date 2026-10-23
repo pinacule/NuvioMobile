@@ -10,5 +10,8 @@ actual object DeviceEnvironment {
 
     actual fun isCellular(): Boolean = false
 
+    /** Matches the stub's WiFi-like stance above: no metered link is reported. */
+    actual fun isUnmetered(): Boolean = true
+
     actual fun batteryPercent(): Int = -1
 }

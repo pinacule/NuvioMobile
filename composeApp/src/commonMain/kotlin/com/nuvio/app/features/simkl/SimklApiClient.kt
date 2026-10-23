@@ -70,12 +70,17 @@ internal class SimklApiClient(
     private val sleep: suspend (Long) -> Unit = { delayMs -> delay(delayMs) },
     private val retryJitterMs: () -> Long = { Random.nextLong(RETRY_JITTER_BOUND_MS + 1L) },
 ) {
-    private val requestMutex = Mutex()
+    // Guards only the pacing timestamps below. It is never held across a
+    // sleep or a network call: one request backing off (or waiting out a
+    // rate-limit interval) must not stall every other Simkl call behind
+    // it. Pacing is enforced by reserving start slots — see
+    // awaitPacingSlot.
+    private val pacingMutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
     private var nextGetAtEpochMs = 0L
     private var nextPostAtEpochMs = 0L
 
-    suspend fun execute(request: SimklApiRequest): SimklApiResponse = requestMutex.withLock {
+    suspend fun execute(request: SimklApiRequest): SimklApiResponse {
         val token = if (request.requiresAuthentication) {
             accessToken()?.takeIf(String::isNotBlank)
                 ?: throw SimklApiException(
@@ -96,7 +101,8 @@ internal class SimklApiClient(
         var syncWriteLockRetried = false
         for (attempt in 0 until maxAttempts) {
             val response = try {
-                executeRateLimited(request.method) {
+                awaitPacingSlot(request.method)
+                try {
                     engine.execute(
                         method = request.method.name,
                         url = buildSimklApiUrl(request.path, request.query),
@@ -106,6 +112,8 @@ internal class SimklApiClient(
                         ),
                         body = request.body,
                     )
+                } finally {
+                    recordPacingCompletion(request.method)
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -118,7 +126,14 @@ internal class SimklApiClient(
                         cause = error,
                     )
                 }
-                sleep(retryDelayMs(attempt, retryAfterHeader = null, retryJitterMs()))
+                sleep(
+                    retryDelayMs(
+                        attempt = attempt,
+                        retryAfterHeader = null,
+                        jitterMs = retryJitterMs(),
+                        nowEpochMs = nowEpochMs(),
+                    ),
+                )
                 continue
             }
 
@@ -141,9 +156,9 @@ internal class SimklApiClient(
             }
 
             when (classifySimklResponse(response.status, request.scrobbleStopConflictIsSuccess)) {
-                SimklResponseAction.SUCCESS -> return@withLock response.toApiResponse()
+                SimklResponseAction.SUCCESS -> return response.toApiResponse()
                 SimklResponseAction.SOFT_SUCCESS -> {
-                    return@withLock response.toApiResponse(isSoftSuccess = true)
+                    return response.toApiResponse(isSoftSuccess = true)
                 }
                 SimklResponseAction.REAUTHENTICATE -> {
                     if (request.requiresAuthentication) onUnauthorized()
@@ -157,6 +172,7 @@ internal class SimklApiClient(
                             attempt = attempt,
                             retryAfterHeader = response.headers.headerValue("retry-after"),
                             jitterMs = retryJitterMs(),
+                            nowEpochMs = nowEpochMs(),
                         ),
                     )
                 }
@@ -166,37 +182,57 @@ internal class SimklApiClient(
         error("Simkl request loop completed without a response")
     }
 
-    private suspend fun <T> executeRateLimited(
-        method: SimklHttpMethod,
-        block: suspend () -> T,
-    ): T {
-        awaitRateLimit(method)
-        return try {
-            block()
+    /**
+     * Reserves the next pacing slot for [method] under a short lock, then
+     * waits for the slot OUTSIDE the lock. Reserving advances the
+     * next-allowed timestamp immediately, so concurrent callers line up
+     * on successive slots instead of all waking at the same instant;
+     * [recordPacingCompletion] can push the next slot further out when a
+     * request runs long, preserving the completion-to-start spacing the
+     * intervals were tuned with (GET 100 ms, POST/DELETE 1 s).
+     */
+    private suspend fun awaitPacingSlot(method: SimklHttpMethod) {
+        val waitMs = pacingMutex.withLock {
+            val now = nowEpochMs()
+            val scheduledAt = max(nextPacingSlotEpochMs(method), now)
+            setNextPacingSlotEpochMs(method, scheduledAt + pacingIntervalMs(method))
+            scheduledAt - now
+        }
+        if (waitMs > 0L) sleep(waitMs)
+    }
+
+    private fun recordPacingCompletion(method: SimklHttpMethod) {
+        // Best-effort bookkeeping: if a reservation is in flight elsewhere
+        // the slot floor it set already spaces this completion, so a
+        // skipped extension only ever relaxes spacing after a long-running
+        // request, never tightens it below the reserved interval.
+        if (!pacingMutex.tryLock()) return
+        try {
+            val completedAt = nowEpochMs()
+            setNextPacingSlotEpochMs(
+                method,
+                max(nextPacingSlotEpochMs(method), completedAt + pacingIntervalMs(method)),
+            )
         } finally {
-            recordRateLimitCompletion(method)
+            pacingMutex.unlock()
         }
     }
 
-    private suspend fun awaitRateLimit(method: SimklHttpMethod) {
-        val now = nowEpochMs()
-        val scheduledAt = when (method) {
-            SimklHttpMethod.GET -> nextGetAtEpochMs
-            SimklHttpMethod.POST, SimklHttpMethod.DELETE -> nextPostAtEpochMs
-        }
-        if (scheduledAt > now) sleep(scheduledAt - now)
+    private fun nextPacingSlotEpochMs(method: SimklHttpMethod): Long = when (method) {
+        SimklHttpMethod.GET -> nextGetAtEpochMs
+        SimklHttpMethod.POST, SimklHttpMethod.DELETE -> nextPostAtEpochMs
     }
 
-    private fun recordRateLimitCompletion(method: SimklHttpMethod) {
-        val completedAt = nowEpochMs()
+    private fun setNextPacingSlotEpochMs(method: SimklHttpMethod, epochMs: Long) {
         when (method) {
-            SimklHttpMethod.GET -> {
-                nextGetAtEpochMs = max(nextGetAtEpochMs, completedAt + GET_INTERVAL_MS)
-            }
-            SimklHttpMethod.POST, SimklHttpMethod.DELETE -> {
-                nextPostAtEpochMs = max(nextPostAtEpochMs, completedAt + POST_INTERVAL_MS)
-            }
+            SimklHttpMethod.GET -> nextGetAtEpochMs = epochMs
+            SimklHttpMethod.POST, SimklHttpMethod.DELETE -> nextPostAtEpochMs = epochMs
         }
+    }
+
+    private fun pacingIntervalMs(method: SimklHttpMethod): Long = when (method) {
+        SimklHttpMethod.GET -> GET_INTERVAL_MS
+        SimklHttpMethod.POST, SimklHttpMethod.DELETE -> POST_INTERVAL_MS
     }
 
     private companion object {
@@ -263,7 +299,11 @@ internal fun classifySimklResponse(
     status in 200..299 -> SimklResponseAction.SUCCESS
     status == 409 && scrobbleStopConflictIsSuccess -> SimklResponseAction.SOFT_SUCCESS
     status == 401 -> SimklResponseAction.REAUTHENTICATE
-    status == 429 || status == 500 || status == 502 || status == 503 -> SimklResponseAction.RETRY
+    // Transient set aligned with the mutation layer's queueable-failure
+    // classification (SimklMutationRepository.isSimklQueueableFailure):
+    // request timeout, rate limiting, and any server error are worth
+    // retrying; everything else is a deterministic failure.
+    status == 408 || status == 429 || status in 500..599 -> SimklResponseAction.RETRY
     else -> SimklResponseAction.FAIL
 }
 
@@ -271,19 +311,78 @@ internal fun retryDelayMs(
     attempt: Int,
     retryAfterHeader: String?,
     jitterMs: Long,
+    nowEpochMs: Long = SimklPlatformClock.nowEpochMs(),
 ): Long {
     require(attempt in 0..4) { "Retry attempt must be between 0 and 4" }
     val exponentialDelayMs = 1_000L shl attempt
-    val retryAfterMs = retryAfterHeader
-        ?.substringBefore(',')
-        ?.trim()
-        ?.toLongOrNull()
-        ?.coerceAtLeast(0L)
-        ?.times(1_000L)
-        ?: 0L
+    val retryAfterMs = parseRetryAfterMs(retryAfterHeader, nowEpochMs) ?: 0L
     return (max(exponentialDelayMs, retryAfterMs) + jitterMs.coerceIn(0L, 1_000L))
         .coerceAtMost(60_000L)
 }
+
+/**
+ * Parses a Retry-After header value in either of its HTTP forms:
+ * delta-seconds ("120") or an HTTP-date ("Wed, 21 Oct 2015 07:28:00 GMT",
+ * resolved against [nowEpochMs]). Returns null when the value matches
+ * neither form.
+ */
+internal fun parseRetryAfterMs(headerValue: String?, nowEpochMs: Long): Long? {
+    val value = headerValue?.trim()?.takeIf(String::isNotEmpty) ?: return null
+    value.toLongOrNull()?.let { seconds -> return seconds.coerceAtLeast(0L) * 1_000L }
+    parseHttpDateEpochMs(value)?.let { dateEpochMs ->
+        return (dateEpochMs - nowEpochMs).coerceAtLeast(0L)
+    }
+    // A delta-seconds value followed by junk after a comma (some proxies
+    // merge repeated headers) still yields its leading number.
+    return value.substringBefore(',').trim().toLongOrNull()
+        ?.coerceAtLeast(0L)
+        ?.times(1_000L)
+}
+
+private val HTTP_DATE_MONTHS = mapOf(
+    "Jan" to 1, "Feb" to 2, "Mar" to 3, "Apr" to 4, "May" to 5, "Jun" to 6,
+    "Jul" to 7, "Aug" to 8, "Sep" to 9, "Oct" to 10, "Nov" to 11, "Dec" to 12,
+)
+
+private val HTTP_DATE_PATTERN = Regex(
+    """^[A-Za-z]{3}, (\d{2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$""",
+)
+
+/**
+ * Parses an IMF-fixdate (the only HTTP-date form servers generate in
+ * practice) to epoch milliseconds, or null when the value is not a valid
+ * date. Mirrors the hand-rolled UTC math in parseSimklUtcEpochMs.
+ */
+internal fun parseHttpDateEpochMs(value: String): Long? {
+    val match = HTTP_DATE_PATTERN.matchEntire(value.trim()) ?: return null
+    val day = match.groupValues[1].toIntOrNull() ?: return null
+    val month = HTTP_DATE_MONTHS[match.groupValues[2]] ?: return null
+    val year = match.groupValues[3].toIntOrNull() ?: return null
+    val hour = match.groupValues[4].toIntOrNull() ?: return null
+    val minute = match.groupValues[5].toIntOrNull() ?: return null
+    val second = match.groupValues[6].toIntOrNull() ?: return null
+    if (year !in 1970..2100 || hour !in 0..23 || minute !in 0..59 || second !in 0..60) return null
+    val monthDays = httpDateDaysInMonths(year)
+    if (day !in 1..monthDays[month - 1]) return null
+
+    var days = 0L
+    for (currentYear in 1970 until year) {
+        days += if (httpDateIsLeapYear(currentYear)) 366L else 365L
+    }
+    for (monthIndex in 0 until month - 1) days += monthDays[monthIndex]
+    days += day - 1L
+    return (((days * 24L + hour) * 60L + minute) * 60L + second) * 1_000L
+}
+
+private fun httpDateIsLeapYear(year: Int): Boolean =
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+
+private fun httpDateDaysInMonths(year: Int): IntArray =
+    if (httpDateIsLeapYear(year)) {
+        intArrayOf(31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    } else {
+        intArrayOf(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    }
 
 private fun RawHttpResponse.toApiResponse(isSoftSuccess: Boolean = false): SimklApiResponse =
     SimklApiResponse(

@@ -6,6 +6,19 @@ import com.nuvio.app.core.time.isEpisodeReleaseAired
 import com.nuvio.app.core.time.isoEpochDay as coreIsoEpochDay
 import com.nuvio.app.core.time.parseEpisodeReleaseLocalDate
 
+/**
+ * When the app itself treats a locally recorded view as finished.
+ *
+ * Deliberately stricter than the provider watched threshold
+ * (`TrackingWatchedThresholdPercent`, 80%): that one records when a tracking
+ * provider (Simkl, Trakt) counts a view as watched, this one decides when a
+ * local progress row stops being resumable. The difference is intentional —
+ * local-only behavior (offline use, the Nuvio source) keeps the stricter
+ * bar. Where the two semantics must agree — the Simkl source's own progress
+ * projection — the provider threshold is what applies, so an item Simkl
+ * counts as watched does not linger in continue watching while Simkl is the
+ * active source.
+ */
 private const val CompletionThresholdFraction = 0.90
 private const val ProgressStoreThresholdMs = 1_000L
 private const val UpcomingNextSeasonWindowDays = 7

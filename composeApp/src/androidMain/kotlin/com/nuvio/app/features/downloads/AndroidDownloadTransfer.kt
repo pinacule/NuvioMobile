@@ -1,5 +1,6 @@
 package com.nuvio.app.features.downloads
 
+import com.nuvio.app.core.network.isCredentialHeader
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -18,12 +19,46 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 
+/** Tags a download request with the host its source headers were issued for. */
+private class DownloadOriginHostTag(val host: String)
+
 internal val downloadHttpClient = OkHttpClient.Builder()
     .connectTimeout(60, TimeUnit.SECONDS)
     .readTimeout(60, TimeUnit.SECONDS)
     .writeTimeout(60, TimeUnit.SECONDS)
     .followRedirects(true)
     .followSslRedirects(true)
+    // OkHttp strips Authorization on cross-host redirects but forwards every
+    // other source header an addon attached (Cookie, API keys, …) to the
+    // redirect target — debrid/CDN chains redirect across hosts routinely.
+    // Tag each request with its origin host, then strip credential headers
+    // from any hop that lands on a different host, mirroring the playback
+    // client's host pinning (PlayerPlaybackNetworking).
+    .addInterceptor { chain ->
+        val request = chain.request()
+        if (request.tag() is DownloadOriginHostTag) {
+            chain.proceed(request)
+        } else {
+            chain.proceed(
+                request.newBuilder()
+                    .tag(DownloadOriginHostTag(request.url.host))
+                    .build()
+            )
+        }
+    }
+    .addNetworkInterceptor { chain ->
+        val request = chain.request()
+        val originHost = (request.tag() as? DownloadOriginHostTag)?.host
+        if (originHost == null || request.url.host.equals(originHost, ignoreCase = true)) {
+            chain.proceed(request)
+        } else {
+            val stripped = request.newBuilder()
+            request.headers.names()
+                .filter { name -> isCredentialHeader(name) }
+                .forEach { name -> stripped.removeHeader(name) }
+            chain.proceed(stripped.build())
+        }
+    }
     .build()
 
 internal class DownloadHttpException(val statusCode: Int) : IOException("Download failed: HTTP $statusCode")

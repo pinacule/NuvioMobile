@@ -7,6 +7,7 @@ import com.nuvio.app.features.tracking.TrackingMediaKind
 import com.nuvio.app.features.tracking.TrackingMediaReference
 import com.nuvio.app.features.tracking.TrackingProviderId
 import com.nuvio.app.features.tracking.TrackingSettingsRepository
+import com.nuvio.app.features.tracking.TrackingWatchedThresholdPercent
 import com.nuvio.app.features.tracking.extractTrackingYear
 import com.nuvio.app.features.tracking.parseTrackingExternalIds
 import com.nuvio.app.features.tracking.trackingMediaKind
@@ -436,6 +437,12 @@ internal fun SimklPlaybackSession.toWatchProgressEntry(
     } else {
         0L
     }
+    // For movies this position is approximate by construction: Simkl records
+    // only a percent, and the runtime it is scaled by here is rounded to
+    // whole minutes, so the resume point can be off by tens of seconds.
+    // `WatchProgressEntry.resolveResumePosition` refines it against the real
+    // file duration (percent × actual duration) wherever a caller resolves
+    // the resume point with local playback data in hand.
     val positionMs = if (durationMs > 0L) (durationMs * normalizedProgress / 100.0).toLong() else 0L
     val updatedAt = parseSimklUtcEpochMs(pausedAt)
         ?: parseSimklUtcEpochMs(watchedAt)
@@ -453,7 +460,7 @@ internal fun SimklPlaybackSession.toWatchProgressEntry(
         lastPositionMs = positionMs,
         durationMs = durationMs,
         lastUpdatedEpochMs = updatedAt,
-        isCompleted = normalizedProgress >= SIMKL_WATCHED_THRESHOLD_PERCENT,
+        isCompleted = normalizedProgress >= TrackingWatchedThresholdPercent,
         progressPercent = normalizedProgress.toFloat(),
         source = WatchProgressSourceSimklPlayback,
         trackingProviderId = TrackingProviderId.SIMKL.storageId,
@@ -660,4 +667,7 @@ private val SIMKL_UTC_PATTERN = Regex(
     RegexOption.IGNORE_CASE,
 )
 
-private const val SIMKL_WATCHED_THRESHOLD_PERCENT = 80.0
+// The watched threshold for this projection lives in
+// `TrackingWatchedThresholdPercent` (tracking package): one shared
+// definition for every place that decides whether a provider counts a view
+// as watched, deliberately distinct from the local 90% completion rule.

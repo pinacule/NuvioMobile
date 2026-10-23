@@ -98,7 +98,46 @@ class SeasonDownloadMatchingTest {
     fun resolutionIsReadFromNamesAndTitles() {
         assertEquals("2160p", torrent("Torrentio\n4k", "x", packHash).streamResolution())
         assertEquals("720p", torrent("Addon", "Show 720p WEB", packHash).streamResolution())
+        assertEquals("360p", torrent("Torrentio\n360p", "x", packHash).streamResolution())
         assertNull(torrent("Addon", "Show WEB", packHash).streamResolution())
+    }
+
+    @Test
+    fun wellSeededReleaseBeatsCloserNamedDeadRelease() {
+        val template = torrent("Torrentio\n1080p", "Show.S01E01.1080p.WEB.x265-GRP", packHash)
+        val deadExact = torrent("Torrentio\n1080p", "Show.S01E05.1080p.WEB.x265-GRP \uD83D\uDC64 0", "b".repeat(40))
+        val seededOther = torrent("Torrentio\n1080p", "Show.S01E05.1080p.WEB.x264-OTHER \uD83D\uDC64 800", "c".repeat(40))
+
+        // Seeders are the PRIMARY key in the non-dub ranking: the healthy
+        // release wins even though the dead one's name matches the template
+        // exactly — release-name similarity is now only the tiebreak.
+        assertEquals(seededOther, pickMatchingEpisodeStream(template, listOf(deadExact, seededOther)))
+    }
+
+    @Test
+    fun deadDubAtTemplateResolutionLosesToSeededDubAtAnotherResolution() {
+        val template = torrent("Torrentio\n720p", "Show.S01E01.720p.WEB.x265-GRP", packHash)
+        val deadDub720 = torrent("Torrentio\n720p", "Show S01E05 720p WEB Dual Audio x265-GRP \uD83D\uDC64 0", "b".repeat(40))
+        val seededDub1080 = torrent("Torrentio\n1080p", "Show S01E05 1080p WEB Dual Audio x265-OTHER \uD83D\uDC64 2000", "c".repeat(40))
+
+        // Among dubs, seed health outranks the exact-resolution match: the
+        // 0-seeder dub at the template's resolution would just stall.
+        assertEquals(
+            seededDub1080,
+            pickMatchingEpisodeStream(template, listOf(deadDub720, seededDub1080), preferEnglishAudio = true),
+        )
+    }
+
+    @Test
+    fun oversizeReleaseIsDeprioritizedInMatching() {
+        val template = torrent("Torrentio\n720p", "Show.S01E01.720p.WEB.x265-GRP", packHash)
+        val oversize = torrent("Torrentio\n720p", "Show.S01E05.720p.WEB.x265-GRP \uD83D\uDCBE 30 GB \uD83D\uDC64 900", "b".repeat(40))
+        val sane = torrent("Torrentio\n720p", "Show.S01E05.720p.WEB.x264-OTHER \uD83D\uDCBE 1.5 GB \uD83D\uDC64 10", "c".repeat(40))
+
+        // 30 GB is past the 720p sane ceiling: the oversize release only
+        // competes when the whole pool is oversize — seeders cannot save it
+        // while a sane candidate exists.
+        assertEquals(sane, pickMatchingEpisodeStream(template, listOf(oversize, sane)))
     }
 
     @Test

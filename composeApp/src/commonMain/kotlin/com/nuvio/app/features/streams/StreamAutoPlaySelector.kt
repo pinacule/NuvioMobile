@@ -207,18 +207,22 @@ object StreamAutoPlaySelector {
         // AdaptiveStreamPicker.pickBestSeeded). HDR needs enough seeders for
         // smooth playback; the gate applies to the non-English pool and falls
         // back to the ungated pool when nothing qualifies so we never pick
-        // nothing. Both partitions keep their existing order (stable).
+        // nothing. Both partitions keep their existing order (stable). The
+        // ordinary seeder floor gate composes the same way: English releases
+        // are exempt (dub preference outranks seeder requirements), the rest
+        // of the pool is floored with the same never-pick-nothing fallback.
         val rankedReadyStreams = if (preferEnglishAudio) {
             val (englishDubStreams, otherStreams) = readyStreams.partition {
                 AdaptiveStreamPicker.hasEnglishAudio(it)
             }
             if (englishDubStreams.isEmpty()) {
-                applyHdrSeederGate(otherStreams, requireHdrSeeders)
+                applySeederFloorGate(applyHdrSeederGate(otherStreams, requireHdrSeeders))
             } else {
-                englishDubStreams + applyHdrSeederGate(otherStreams, requireHdrSeeders)
+                englishDubStreams +
+                    applySeederFloorGate(applyHdrSeederGate(otherStreams, requireHdrSeeders))
             }
         } else {
-            applyHdrSeederGate(readyStreams, requireHdrSeeders)
+            applySeederFloorGate(applyHdrSeederGate(readyStreams, requireHdrSeeders))
         }
         val selected = rankedReadyStreams.firstOrNull()
         if (selected != null) {
@@ -250,6 +254,24 @@ object StreamAutoPlaySelector {
             !AdaptiveStreamPicker.isHdrStream(stream) ||
                 (AdaptiveStreamPicker.parseSeeders(stream) ?: -1) >=
                 AdaptiveStreamPicker.MIN_SEEDERS_FOR_HDR_AUTOPLAY
+        }.ifEmpty { streams }
+    }
+
+    /**
+     * Ordinary seeder floor: when at least one candidate counts as healthy
+     * (known seeders at/above [AdaptiveStreamPicker.MIN_SEEDERS_FOR_AUTOPLAY],
+     * or an unknown count — neutral, no evidence of weakness), candidates
+     * KNOWN to sit below the floor drop out, so a nearly dead stream listed
+     * first by an addon no longer beats a healthy one further down. If every
+     * candidate is known-below-floor the list is returned unchanged so we
+     * never pick nothing (mirrors [applyHdrSeederGate]'s fallback). Relative
+     * order is preserved (stable filter).
+     */
+    private fun applySeederFloorGate(streams: List<StreamItem>): List<StreamItem> {
+        if (streams.isEmpty()) return streams
+        return streams.filter { stream ->
+            val seeders = AdaptiveStreamPicker.parseSeeders(stream)
+            seeders == null || seeders >= AdaptiveStreamPicker.MIN_SEEDERS_FOR_AUTOPLAY
         }.ifEmpty { streams }
     }
 

@@ -28,6 +28,7 @@ import com.nuvio.app.core.auth.DeviceSessionRegistration
 import com.nuvio.app.core.network.NetworkCondition
 import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.sync.SyncManager
+import com.nuvio.app.features.tracking.TrackingScrobbleCoordinator
 import com.nuvio.app.core.ui.NativeProfileSwitcherController
 import com.nuvio.app.core.ui.NativeTabBridge
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
@@ -106,6 +107,9 @@ internal fun AppGate(
     LaunchedEffect(Unit) {
         if (!ownsAppRuntime) return@LaunchedEffect
         NetworkStatusRepository.ensureStarted()
+        // Standing scrobble-outbox flush triggers: replay at startup and
+        // whenever connectivity is regained.
+        TrackingScrobbleCoordinator.ensureFlushTriggers()
         MemberAccessRepository.ensureStarted()
         ProfileRepository.loadCachedProfiles()
         AvatarRepository.fetchAvatars()

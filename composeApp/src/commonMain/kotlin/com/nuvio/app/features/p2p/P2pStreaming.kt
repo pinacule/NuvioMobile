@@ -174,12 +174,74 @@ data class P2pStreamRequest(
 )
 
 internal fun canonicalP2pInfoHash(infoHash: String): String {
-    val canonical = infoHash.trim().lowercase()
-    require((canonical.length == 40 || canonical.length == 64) &&
-        canonical.all { it in '0'..'9' || it in 'a'..'f' }) {
-        "Torrent info hash must be 40 or 64 hexadecimal characters"
+    val trimmed = infoHash.trim()
+    val canonical = trimmed.lowercase()
+    if ((canonical.length == 40 || canonical.length == 64) &&
+        canonical.all { it in '0'..'9' || it in 'a'..'f' }
+    ) {
+        return canonical
     }
-    return canonical
+    // BitTorrent v1 hashes also circulate as RFC 4648 base32 (32 characters,
+    // no padding) — in magnet btih topics and torrent:// URLs. Stream
+    // validation accepts that form, so decode it to the same 20-byte hex
+    // representation here, at the canonicalization point every engine,
+    // download and prefetch path funnels through; a hex-only check would
+    // reject base32 torrents outright (and playback surfaced that raw).
+    if (trimmed.length == BASE32_INFO_HASH_LENGTH) {
+        decodeBase32InfoHash(trimmed)?.let { return it }
+    }
+    throw IllegalArgumentException(
+        "Torrent info hash must be 40 or 64 hexadecimal characters or a 32-character base32 hash",
+    )
+}
+
+/**
+ * The canonical form of [infoHash] when it parses as a torrent info hash
+ * (hex or base32), or null when it does not. For hash comparisons and other
+ * addon-supplied values that must not throw.
+ */
+internal fun canonicalP2pInfoHashOrNull(infoHash: String?): String? =
+    infoHash?.let { runCatching { canonicalP2pInfoHash(it) }.getOrNull() }
+
+private const val BASE32_INFO_HASH_LENGTH = 32
+
+/**
+ * Decodes an RFC 4648 base32 info hash (32 characters, no padding, either
+ * case) to its 40-character lowercase hex form, or null when [value] holds a
+ * character outside the base32 alphabet. 32 characters × 5 bits are exactly
+ * the 20 bytes of a v1 info hash, so no padding or remainder handling arises.
+ */
+private fun decodeBase32InfoHash(value: String): String? {
+    val bytes = ByteArray(20)
+    var buffer = 0
+    var bitsInBuffer = 0
+    var byteIndex = 0
+    for (char in value) {
+        val symbol = when (char) {
+            in 'A'..'Z' -> char - 'A'
+            in 'a'..'z' -> char - 'a'
+            in '2'..'7' -> char - '2' + 26
+            else -> return null
+        }
+        buffer = (buffer shl 5) or symbol
+        bitsInBuffer += 5
+        if (bitsInBuffer >= 8) {
+            bitsInBuffer -= 8
+            if (byteIndex >= bytes.size) return null
+            bytes[byteIndex] = (buffer ushr bitsInBuffer).toByte()
+            byteIndex += 1
+            buffer = buffer and ((1 shl bitsInBuffer) - 1)
+        }
+    }
+    return if (byteIndex == bytes.size) bytes.toLowerHexString() else null
+}
+
+private fun ByteArray.toLowerHexString(): String = buildString(size * 2) {
+    for (byte in this@toLowerHexString) {
+        val value = byte.toInt() and 0xff
+        append(HEX_DIGITS[value ushr 4].lowercaseChar())
+        append(HEX_DIGITS[value and 0x0f].lowercaseChar())
+    }
 }
 
 internal fun buildP2pMagnetUri(infoHash: String, trackers: List<String>): String {

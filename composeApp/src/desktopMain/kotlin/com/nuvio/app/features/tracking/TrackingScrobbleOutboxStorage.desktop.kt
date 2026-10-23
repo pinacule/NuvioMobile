@@ -4,6 +4,7 @@ import com.nuvio.app.core.storage.DesktopPreferences
 
 internal actual object TrackingScrobbleOutboxStorage {
     private const val PAYLOAD_KEY = "scrobble_outbox_payload"
+    private const val CORRUPT_BACKUP_KEY = "scrobble_outbox_corrupt_backup"
 
     private val preferences = DesktopPreferences("scrobble_outbox")
 
@@ -11,6 +12,10 @@ internal actual object TrackingScrobbleOutboxStorage {
 
     actual fun savePayload(payload: String) {
         preferences.putString(PAYLOAD_KEY, payload)
+    }
+
+    actual fun saveCorruptPayloadBackup(payload: String) {
+        preferences.putString(CORRUPT_BACKUP_KEY, payload)
     }
 
     actual fun removeProfile(profileId: Int) {

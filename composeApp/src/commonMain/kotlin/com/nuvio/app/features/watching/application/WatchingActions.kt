@@ -8,6 +8,7 @@ import com.nuvio.app.features.watched.WatchedItem
 import com.nuvio.app.features.watched.WatchedRepository
 import com.nuvio.app.features.watched.episodePlaybackId
 import com.nuvio.app.features.watched.releasedMainSeasonEpisodes
+import com.nuvio.app.features.watched.releasedPlayableEpisodes
 import com.nuvio.app.features.watched.toEpisodeWatchedItem
 import com.nuvio.app.features.watched.toSeriesWatchedItem
 import com.nuvio.app.features.watched.toWatchedItem
@@ -35,7 +36,13 @@ object WatchingActions {
         val meta = MetaDetailsRepository.fetch(type = preview.type, id = preview.id)
         if (meta == null) {
             if (isCurrentlyWatched) {
-                WatchedRepository.unmarkWatched(preview.toWatchedItem(markedAtEpochMs = 0L))
+                // No metadata to enumerate episodes from: still unmark every
+                // episode the watched store knows for this show, not just the
+                // series item, or those episodes resurrect the watched state.
+                WatchedRepository.unmarkWatched(
+                    listOf(preview.toWatchedItem(markedAtEpochMs = 0L)) +
+                        knownWatchedEpisodeItems(id = preview.id, type = preview.type),
+                )
                 WatchedRepository.updateFullyWatchedSeries(
                     id = preview.id,
                     type = preview.type,
@@ -49,7 +56,9 @@ object WatchingActions {
         val releasedMainEpisodes = meta.releasedMainSeasonEpisodes(todayIsoDate)
         if (releasedMainEpisodes.isEmpty()) {
             if (isCurrentlyWatched) {
-                WatchedRepository.unmarkWatched(meta.toSeriesWatchedItem())
+                WatchedRepository.unmarkWatched(
+                    wholeShowUnmarkItems(meta, meta.releasedPlayableEpisodes(todayIsoDate)),
+                )
                 WatchedRepository.updateFullyWatchedSeries(
                     id = meta.id,
                     type = meta.type,
@@ -64,9 +73,12 @@ object WatchingActions {
         }
 
         if (isCurrentlyWatched) {
-            WatchedRepository.unmarkWatched(seriesItems)
+            val playableEpisodes = meta.releasedPlayableEpisodes(todayIsoDate)
+            val unmarkItems = wholeShowUnmarkItems(meta, playableEpisodes)
+            WatchedRepository.unmarkWatched(unmarkItems)
             WatchProgressRepository.clearProgress(
-                videoIds = releasedMainEpisodes.map(meta::episodePlaybackId),
+                videoIds = playableEpisodes.map(meta::episodePlaybackId) +
+                    unmarkItems.mapNotNull(WatchedItem::videoId),
                 parentMetaId = meta.id,
             )
             WatchedRepository.updateFullyWatchedSeries(
@@ -180,6 +192,42 @@ object WatchingActions {
             reconcileSeriesWatchedState(meta = meta)
         }
     }
+
+    /**
+     * Everything a whole-show unmark must cover: the series item, every
+     * released playable metadata episode — specials (season 0) included,
+     * which the main-season list used for marking would leave behind — and
+     * every episode the watched store already knows for this show, so
+     * episodes the addon metadata has since dropped (or that only exist as
+     * Simkl/Nuvio records) are unmarked too instead of surviving the unmark
+     * and resurrecting the show's watched state.
+     */
+    private fun wholeShowUnmarkItems(
+        meta: MetaDetails,
+        playableEpisodes: List<MetaVideo>,
+    ): List<WatchedItem> {
+        val metadataItems = buildList {
+            add(meta.toSeriesWatchedItem())
+            addAll(playableEpisodes.map(meta::toEpisodeWatchedItem))
+        }
+        val coveredKeys = metadataItems.mapTo(mutableSetOf()) { item ->
+            Triple(item.id, item.season, item.episode)
+        }
+        val strayItems = knownWatchedEpisodeItems(id = meta.id, type = meta.type).filter { item ->
+            Triple(item.id, item.season, item.episode) !in coveredKeys
+        }
+        return metadataItems + strayItems
+    }
+
+    /** Episode items the watched store holds for a show, whatever their origin. */
+    private fun knownWatchedEpisodeItems(id: String, type: String): List<WatchedItem> =
+        WatchedRepository.uiState.value.items.filter { stored ->
+            stored.id == id &&
+                stored.season != null &&
+                stored.episode != null &&
+                (stored.type.equals(type, ignoreCase = true) ||
+                    (stored.type.isSeriesLikeType() && type.isSeriesLikeType()))
+        }
 
     private fun toggleEpisodesWatched(
         meta: MetaDetails,

@@ -159,6 +159,7 @@ class PluginSyncTest {
         AddonRepository.initialize()
         assertEquals(1, AddonRepository.uiState.value.addons.size)
         respond("[]")
+        respond("[]")
 
         AddonRepository.pullFromServer(1)
 
@@ -168,10 +169,21 @@ class PluginSyncTest {
         AddonRepository.clearLocalState()
         AddonRepository.initialize()
         respond("[]")
+        respond("[]")
         AddonRepository.pullFromServer(1)
 
         assertTrue(AddonRepository.uiState.value.addons.isEmpty())
-        assertPullsOnly("addons", count = 2)
+        // Each pull is two GETs — the addon rows and the addon_sync_state
+        // revision read (audit M11) — and never an upload.
+        repeat(2) {
+            val addonsRequest = assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+            assertEquals("GET", addonsRequest.method)
+            assertEquals("/rest/v1/addons", addonsRequest.requestUrl?.encodedPath)
+            val revisionRequest = assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+            assertEquals("GET", revisionRequest.method)
+            assertEquals("/rest/v1/addon_sync_state", revisionRequest.requestUrl?.encodedPath)
+        }
+        assertNull(server.takeRequest(750, TimeUnit.MILLISECONDS))
     }
 
     private fun seedPlugins(urls: List<String> = listOf(manifestUrl)) {

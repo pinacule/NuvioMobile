@@ -74,6 +74,81 @@ class SimklRefreshPolicyTest {
     }
 
     @Test
+    fun `failure backoff doubles per failure and caps at eight hours`() {
+        val interval = SIMKL_AUTOMATIC_REFRESH_INTERVAL_MS
+        assertEquals(0L, simklSyncFailureBackoffMs(0))
+        assertEquals(interval, simklSyncFailureBackoffMs(1))
+        assertEquals(interval * 2, simklSyncFailureBackoffMs(2))
+        assertEquals(interval * 4, simklSyncFailureBackoffMs(3))
+        assertEquals(interval * 32, simklSyncFailureBackoffMs(6))
+        assertEquals(interval * 32, simklSyncFailureBackoffMs(20))
+    }
+
+    @Test
+    fun `errored snapshots wait out the failure backoff`() {
+        val interval = SIMKL_AUTOMATIC_REFRESH_INTERVAL_MS
+        val failedAt = 1_000_000L
+
+        // First failure: one interval must pass before an automatic retry.
+        assertFalse(
+            shouldRunSimklRefresh(
+                intent = TrackingRefreshIntent.AUTOMATIC,
+                lastCheckedAtEpochMs = failedAt,
+                nowEpochMs = failedAt + interval - 1L,
+                hasError = true,
+                consecutiveSyncFailures = 1,
+                lastSyncFailureAtEpochMs = failedAt,
+            ),
+        )
+        assertTrue(
+            shouldRunSimklRefresh(
+                intent = TrackingRefreshIntent.AUTOMATIC,
+                lastCheckedAtEpochMs = failedAt,
+                nowEpochMs = failedAt + interval,
+                hasError = true,
+                consecutiveSyncFailures = 1,
+                lastSyncFailureAtEpochMs = failedAt,
+            ),
+        )
+        // Third consecutive failure: the wait is four intervals.
+        assertFalse(
+            shouldRunSimklRefresh(
+                intent = TrackingRefreshIntent.AUTOMATIC,
+                lastCheckedAtEpochMs = failedAt,
+                nowEpochMs = failedAt + interval * 4 - 1L,
+                hasError = true,
+                consecutiveSyncFailures = 3,
+                lastSyncFailureAtEpochMs = failedAt,
+            ),
+        )
+        assertTrue(
+            shouldRunSimklRefresh(
+                intent = TrackingRefreshIntent.AUTOMATIC,
+                lastCheckedAtEpochMs = failedAt,
+                nowEpochMs = failedAt + interval * 4,
+                hasError = true,
+                consecutiveSyncFailures = 3,
+                lastSyncFailureAtEpochMs = failedAt,
+            ),
+        )
+    }
+
+    @Test
+    fun `manual refresh bypasses the failure backoff`() {
+        val failedAt = 1_000_000L
+        assertTrue(
+            shouldRunSimklRefresh(
+                intent = TrackingRefreshIntent.USER_INITIATED,
+                lastCheckedAtEpochMs = failedAt,
+                nowEpochMs = failedAt + 1L,
+                hasError = true,
+                consecutiveSyncFailures = 6,
+                lastSyncFailureAtEpochMs = failedAt,
+            ),
+        )
+    }
+
+    @Test
     fun `manual and invalidated refreshes bypass automatic freshness`() {
         TrackingRefreshIntent.entries
             .filterNot { intent -> intent == TrackingRefreshIntent.AUTOMATIC }

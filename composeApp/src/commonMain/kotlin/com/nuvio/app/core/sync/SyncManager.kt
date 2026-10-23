@@ -13,6 +13,7 @@ import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.tracking.TrackingProviderRegistry
+import com.nuvio.app.features.tracking.TrackingScrobbleOutbox
 import com.nuvio.app.features.tracking.TrackingSettingsRepository
 import com.nuvio.app.features.tracking.WatchProgressSource
 import com.nuvio.app.features.tracking.effectiveLibrarySourceMode
@@ -311,6 +312,10 @@ object SyncManager {
 
     fun pullAllForProfile(profileId: Int) {
         startFullProfilePull(profileId = profileId, reason = "requested")
+        // A manual sync also drains the scrobble outbox: watches queued
+        // while offline must not have to wait for the next playback
+        // scrobble to reach their providers.
+        accountScopeSnapshot().launch { TrackingScrobbleOutbox.flush() }
     }
 
     internal fun cancelAccountSync() {

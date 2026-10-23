@@ -643,7 +643,9 @@ private fun EpisodeCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = formatBytes(item.sizeOnDisk()),
+                    text = item.downloadQuality?.trim()?.takeIf { it.isNotBlank() }
+                        ?.let { quality -> "${formatBytes(item.sizeOnDisk())} · $quality" }
+                        ?: formatBytes(item.sizeOnDisk()),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -826,17 +828,22 @@ private fun DownloadItem.sizeOnDisk(): Long =
 
 @Composable
 private fun downloadDisplaySubtitle(item: DownloadItem): String {
+    // The stored download quality is displayed, not just stored: a pick that
+    // landed at a different tier than the user chose must be visible here.
+    val quality = item.downloadQuality?.trim()?.takeIf { it.isNotBlank() }
     val seasonNumber = item.seasonNumber
     val episodeNumber = item.episodeNumber
     if (seasonNumber == null || episodeNumber == null) {
-        return item.providerName
+        return listOf(item.providerName, quality)
+            .filterNotNull()
+            .joinToString(" · ")
     }
     val episodeCode = stringResource(
         Res.string.compose_player_episode_code_full,
         seasonNumber,
         episodeNumber,
     )
-    return listOf(episodeCode, item.title.trim().takeIf { it.isNotBlank() })
+    return listOf(episodeCode, item.title.trim().takeIf { it.isNotBlank() }, quality)
         .filterNotNull()
         .joinToString(" · ")
 }

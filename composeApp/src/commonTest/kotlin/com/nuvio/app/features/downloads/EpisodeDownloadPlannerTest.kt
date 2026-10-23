@@ -185,10 +185,26 @@ class EpisodeDownloadPlannerTest {
     }
 
     @Test
+    fun dubAtRequestedQualityBeatsSubAtRequestedQuality() {
+        val jp720 = stream("Show S01E01 720p WEB x265")
+        val dub720 = stream("Show S01E01 720p Dual Audio WEB x265")
+        val dub1080 = stream("Show S01E01 1080p Dual Audio WEB x265")
+        // Dub over sub, always — but the requested tier is the primary key:
+        // the 720p dub wins, NOT the 1080p dub, even though both are dubs.
+        assertEquals(
+            dub720,
+            EpisodeDownloadPlanner.pickBestStreamAtQuality(
+                listOf(jp720, dub1080, dub720), "720p", preferEnglishAudio = true,
+            ),
+        )
+    }
+
+    @Test
     fun dubAtAnotherQualityBeatsSubAtRequestedQuality() {
         val jp720 = stream("Show S01E01 720p WEB x265")
         val dub1080 = stream("Show S01E01 1080p Dual Audio WEB x265")
-        // Dub over sub, always: the 1080p dub wins even though 720p was requested.
+        // No dub exists at the requested tier: the cross-tier dub still
+        // beats the same-tier sub (dub over sub), as the fallback.
         assertEquals(
             dub1080,
             EpisodeDownloadPlanner.pickBestStreamAtQuality(listOf(jp720, dub1080), "720p", preferEnglishAudio = true),
@@ -196,18 +212,90 @@ class EpisodeDownloadPlannerTest {
     }
 
     @Test
-    fun dubPickAcrossQualitiesPrefersTorrentThenSeeders() {
-        val dubHttp1080 = stream("Show 1080p Dual Audio 5000 seeders", torrent = false)
-        val dubTorrent720 = stream("Show 720p Dual Audio 10 seeders")
-        val dubTorrent480 = stream("Show 480p Dual Audio 900 seeders")
-        // Among dubs the quality tier is not a key: torrent streams first,
-        // then best-seeded.
+    fun dubAtRequestedQualityBeatsBetterSeededDubAtAnotherQuality() {
+        val dub720 = stream("Show S01E01 720p Dual Audio 10 seeders")
+        val dub1080 = stream("Show S01E01 1080p Dual Audio 5000 seeders")
+        // Seeders never pull the pick across tiers when a dub exists at the
+        // requested tier: the user asked for 720p files.
         assertEquals(
-            dubTorrent480,
+            dub720,
             EpisodeDownloadPlanner.pickBestStreamAtQuality(
-                listOf(dubHttp1080, dubTorrent720, dubTorrent480),
+                listOf(dub1080, dub720), "720p", preferEnglishAudio = true,
+            ),
+        )
+    }
+
+    @Test
+    fun crossTierDubFallbackPicksTheClosestTier() {
+        val dub480 = stream("Show S01E01 480p Dual Audio 900 seeders")
+        val dub1080 = stream("Show S01E01 1080p Dual Audio 10 seeders")
+        // No 720p dub: 1080p is one tier away, 480p is two — closest wins,
+        // not the best-seeded one.
+        assertEquals(
+            dub1080,
+            EpisodeDownloadPlanner.pickBestStreamAtQuality(
+                listOf(dub480, dub1080), "720p", preferEnglishAudio = true,
+            ),
+        )
+        // Equidistant tiers (576p and 1080p around 720p): the lower wins.
+        val dub576 = stream("Show S01E01 576p Dual Audio 10 seeders")
+        assertEquals(
+            dub576,
+            EpisodeDownloadPlanner.pickBestStreamAtQuality(
+                listOf(dub1080, dub576), "720p", preferEnglishAudio = true,
+            ),
+        )
+    }
+
+    @Test
+    fun dubPickAtRequestedQualityPrefersTorrentThenSeeders() {
+        val dubHttp720 = stream("Show 720p Dual Audio 5000 seeders", torrent = false)
+        val dubTorrent720Low = stream("Show 720p Dual Audio 10 seeders")
+        val dubTorrent720High = stream("Show 720p Dual Audio 900 seeders")
+        // Within the requested tier, the download ordering applies: torrent
+        // streams first, then best-seeded.
+        assertEquals(
+            dubTorrent720High,
+            EpisodeDownloadPlanner.pickBestStreamAtQuality(
+                listOf(dubHttp720, dubTorrent720Low, dubTorrent720High),
                 "720p",
                 preferEnglishAudio = true,
+            ),
+        )
+    }
+
+    @Test
+    fun oversizeStreamAtRequestedQualityLosesToSaneOne() {
+        val oversize = stream("Show S01E01 720p \uD83D\uDCBE 30 GB \uD83D\uDC64 9000")
+        val sane = stream("Show S01E01 720p \uD83D\uDCBE 1.5 GB \uD83D\uDC64 10")
+        // 30 GB is past the 720p sane ceiling (2.2 GB): seeders cannot save it
+        // while a sane candidate exists at the same tier.
+        assertEquals(
+            sane,
+            EpisodeDownloadPlanner.pickBestStreamAtQuality(listOf(oversize, sane), "720p"),
+        )
+    }
+
+    @Test
+    fun allOversizePoolPicksTheLeastOversize() {
+        val huge = stream("Show S01E01 720p \uD83D\uDCBE 30 GB \uD83D\uDC64 9000")
+        val slightlyOver = stream("Show S01E01 720p \uD83D\uDCBE 3 GB \uD83D\uDC64 10")
+        // Everything is oversize: the least-oversize member is picked
+        // instead of nothing (and instead of the best-seeded one).
+        assertEquals(
+            slightlyOver,
+            EpisodeDownloadPlanner.pickBestStreamAtQuality(listOf(huge, slightlyOver), "720p"),
+        )
+    }
+
+    @Test
+    fun oversizeDubLosesToSaneDubAtTheSameTier() {
+        val oversizeDub = stream("Show S01E01 720p Dual Audio \uD83D\uDCBE 30 GB \uD83D\uDC64 9000")
+        val saneDub = stream("Show S01E01 720p Dual Audio \uD83D\uDCBE 1.5 GB \uD83D\uDC64 10")
+        assertEquals(
+            saneDub,
+            EpisodeDownloadPlanner.pickBestStreamAtQuality(
+                listOf(oversizeDub, saneDub), "720p", preferEnglishAudio = true,
             ),
         )
     }

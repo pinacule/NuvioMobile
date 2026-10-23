@@ -22,4 +22,14 @@ actual object WatchProgressStorage {
             ?.putString("${payloadKey}_$profileId", payload)
             ?.apply()
     }
+
+    actual fun loadBackupPayload(profileId: Int): String? =
+        preferences?.getString("${payloadKey}_backup_$profileId", null)
+
+    actual fun saveBackupPayload(profileId: Int, payload: String) {
+        preferences
+            ?.edit()
+            ?.putString("${payloadKey}_backup_$profileId", payload)
+            ?.apply()
+    }
 }

@@ -69,6 +69,7 @@ import com.nuvio.app.features.autosync.AutoSyncPreferencesRepository
 import com.nuvio.app.features.autosync.rememberAutoSyncCoordinator
 import com.nuvio.app.R
 import com.nuvio.app.core.device.DataSaverRepository
+import com.nuvio.app.core.network.withoutCredentialHeaders
 import com.nuvio.app.features.streams.normalizeStreamType
 import `is`.xyz.mpv.BaseMPVView
 import `is`.xyz.mpv.MPV
@@ -87,6 +88,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URI
+import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -145,6 +147,12 @@ actual fun PlatformPlayerSurface(
     var activeEngine by remember(playerSourceKey, requestedEngine) {
         mutableStateOf(requestedEngine.initialAndroidEngine())
     }
+    // Latest position reported by the ExoPlayer surface (it polls snapshots
+    // every 250 ms). When Auto mode falls back to libmpv after an ExoPlayer
+    // failure, this is where libmpv must resume — the runtime's initial
+    // position still holds the position playback originally started at.
+    var latestExoPlayerPositionMs by remember(playerSourceKey) { mutableStateOf(0L) }
+    var libmpvFallbackStartPositionMs by remember(playerSourceKey) { mutableStateOf<Long?>(null) }
 
     when (activeEngine) {
         ResolvedAndroidPlaybackEngine.ExoPlayer -> ExoPlayerSurface(
@@ -163,14 +171,21 @@ actual fun PlatformPlayerSurface(
             useNativeController = useNativeController,
             onInitialPositionHandled = onInitialPositionHandled,
             onControllerReady = onControllerReady,
-            onSnapshot = onSnapshot,
+            onSnapshot = { snapshot ->
+                latestExoPlayerPositionMs = snapshot.positionMs
+                onSnapshot(snapshot)
+            },
             dataSaverActive = dataSaverActive,
             onError = { message ->
                 if (message != null && requestedEngine == AndroidPlaybackEngine.Auto) {
                     Log.w(TAG, "ExoPlayer failed; falling back to libmpv: $message")
-                    initialPositionRequestKey?.let { key ->
-                        onInitialPositionHandled(key, false)
-                    }
+                    // Capture where ExoPlayer actually failed so the libmpv
+                    // surface can start there (mirrors the in-Exo decoder
+                    // fallback's fallbackStartPositionMs). The libmpv branch
+                    // reports the initial position as handled when this is
+                    // set, so the runtime does not seek back to the position
+                    // playback originally started at.
+                    libmpvFallbackStartPositionMs = latestExoPlayerPositionMs.takeIf { it > 0L }
                     activeEngine = ResolvedAndroidPlaybackEngine.Libmpv
                     onError(null)
                 } else {
@@ -179,9 +194,10 @@ actual fun PlatformPlayerSurface(
             },
         )
         ResolvedAndroidPlaybackEngine.Libmpv -> {
-            LaunchedEffect(initialPositionRequestKey) {
+            val fallbackStartPositionMs = libmpvFallbackStartPositionMs
+            LaunchedEffect(initialPositionRequestKey, fallbackStartPositionMs) {
                 initialPositionRequestKey?.let { key ->
-                    onInitialPositionHandled(key, false)
+                    onInitialPositionHandled(key, fallbackStartPositionMs != null)
                 }
             }
             LibmpvPlayerSurface(
@@ -191,6 +207,7 @@ actual fun PlatformPlayerSurface(
                 externalSubtitles = externalSubtitles,
                 modifier = modifier,
                 playWhenReady = playWhenReady,
+                initialPositionMs = fallbackStartPositionMs,
                 resizeMode = resizeMode,
                 videoOutput = playerSettings.androidLibmpvVideoOutput,
                 hardwareDecodingEnabled = playerSettings.androidLibmpvHardwareDecodingEnabled,
@@ -1095,6 +1112,7 @@ private fun LibmpvPlayerSurface(
     externalSubtitles: List<com.nuvio.app.features.streams.StreamSubtitle>,
     modifier: Modifier,
     playWhenReady: Boolean,
+    initialPositionMs: Long? = null,
     resizeMode: PlayerResizeMode,
     videoOutput: AndroidLibmpvVideoOutput,
     hardwareDecodingEnabled: Boolean,
@@ -1257,6 +1275,20 @@ private fun LibmpvPlayerSurface(
                             latestOnSnapshot.value(snapshot)
                             nowPlayingController?.syncPlayback(snapshot)
                             view.keepScreenOn = snapshot.isPlaying || snapshot.isLoading
+                            // A load/playback failure (dead link, TLS failure, …)
+                            // ends the file with reason "error"; a normal end
+                            // (EOF, reason 0) is already carried by the snapshot's
+                            // ended state. Without this, a failed libmpv stream
+                            // left the UI on an endless spinner / black screen
+                            // with no error at all.
+                            if (data.nodeInt("reason") == MPV_END_FILE_REASON_ERROR) {
+                                Log.e(
+                                    PLAYER_DIAGNOSTIC_TAG,
+                                    "mpv_event=END_FILE_ERROR attempt=${playbackDiagnostics.attempt} " +
+                                        "error=${data.nodeString("error") ?: "unknown"}",
+                                )
+                                latestOnError.value(getString(Res.string.player_unable_to_play_stream))
+                            }
                         }
                     }
                 }
@@ -1323,6 +1355,14 @@ private fun LibmpvPlayerSurface(
             externalSubtitles = externalSubtitles,
             playWhenReady = latestPlayWhenReady.value,
         )
+        // Only set when this surface was created by the Auto engine fallback:
+        // start where ExoPlayer failed instead of the original resume point.
+        // loadSource has already issued its commands on the view's
+        // single-threaded mpv dispatcher, so this seek is queued right
+        // behind the loadfile and lands once the file opens.
+        initialPositionMs?.takeIf { it > 0L }?.let { startPositionMs ->
+            view.seekToMs(startPositionMs)
+        }
     }
 
     LaunchedEffect(playerViewRef, playWhenReady) {
@@ -1485,15 +1525,56 @@ private class NuvioLibmpvView(
         setPausedNow(!playWhenReady)
         mpv.setPropertyString("aid", "auto")
         mpv.command("loadfile", sourceUrl.toMpvSource(), "replace")
+        val mainHost = httpHostOf(sourceUrl)
         currentSourceAudioUrl?.takeIf { it.isNotBlank() }?.let { sourceAudioUrl ->
-            mpv.command("audio-add", sourceAudioUrl.toMpvSource(), "auto")
+            withMpvRequestHeaders(mainHost, httpHostOf(sourceAudioUrl)) {
+                mpv.command("audio-add", sourceAudioUrl.toMpvSource(), "auto")
+            }
         }
         currentExternalSubtitles.forEachIndexed { index, subtitle ->
             val flag = if (index == 0) "auto" else "cached"
-            mpv.command("sub-add", subtitle.url.toMpvSource(), flag, subtitle.name ?: subtitle.language, subtitle.language)
+            withMpvRequestHeaders(mainHost, httpHostOf(subtitle.url)) {
+                mpv.command("sub-add", subtitle.url.toMpvSource(), flag, subtitle.name ?: subtitle.language, subtitle.language)
+            }
         }
         setPausedNow(!playWhenReady)
     }
+
+    /**
+     * Runs [block] (an audio-add / sub-add) with mpv's header fields scoped to
+     * [requestHost]: when it differs from the main file's host, credential
+     * headers are removed for the duration of the add and restored right after.
+     *
+     * mpv's `http-header-fields` is a single global option that ffmpeg applies
+     * to EVERY request — the main file, separate audio, external subtitles,
+     * redirects and HLS segments alike — and the mpv-android command API used
+     * here offers no per-file or per-request header scoping, so bracketing the
+     * add commands is the strongest scoping available. Residuals, by design of
+     * the global option: the main file's own cross-host redirects still carry
+     * the headers, and a main-file segment request racing the brief swap
+     * window would go out without its credentials (mpv runs these commands
+     * serially on its core thread, and the full set is restored immediately).
+     * Scoping applies only when the main source is an http(s) URL; for local
+     * files the headers belong to the same playback session.
+     */
+    private fun withMpvRequestHeaders(mainHost: String?, requestHost: String?, block: () -> Unit) {
+        val stripCredentials = mainHost != null &&
+            requestHost != null &&
+            !mainHost.equals(requestHost, ignoreCase = true)
+        if (!stripCredentials) {
+            block()
+            return
+        }
+        applyRequestHeadersNow(currentRequestHeaders.withoutCredentialHeaders())
+        try {
+            block()
+        } finally {
+            applyRequestHeadersNow(currentRequestHeaders)
+        }
+    }
+
+    private fun httpHostOf(url: String): String? =
+        runCatching { URL(url).host }.getOrNull()?.takeIf { it.isNotBlank() }
 
     private fun String.toMpvSource(): String =
         if (!startsWith("file:", ignoreCase = true)) {
@@ -1883,6 +1964,9 @@ private fun SubtitleStyleState.toMpvSubtitleBorderStyle(): String =
     } else {
         "outline-and-shadow"
     }
+
+/** libmpv `mpv_event_end_file` reason value for a load/playback failure (stable libmpv ABI). */
+private const val MPV_END_FILE_REASON_ERROR = 4
 
 private const val MPV_SUBTITLE_FONT_SIZE_SCALE = 55.0 / 18.0
 private const val MPV_SUBTITLE_FONT_SIZE_MIN = 36

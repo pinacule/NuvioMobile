@@ -14,11 +14,21 @@ package com.nuvio.app.features.simkl
  * snapshot's last successful sync: it cannot have been published and dropped since), and dropped
  * when it is older than that. For those older rows the account stays authoritative: a playback
  * it dropped is a playback that is over.
+ *
+ * The "newer" comparison for a row present in the fetch mixes two clocks: the held stamp is
+ * device wall-clock (minted by `commitScrobble`), the fetched stamp is Simkl server time. A
+ * phone whose clock runs ahead would otherwise win every comparison and pin its stale resume
+ * point, discarding genuinely newer positions from other devices until real time catches up
+ * with the skewed stamp. Two sanity bounds keep the lag fix without trusting a runaway clock:
+ * the held stamp may lead the fetched stamp by at most [MAX_HELD_PLAYBACK_LEAD_MS] (a genuine
+ * publish-lag lead is minutes), and — when [fetchedAtEpochMs] is known — it may not sit
+ * implausibly far in the future relative to the fetch itself.
  */
 internal fun mergeFetchedPlayback(
     fetched: List<SimklPlaybackSession>,
     held: List<SimklPlaybackSession>,
     lastSyncedAtEpochMs: Long? = null,
+    fetchedAtEpochMs: Long? = null,
 ): List<SimklPlaybackSession> {
     if (held.isEmpty()) return fetched
     val fetchedByKey = fetched.mapNotNull { session ->
@@ -28,7 +38,12 @@ internal fun mergeFetchedPlayback(
         val key = local.playbackKey() ?: return@filter false
         val incoming = fetchedByKey[key]
         if (incoming != null) {
-            (local.playedAtEpochMs() ?: 0L) > (incoming.playedAtEpochMs() ?: 0L)
+            val localPlayedAt = local.playedAtEpochMs() ?: 0L
+            val incomingPlayedAt = incoming.playedAtEpochMs() ?: 0L
+            localPlayedAt > incomingPlayedAt &&
+                localPlayedAt - incomingPlayedAt <= MAX_HELD_PLAYBACK_LEAD_MS &&
+                (fetchedAtEpochMs == null ||
+                    localPlayedAt <= fetchedAtEpochMs + MAX_HELD_PLAYBACK_FUTURE_SKEW_MS)
         } else {
             val lastSyncedAt = lastSyncedAtEpochMs ?: return@filter false
             (local.playedAtEpochMs() ?: 0L) > lastSyncedAt
@@ -68,3 +83,14 @@ internal fun simklPlaybackKey(
 /** When the account says this playback was last touched. */
 private fun SimklPlaybackSession.playedAtEpochMs(): Long? =
     (pausedAt ?: watchedAt)?.let(::parseSimklUtcEpochMs)
+
+/**
+ * How far a held (device-stamped) row may lead the fetched (server-stamped)
+ * row and still count as the same viewing caught in the publish lag. Genuine
+ * lag is minutes; a larger lead means the stamps disagree about "now" itself
+ * (a skewed device clock), and the account's row wins.
+ */
+private const val MAX_HELD_PLAYBACK_LEAD_MS = 24L * 60L * 60L * 1_000L
+
+/** Slack for a held stamp sitting slightly after the fetch moment (minted mid-sync). */
+private const val MAX_HELD_PLAYBACK_FUTURE_SKEW_MS = 5L * 60L * 1_000L

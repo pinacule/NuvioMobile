@@ -1,5 +1,7 @@
 package com.nuvio.app.features.player
 
+import com.nuvio.app.core.device.DataSaverRepository
+import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
@@ -13,8 +15,10 @@ import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.PreloadCache
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamingEngine
+import com.nuvio.app.features.p2p.canonicalP2pInfoHashOrNull
 import com.nuvio.app.features.servers.ServerPlayback
 import com.nuvio.app.features.servers.serverPlaybackMessage
+import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.YouTubeStreamResolver
@@ -105,7 +109,10 @@ internal fun PlayerScreenRuntime.openExternalSourceUrl(stream: StreamItem): Bool
 
 internal fun StreamItem.playerSourceIdentityKey(): String? {
     serverTarget?.let { target -> return "server:${target.item.encode()}:${target.mediaSourceId.orEmpty()}" }
-    p2pInfoHash?.trim()?.lowercase()?.takeIf { it.isNotBlank() }?.let { hash ->
+    // Canonical hash form, so the same torrent reported as hex by one addon
+    // and as base32 by another still maps to one source identity.
+    (canonicalP2pInfoHashOrNull(p2pInfoHash)
+        ?: p2pInfoHash?.trim()?.lowercase()?.takeIf { it.isNotBlank() })?.let { hash ->
         return "torrent:$hash:${p2pFileIdx ?: -1}"
     }
 
@@ -115,7 +122,8 @@ internal fun StreamItem.playerSourceIdentityKey(): String? {
             addonId,
             resolve.service,
             resolve.serviceIndex?.toString(),
-            resolve.infoHash?.trim()?.lowercase(),
+            canonicalP2pInfoHashOrNull(resolve.infoHash)
+                ?: resolve.infoHash?.trim()?.lowercase(),
             resolve.fileIdx?.toString(),
             resolve.magnetUri,
             resolve.torrentName,
@@ -206,7 +214,14 @@ internal fun PlayerScreenRuntime.switchToP2pSourceStream(stream: StreamItem) {
         pendingP2pSwitch = PendingPlayerP2pSwitch(stream = stream, episode = null, isAutoPlay = false)
         return
     }
-    val currentPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+    // Before the initial seek lands, the snapshot position is still 0; keep the
+    // pending initial position instead of overwriting the resume point with 0
+    // (same rule as the server-track switcher).
+    val currentPositionMs = if (initialSeekApplied) {
+        playbackSnapshot.positionMs.coerceAtLeast(0L)
+    } else {
+        activeInitialPositionMs
+    }
     flushWatchProgress()
     stopActiveP2pStream()
     saveP2pStreamForReuse(
@@ -313,7 +328,14 @@ internal fun PlayerScreenRuntime.switchToSource(
         activeSourceIdentityKey = sourceIdentityKey ?: activeSourceIdentityKey
         return
     }
-    val currentPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+    // Before the initial seek lands, the snapshot position is still 0; keep the
+    // pending initial position instead of overwriting the resume point with 0
+    // (same rule as the server-track switcher).
+    val currentPositionMs = if (initialSeekApplied) {
+        playbackSnapshot.positionMs.coerceAtLeast(0L)
+    } else {
+        activeInitialPositionMs
+    }
     flushWatchProgress()
     stopActiveP2pStream()
     val currentVideoId = activeVideoId
@@ -583,17 +605,103 @@ internal fun PlayerScreenRuntime.openQualityModal() {
     showQualityModal = true
 }
 
+/** The adaptive auto-play target quality for the current device state (mirrors the next-episode auto-play). */
+private fun PlayerScreenRuntime.adaptivePlaybackTargetQuality(): String {
+    DataSaverRepository.ensureLoaded()
+    return AdaptiveStreamPicker.targetQuality(
+        isCellular = DeviceEnvironment.isCellular(),
+        batteryPercent = DeviceEnvironment.batteryPercent(),
+        dataSaverActive = DataSaverRepository.isActiveNow(),
+    )
+}
+
+/**
+ * Stall failover (audit P1): the stall watchdog found the active torrent
+ * delivering nothing while the player starves. The dead stream is marked
+ * failed for this video — along with every stream already tried as a
+ * failover target — so it is never re-picked, then playback switches to
+ * the best remaining candidate from the already-loaded sources, ranked
+ * by the same adaptive auto-pick used when playback starts. When no
+ * candidate is left, an error is surfaced instead of an endless spinner.
+ *
+ * Returns true when the failover is handled — a synchronous switch
+ * happened or the error was surfaced. A switch that still resolves
+ * asynchronously (debrid resolve / server prepare) returns false so the
+ * watchdog keeps watching with a fresh window; if the resolve lands, the
+ * source-identity change restarts it anyway, and if it fails, the next
+ * stall gets another failover attempt with the failed candidate excluded.
+ */
+internal fun PlayerScreenRuntime.failOverFromStalledP2pStream(): Boolean {
+    if (stalledP2pFailoverVideoId != activeVideoId) {
+        stalledP2pFailoverVideoId = activeVideoId
+        stalledP2pFailoverIdentityKeys = emptySet()
+    }
+    val failedIdentityKey = activeStream?.playerSourceIdentityKey() ?: activeSourceIdentityKey
+    val attempted = stalledP2pFailoverIdentityKeys + listOfNotNull(failedIdentityKey)
+    stalledP2pFailoverIdentityKeys = attempted
+
+    // switchToSource derives the new start position from the playback
+    // snapshot, which still reads 0 before the first frame; keep the
+    // stored resume point in that case (the same pattern the server
+    // track switcher uses when it restarts a server stream).
+    val resumePositionMs = if (initialSeekApplied) {
+        playbackSnapshot.positionMs.coerceAtLeast(0L)
+    } else {
+        activeInitialPositionMs
+    }
+
+    val next = AdaptiveStreamPicker.pickBestSeeded(
+        streams = sourceStreamsState.allStreams.filter { stream ->
+            val identityKey = stream.playerSourceIdentityKey()
+            (identityKey == null || identityKey !in attempted) &&
+                (stream.playableDirectUrl != null ||
+                    stream.serverTarget != null ||
+                    stream.p2pInfoHash != null ||
+                    DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream))
+        },
+        targetQuality = adaptivePlaybackTargetQuality(),
+        preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+            playerSettingsUiState.preferredAudioLanguage,
+        ),
+        requireHdrSeeders = true,
+    )
+    if (next == null) {
+        errorMessage = "Torrent stalled — no data received, and no other source is available."
+        controlsVisible = !playerControlsLocked
+        initialLoadCompleted = true
+        return true
+    }
+    next.playerSourceIdentityKey()?.let { key ->
+        stalledP2pFailoverIdentityKeys = stalledP2pFailoverIdentityKeys + key
+    }
+    val identityBeforeSwitch = activeSourceIdentityKey
+    NuvioToastController.show("Stream stalled — switching to another source")
+    switchToSource(next)
+    if (activeInitialPositionMs == 0L && resumePositionMs > 0L) {
+        activeInitialPositionMs = resumePositionMs
+    }
+    return activeSourceIdentityKey != identityBeforeSwitch
+}
+
 /** Switches playback to the best stream at [quality], keeping the position. No-op if already on it. */
 internal fun PlayerScreenRuntime.switchToQuality(quality: String) {
     val pool = sourceStreamsState.allStreams.filter { it.streamResolution() == quality }
     if (pool.isEmpty()) return
-    // Prefer the transport the user is already on: a debrid/direct watcher tapping
-    // a quality chip shouldn't be silently moved onto a torrent (which starts the
-    // P2P engine and uses torrent data unannounced). Falls back to the other kind
-    // when nothing at this quality matches the current transport.
-    val preferTorrent = activeStream?.isTorrentStream == true
-    val target = pool.sortedByDescending { it.isTorrentStream == preferTorrent }.firstOrNull()
-        ?: return
+    // Ranked like the other pickers (see AdaptiveStreamPicker.pickForQualitySwitch):
+    // the transport the user is already on first — a debrid/direct watcher
+    // tapping a quality chip shouldn't be silently moved onto a torrent (which
+    // starts the P2P engine and uses torrent data unannounced) — then English-dub
+    // preference, immediate playability (no pending debrid resolve), sane size,
+    // and seeders. Previously this took the first stream at the resolution in
+    // addon order, ignoring all of those.
+    val target = AdaptiveStreamPicker.pickForQualitySwitch(
+        pool = pool,
+        quality = quality,
+        preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+            playerSettingsUiState.preferredAudioLanguage,
+        ),
+        preferTorrent = activeStream?.isTorrentStream == true,
+    ) ?: return
     val targetIdentityKey = target.playerSourceIdentityKey()
     showQualityModal = false
     if (targetIdentityKey != null && targetIdentityKey == activeSourceIdentityKey) return

@@ -20,6 +20,19 @@ internal fun parseSimklAuthCallback(
     val parsed = runCatching { Url(callbackUrl) }.getOrNull() ?: return SimklAuthCallback.NotSimkl
     val code = parsed.parameters["code"].orEmpty().trim()
     val state = parsed.parameters["state"].orEmpty().trim()
+    val error = parsed.parameters["error"].orEmpty().trim()
+    if (error.isNotBlank()) {
+        // Simkl explicitly answered with an error (access denied, …).
+        // That is a definitive end to the pending flow — but only trust
+        // it with a state attached, which the repository verifies
+        // against the pending flow exactly like a code callback. An
+        // error without a state is indistinguishable from a stray link.
+        return if (state.isNotBlank()) {
+            SimklAuthCallback.Invalid(state = state)
+        } else {
+            SimklAuthCallback.NotSimkl
+        }
+    }
     if (code.isBlank() || state.isBlank()) return SimklAuthCallback.NotSimkl
     return SimklAuthCallback.AuthorizationCode(code = code, state = state)
 }
@@ -27,9 +40,14 @@ internal fun parseSimklAuthCallback(
 internal fun isSimklAuthorizationExpired(
     startedAtEpochMs: Long?,
     nowEpochMs: Long,
-): Boolean = startedAtEpochMs == null ||
-    nowEpochMs < startedAtEpochMs ||
-    nowEpochMs - startedAtEpochMs > SIMKL_AUTHORIZATION_TIMEOUT_MS
+): Boolean {
+    if (startedAtEpochMs == null) return true
+    // A device clock that moved backwards (or a start timestamp in the
+    // future) must not kill a pending authorization: no time can have
+    // elapsed against it yet.
+    if (nowEpochMs < startedAtEpochMs) return false
+    return nowEpochMs - startedAtEpochMs > SIMKL_AUTHORIZATION_TIMEOUT_MS
+}
 
 internal fun constantTimeEquals(left: String, right: String): Boolean {
     val leftBytes = left.encodeToByteArray()

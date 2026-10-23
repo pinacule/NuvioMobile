@@ -98,6 +98,72 @@ class SimklPlaybackMergeTest {
         )
     }
 
+    @Test
+    fun `held row leading the fetch by days loses to the fetched row`() {
+        // The held stamp is device wall-clock, the fetched stamp is server
+        // time. A two-day lead is not publish lag — it is a skewed device
+        // clock — so the account's genuinely newer position must win instead
+        // of being pinned under the stale held row.
+        val fetchedRow = episodePlayback(
+            episode = 5,
+            progress = 40.0,
+            pausedAt = "2023-11-14T22:13:20Z",
+        )
+        val skewedHeld = episodePlayback(
+            episode = 5,
+            progress = 60.0,
+            pausedAt = "2023-11-16T22:13:20Z",
+        )
+
+        assertEquals(
+            listOf(fetchedRow),
+            mergeFetchedPlayback(
+                fetched = listOf(fetchedRow),
+                held = listOf(skewedHeld),
+                lastSyncedAtEpochMs = lastSyncedAtEpochMs,
+                fetchedAtEpochMs = lastSyncedAtEpochMs,
+            ),
+        )
+    }
+
+    @Test
+    fun `held row stamped implausibly after the fetch loses, one minted mid-sync wins`() {
+        val fetchedRow = episodePlayback(
+            episode = 5,
+            progress = 40.0,
+            pausedAt = "2023-11-14T22:13:20Z",
+        )
+        val futureHeld = episodePlayback(
+            episode = 5,
+            progress = 60.0,
+            pausedAt = "2023-11-14T23:13:20Z",
+        )
+        val midSyncHeld = episodePlayback(
+            episode = 5,
+            progress = 60.0,
+            pausedAt = "2023-11-14T22:15:20Z",
+        )
+
+        assertEquals(
+            listOf(fetchedRow),
+            mergeFetchedPlayback(
+                fetched = listOf(fetchedRow),
+                held = listOf(futureHeld),
+                lastSyncedAtEpochMs = lastSyncedAtEpochMs,
+                fetchedAtEpochMs = lastSyncedAtEpochMs,
+            ),
+        )
+        assertEquals(
+            listOf(midSyncHeld),
+            mergeFetchedPlayback(
+                fetched = listOf(fetchedRow),
+                held = listOf(midSyncHeld),
+                lastSyncedAtEpochMs = lastSyncedAtEpochMs,
+                fetchedAtEpochMs = lastSyncedAtEpochMs,
+            ),
+        )
+    }
+
     private fun episodePlayback(
         episode: Int,
         progress: Double = 30.0,

@@ -718,7 +718,11 @@ internal fun settingsSearchEntries(
             icon = Icons.Rounded.PlayArrow,
             rows = listOf(
                 PlaybackSearchRow("p2p-streaming", stringResource(Res.string.settings_p2p_title), stringResource(Res.string.settings_p2p_subtitle)),
+                PlaybackSearchRow("p2p-upload", stringResource(Res.string.settings_p2p_upload_title), stringResource(Res.string.settings_p2p_upload_subtitle)),
                 PlaybackSearchRow("p2p-hide-torrent-stats", stringResource(Res.string.settings_p2p_hide_stats_title), stringResource(Res.string.settings_p2p_hide_stats_subtitle)),
+                PlaybackSearchRow("p2p-profile", stringResource(Res.string.settings_p2p_profile_title)),
+                PlaybackSearchRow("p2p-cache-size", stringResource(Res.string.settings_p2p_cache_size_title)),
+                PlaybackSearchRow("p2p-clear-cache", stringResource(Res.string.settings_p2p_clear_cache_title)),
             ),
         )
     }
@@ -741,7 +745,11 @@ internal fun settingsSearchEntries(
         section = playbackNextEpisode,
         icon = Icons.Rounded.PlayArrow,
         rows = listOf(
+            PlaybackSearchRow("auto-play-next-episode", stringResource(Res.string.settings_playback_auto_play_next_episode), stringResource(Res.string.settings_playback_auto_play_next_episode_description)),
             PlaybackSearchRow("prefer-binge", stringResource(Res.string.settings_playback_prefer_binge_group), stringResource(Res.string.settings_playback_prefer_binge_group_description)),
+            PlaybackSearchRow("reuse-binge", stringResource(Res.string.settings_playback_reuse_binge_group), stringResource(Res.string.settings_playback_reuse_binge_group_description)),
+            PlaybackSearchRow("auto-play-next-episode-fallback", stringResource(Res.string.settings_playback_auto_play_next_episode_fallback), stringResource(Res.string.settings_playback_auto_play_next_episode_fallback_description)),
+            PlaybackSearchRow("preload-next-episode", stringResource(Res.string.settings_playback_preload_next_episode), stringResource(Res.string.settings_playback_preload_next_episode_description)),
             PlaybackSearchRow("threshold-mode", stringResource(Res.string.settings_playback_threshold_mode)),
             PlaybackSearchRow("threshold-percent", stringResource(Res.string.settings_playback_threshold_percentage), stringResource(Res.string.settings_playback_threshold_percentage_description)),
             PlaybackSearchRow("threshold-minutes", stringResource(Res.string.settings_playback_minutes_before_end), stringResource(Res.string.settings_playback_minutes_before_end_description)),

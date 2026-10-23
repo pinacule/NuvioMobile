@@ -311,6 +311,19 @@ class AndroidDownloadTransferTest {
     }
 
     @Test
+    fun stalledTorrentIsRetryableWithinBudget() {
+        // A stall is recoverable (a different torrent can be re-picked, and
+        // even the same swarm may recover): the first stall no longer fails
+        // the download terminally. The shared retry budget still caps it.
+        val stalled = TorrentDownloadStalledException(infoHash = "abc", message = "stalled")
+        assertTrue(isRetryableAndroidDownloadError(stalled, isTorrent = true))
+        assertTrue(shouldRetryAndroidDownload(stalled, 0, isTorrent = true))
+        assertFalse(shouldRetryAndroidDownload(stalled, 4, isTorrent = true))
+        // A plain torrent failure stays terminal, as before.
+        assertFalse(isRetryableAndroidDownloadError(TorrentDownloadException("dead"), isTorrent = true))
+    }
+
+    @Test
     fun retryPolicyRetriesStaleLinksForTorrentsWithinBudget() {
         // A torrent retry re-enters execute() and prepares a fresh loopback
         // stream, so an expired link is transient there.

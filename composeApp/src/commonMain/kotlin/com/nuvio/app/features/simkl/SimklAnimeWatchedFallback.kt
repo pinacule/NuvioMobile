@@ -1,5 +1,6 @@
 package com.nuvio.app.features.simkl
 
+import com.nuvio.app.features.profiles.ProfileRepository
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 
@@ -12,17 +13,30 @@ import kotlinx.atomicfu.locks.synchronized
  * Simkl snapshot directly.
  *
  * Optimistic removals are tracked — after unmark, the videoId is blacklisted
- * until a snapshot arrives that no longer reports it watched. The set is
- * guarded by a lock: it is written from mutation paths and read from badge
- * resolution on background scopes.
+ * until a snapshot arrives that no longer reports it watched. The sets are
+ * guarded by a lock: they are written from mutation paths and read from
+ * badge resolution on background scopes.
+ *
+ * Removals are scoped per profile: the blacklist records an unmark made
+ * against one profile's Simkl account, and profiles can hold different
+ * accounts (or the same videoId under different accounts), so one global
+ * set would hide an episode another profile has legitimately watched — and
+ * a profile switch must not carry the previous profile's pending removals
+ * into the next profile's badge checks. A profile's set is kept across a
+ * switch away and back (its confirming snapshot may only arrive later); it
+ * is dropped when the profile is deleted and cleared for all profiles on
+ * disconnect.
  */
 object SimklAnimeWatchedFallback {
     private val lock = SynchronizedObject()
-    private val optimisticallyRemoved = mutableSetOf<String>()
+    private val optimisticallyRemovedByProfile = mutableMapOf<Int, MutableSet<String>>()
 
-    fun isWatched(videoId: String, episode: Int): Boolean {
+    fun isWatched(videoId: String, episode: Int): Boolean =
+        isWatchedForProfile(ProfileRepository.activeProfileId, videoId, episode)
+
+    internal fun isWatchedForProfile(profileId: Int, videoId: String, episode: Int): Boolean {
         synchronized(lock) {
-            if (videoId in optimisticallyRemoved) return false
+            if (videoId in optimisticallyRemovedByProfile[profileId].orEmpty()) return false
         }
         return isWatchedByAnimeVideoId(
             snapshot = SimklSyncRepository.state.value.snapshot,
@@ -32,15 +46,23 @@ object SimklAnimeWatchedFallback {
     }
 
     fun markOptimisticallyRemoved(videoId: String) {
+        markOptimisticallyRemovedForProfile(ProfileRepository.activeProfileId, videoId)
+    }
+
+    internal fun markOptimisticallyRemovedForProfile(profileId: Int, videoId: String) {
         synchronized(lock) {
-            optimisticallyRemoved += videoId
+            optimisticallyRemovedByProfile.getOrPut(profileId) { mutableSetOf() } += videoId
         }
     }
 
     /** The videoIds currently blacklisted by an optimistic removal. */
-    fun optimisticallyRemovedVideoIds(): Set<String> = synchronized(lock) {
-        optimisticallyRemoved.toSet()
-    }
+    fun optimisticallyRemovedVideoIds(): Set<String> =
+        optimisticallyRemovedVideoIdsForProfile(ProfileRepository.activeProfileId)
+
+    internal fun optimisticallyRemovedVideoIdsForProfile(profileId: Int): Set<String> =
+        synchronized(lock) {
+            optimisticallyRemovedByProfile[profileId]?.toSet().orEmpty()
+        }
 
     /**
      * Reconciles optimistic removals against a freshly emitted snapshot.
@@ -52,8 +74,13 @@ object SimklAnimeWatchedFallback {
      * behaviour) resurrected the episode as watched until the next refresh.
      */
     fun clearOptimisticRemovals(snapshot: SimklSyncSnapshot) {
+        clearOptimisticRemovalsForProfile(ProfileRepository.activeProfileId, snapshot)
+    }
+
+    internal fun clearOptimisticRemovalsForProfile(profileId: Int, snapshot: SimklSyncSnapshot) {
         synchronized(lock) {
-            optimisticallyRemoved.retainAll { videoId ->
+            val removed = optimisticallyRemovedByProfile[profileId] ?: return
+            removed.retainAll { videoId ->
                 isWatchedByAnimeVideoId(
                     snapshot = snapshot,
                     videoId = videoId,
@@ -63,6 +90,23 @@ object SimklAnimeWatchedFallback {
                     episode = videoId.substringAfterLast(':').toIntOrNull() ?: 0,
                 )
             }
+            if (removed.isEmpty()) {
+                optimisticallyRemovedByProfile.remove(profileId)
+            }
+        }
+    }
+
+    /** Drops one profile's pending removals (the profile is gone). */
+    fun forgetOptimisticRemovals(profileId: Int) {
+        synchronized(lock) {
+            optimisticallyRemovedByProfile.remove(profileId)
+        }
+    }
+
+    /** Drops every profile's pending removals (disconnect / local wipe). */
+    fun clearAllOptimisticRemovals() {
+        synchronized(lock) {
+            optimisticallyRemovedByProfile.clear()
         }
     }
 }

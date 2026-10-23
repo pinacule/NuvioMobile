@@ -9,5 +9,12 @@ package com.nuvio.app.features.tracking
 internal expect object TrackingScrobbleOutboxStorage {
     fun loadPayload(): String?
     fun savePayload(payload: String)
+
+    /**
+     * Preserves a payload that failed to decode, so a corrupt outbox is
+     * never silently replaced by an empty queue; the raw copy stays
+     * available for diagnosis/recovery.
+     */
+    fun saveCorruptPayloadBackup(payload: String)
     fun removeProfile(profileId: Int)
 }

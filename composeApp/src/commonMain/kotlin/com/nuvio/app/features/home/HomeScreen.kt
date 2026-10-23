@@ -1122,7 +1122,7 @@ fun HomeScreen(
                 if (offlineDownloadTiles.isNotEmpty()) {
                     item(key = "offline_home_downloads_header", contentType = "offline_header") {
                         Text(
-                            text = "Downloads",
+                            text = stringResource(Res.string.compose_settings_root_downloads_title),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(
@@ -1162,8 +1162,8 @@ fun HomeScreen(
                     item(key = "offline_home_empty", contentType = "empty") {
                         HomeEmptyStateCard(
                             modifier = Modifier.padding(horizontal = 16.dp),
-                            title = "No downloads yet",
-                            message = "Movies and episodes you download will appear here, ready to watch offline.",
+                            title = stringResource(Res.string.downloads_empty_title),
+                            message = stringResource(Res.string.offline_home_empty_message),
                         )
                     }
                 }

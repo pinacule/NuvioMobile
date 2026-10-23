@@ -625,6 +625,8 @@
     <string name="detail_trailers_title">Trailers</string>
     <string name="downloads_empty_episodes">No completed episodes</string>
     <string name="downloads_empty_title">No downloads yet</string>
+    <string name="offline_home_empty_message">Movies and episodes you download will appear here, ready to watch offline.</string>
+    <string name="offline_home_toggle_label">Offline</string>
     <string name="downloads_episode_count">%1$d downloaded episode(s)</string>
     <string name="downloads_open_directory">Open downloads folder</string>
     <string name="downloads_open_directory_failed">Couldn&apos;t open downloads folder</string>
@@ -1383,6 +1385,8 @@
     <string name="settings_simkl_sync_info_library_statuses">Shows placed in Simkl’s On Hold or Dropped lists are hidden from Continue Watching. They remain hidden for as long as they stay in either list.</string>
     <string name="settings_simkl_sync_info_docs">Read the Simkl sync guide</string>
     <string name="settings_simkl_authorization_revoked">Simkl authorization was revoked. Connect again.</string>
+    <string name="settings_simkl_reauthentication_required">Simkl session ended. Your library and progress are kept on this device. Connect again to resume syncing.</string>
+    <string name="settings_simkl_authorization_denied">Simkl sign-in was denied. Connect again to retry.</string>
     <string name="settings_tracking_not_connected">Not connected</string>
     <string name="tracking_source_simkl">Simkl</string>
     <string name="tracking_library_source_simkl_selected">Simkl watchlist selected</string>
@@ -1687,6 +1691,8 @@
     <string name="season_download_nothing_new">Every episode of this season is already downloaded</string>
     <string name="season_download_queued">Queued %1$d episodes</string>
     <string name="season_download_queued_missing">Queued %1$d episodes · no matching stream for %2$s</string>
+    <string name="season_download_queued_quality">Queued %1$d episodes · %2$s</string>
+    <string name="season_download_queued_missing_quality">Queued %1$d episodes · no matching stream for %2$s · %3$s</string>
     <string name="streams_open_external_player">Open in external player</string>
     <string name="streams_open_internal_player">Open in internal player</string>
     <string name="streams_empty_load_failed_message">The installed stream addons failed to return a valid stream response.</string>
@@ -2370,6 +2376,8 @@
     <string name="settings_p2p_subtitle">Allow peer-to-peer (torrent) streams</string>
     <string name="settings_p2p_hide_stats_title">Hide torrent stats</string>
     <string name="settings_p2p_hide_stats_subtitle">Hide buffer, seeds, peers and download speed during loading and playback</string>
+    <string name="settings_p2p_upload_title">Allow uploading (seeding)</string>
+    <string name="settings_p2p_upload_subtitle">Share torrent data with other peers while the P2P engine is running</string>
     <string name="settings_p2p_profile_title">Torrent profile</string>
     <string name="settings_p2p_profile_soft">Soft</string>
     <string name="settings_p2p_profile_balanced">Balanced</string>

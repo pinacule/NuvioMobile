@@ -345,7 +345,7 @@ object WatchProgressRepository {
 
         val payload = WatchProgressStorage.loadPayload(profileId).orEmpty().trim()
         if (payload.isNotEmpty()) {
-            val storedPayload = WatchProgressCodec.decodePayload(payload)
+            val storedPayload = loadStoredPayload(profileId, payload)
             lastSuccessfulPushEpochMs = storedPayload.lastSuccessfulPushEpochMs
             deltaCursorEventId = storedPayload.deltaCursorEventId
             deltaInitialized = storedPayload.deltaInitialized
@@ -543,6 +543,12 @@ object WatchProgressRepository {
                     )
                 } else {
                     pullSupabaseDeltaFromServer(
+                        profileId = profileId,
+                        operationGeneration = operationGeneration,
+                    )
+                }
+                if (isActiveOperation(profileId, operationGeneration)) {
+                    retryDirtyProgressPush(
                         profileId = profileId,
                         operationGeneration = operationGeneration,
                     )
@@ -1366,16 +1372,12 @@ object WatchProgressRepository {
         entry: WatchProgressEntry,
     ): WatchProgressEntry {
         val payload = WatchProgressStorage.loadPayload(profileId).orEmpty().trim()
-        val storedPayload = if (payload.isNotEmpty()) {
-            WatchProgressCodec.decodePayload(payload)
-        } else {
-            StoredWatchProgressPayload()
-        }
+        val storedPayload = loadStoredPayload(profileId, payload)
         val resolvedEntry = storedPayload.entries.resolveIdentityForUpsert(entry)
         val progressKey = resolvedEntry.resolvedProgressKey()
         val updatedEntries = storedPayload.entries
             .filterNot { it.resolvedProgressKey() == progressKey } + resolvedEntry
-        WatchProgressStorage.savePayload(
+        saveStoredPayload(
             profileId,
             WatchProgressCodec.encodePayload(
                 entries = updatedEntries,
@@ -1393,11 +1395,7 @@ object WatchProgressRepository {
         entry: WatchProgressEntry,
     ): WatchProgressEntry {
         val payload = WatchProgressStorage.loadPayload(profileId).orEmpty().trim()
-        val storedEntries = if (payload.isEmpty()) {
-            emptyList()
-        } else {
-            WatchProgressCodec.decodePayload(payload).entries
-        }
+        val storedEntries = loadStoredPayload(profileId, payload).entries
         return storedEntries.resolveIdentityForUpsert(entry)
     }
 
@@ -1433,6 +1431,40 @@ object WatchProgressRepository {
         }
     }
 
+    /**
+     * Re-pushes progress entries whose original push failed — their keys
+     * are still dirty. Invoked at the end of every Nuvio refresh (full
+     * snapshot and delta alike): the pull's acknowledgement step has
+     * already cleared every dirty key the server holds at least as fresh
+     * a copy of, so the keys still dirty afterwards are strictly fresher
+     * locally and were never delivered. Without this pass a failed
+     * fire-and-forget push stranded the entry on this device forever.
+     * Mirrors the launch-and-acknowledge shape of [pushScrobbleToServer].
+     */
+    private fun retryDirtyProgressPush(profileId: Int, operationGeneration: Long) {
+        if (activeSource.providerId != null) return
+        val dirtyKeys = dirtyProgressKeysSnapshot()
+        if (dirtyKeys.isEmpty()) return
+        val entries = localEntriesSnapshot().filter { entry ->
+            entry.resolvedProgressKey() in dirtyKeys &&
+                !ServerItemRef.isServerId(entry.parentMetaId)
+        }
+        if (entries.isEmpty()) return
+        log.i { "Re-pushing ${entries.size} undelivered watch progress entries for profile $profileId" }
+        accountScopeSnapshot().launch {
+            runCatching {
+                syncAdapter.push(profileId = profileId, entries = entries)
+                recordSuccessfulPush(
+                    profileId = profileId,
+                    operationGeneration = operationGeneration,
+                    entries = entries,
+                )
+            }.onFailure { e ->
+                log.e(e) { "Failed to re-push dirty watch progress" }
+            }
+        }
+    }
+
     private fun publish() {
         val entries = currentEntries()
         val sortedEntries = entries.sortedByDescending { it.lastUpdatedEpochMs }
@@ -1446,7 +1478,7 @@ object WatchProgressRepository {
     }
 
     private fun persist() {
-        WatchProgressStorage.savePayload(
+        saveStoredPayload(
             currentProfileId,
             WatchProgressCodec.encodePayload(
                 entries = localEntriesSnapshot(),
@@ -1456,6 +1488,35 @@ object WatchProgressRepository {
                 dirtyProgressKeys = dirtyProgressKeysSnapshot(),
             ),
         )
+    }
+
+    /**
+     * Decodes a persisted payload, recovering from the last-good backup when
+     * the primary copy is corrupt. Without this, one truncated payload
+     * silently decoded to an empty payload and the next save made the loss
+     * of the profile's whole watch history permanent.
+     */
+    private fun loadStoredPayload(profileId: Int, payload: String): StoredWatchProgressPayload {
+        if (payload.isEmpty()) return StoredWatchProgressPayload()
+        WatchProgressCodec.decodePayloadOrNull(payload)?.let { return it }
+        val backup = WatchProgressStorage.loadBackupPayload(profileId)?.trim().orEmpty()
+        val recovered = backup.takeIf { it.isNotEmpty() }
+            ?.let { WatchProgressCodec.decodePayloadOrNull(it) }
+        if (recovered != null) {
+            log.w { "Watch progress payload for profile $profileId failed to decode; restored the last-good backup" }
+            WatchProgressStorage.savePayload(profileId, backup)
+            return recovered
+        }
+        log.e { "Watch progress payload for profile $profileId failed to decode and no valid backup exists; starting empty" }
+        return StoredWatchProgressPayload()
+    }
+
+    private fun saveStoredPayload(profileId: Int, payload: String) {
+        WatchProgressStorage.savePayload(profileId, payload)
+        // Last-good backup for loadStoredPayload: written after the primary,
+        // so a crash mid-persist leaves the previous good payload in the
+        // backup rather than a torn one in both.
+        WatchProgressStorage.saveBackupPayload(profileId, payload)
     }
 
     private fun recordSuccessfulPush(
@@ -1503,7 +1564,7 @@ object WatchProgressRepository {
     ) {
         val payload = WatchProgressStorage.loadPayload(profileId).orEmpty().trim()
         if (payload.isEmpty()) return
-        val storedPayload = WatchProgressCodec.decodePayload(payload)
+        val storedPayload = loadStoredPayload(profileId, payload)
         val storedByKey = storedPayload.entries.newestByProgressKey()
         val acknowledgedKeys = pushedEntries.mapNotNullTo(mutableSetOf()) { pushed ->
             val key = pushed.resolvedProgressKey()
@@ -1518,7 +1579,7 @@ object WatchProgressRepository {
         ) {
             return
         }
-        WatchProgressStorage.savePayload(
+        saveStoredPayload(
             profileId,
             WatchProgressCodec.encodePayload(
                 entries = storedPayload.entries,

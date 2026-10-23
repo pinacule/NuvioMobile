@@ -97,6 +97,24 @@ class LibraryOfflineFilterTest {
     }
 
     @Test
+    fun `coordinate-less download whose parent type is not movie does not keep a movie`() {
+        // Matches filterContinueWatchingForOfflineHome: a download with no
+        // episode coordinates only counts as a movie download when its
+        // parent type actually says "movie" — a malformed/legacy record
+        // must not validate a same-id movie.
+        val sections = listOf(
+            section("movie", movieItem("movie-a")),
+        )
+
+        val filtered = filterLibrarySectionsForOfflineHome(
+            sections = sections,
+            downloads = listOf(movieDownload("movie-a").copy(parentMetaType = "series")),
+        )
+
+        assertTrue(filtered.isEmpty())
+    }
+
+    @Test
     fun `partially coordinated download validates neither kind`() {
         val sections = listOf(
             section("series", seriesItem("show-a")),

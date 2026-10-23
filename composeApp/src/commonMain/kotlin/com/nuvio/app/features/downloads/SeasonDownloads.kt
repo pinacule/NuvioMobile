@@ -11,6 +11,7 @@ import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.p2p.P2pSettingsRepository
+import com.nuvio.app.features.p2p.canonicalP2pInfoHashOrNull
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.streams.AdaptiveStreamPicker
 import com.nuvio.app.features.streams.StreamItem
@@ -29,6 +30,12 @@ sealed class SeasonDownloadResult {
         val missingEpisodes: List<Int>,
         /** A target with no episode number (a movie) could not be started. */
         val missingMovie: Boolean = false,
+        /**
+         * The quality tiers actually queued (per-item resolutions), so the
+         * result can disclose when episodes landed at a different tier than
+         * the template's instead of staying silent about it.
+         */
+        val qualitiesUsed: Set<String> = emptySet(),
     ) : SeasonDownloadResult()
 
     /** The chosen stream needs P2P, which is turned off. */
@@ -40,6 +47,21 @@ sealed class SeasonDownloadResult {
     /** The chosen stream does not come from an installed addon, so other episodes cannot be looked up. */
     data object UnsupportedSource : SeasonDownloadResult()
 }
+
+/**
+ * Display token for the qualities a queued season actually landed at: the
+ * single quality ("720p"), or the tiers best-first joined with "+" when
+ * episodes fell back to different tiers ("1080p+720p"). Null when nothing
+ * was queued. Lets the result toast disclose the quality used.
+ */
+internal val SeasonDownloadResult.Queued.qualityLabel: String?
+    get() = when (qualitiesUsed.size) {
+        0 -> null
+        1 -> qualitiesUsed.first()
+        else -> qualitiesUsed
+            .sortedByDescending { qualityTierRank.indexOf(it) }
+            .joinToString("+")
+    }
 
 /**
  * Downloads released episodes using the stream the user picked as the template:
@@ -203,6 +225,7 @@ object SeasonDownloads {
         var queued = 0
         val missing = mutableListOf<Int>()
         var missingMovie = false
+        val qualitiesUsed = linkedSetOf<String>()
         picks.forEach { (video, stream) ->
             val episodeNumber = video.episode
             val result = stream?.let {
@@ -225,6 +248,10 @@ object SeasonDownloads {
             }
             if (result == DownloadEnqueueResult.Started || result == DownloadEnqueueResult.Replaced) {
                 queued += 1
+                // The tier this target actually landed at (the resolved
+                // stream's own resolution, else the template's) — disclosed
+                // in the result instead of staying invisible.
+                (stream?.streamResolution() ?: template.streamResolution())?.let { qualitiesUsed += it }
             } else if (episodeNumber != null) {
                 missing += episodeNumber
             } else {
@@ -237,6 +264,7 @@ object SeasonDownloads {
             alreadyDownloaded = alreadyDownloaded.size,
             missingEpisodes = missing,
             missingMovie = missingMovie,
+            qualitiesUsed = qualitiesUsed,
         )
     }
 
@@ -304,7 +332,8 @@ object SeasonDownloads {
 
 /**
  * Picks the episode stream that best matches [template]: the same torrent (a season pack) first,
- * otherwise a stream of the same kind and resolution whose release name is closest.
+ * otherwise a stream of the same kind at the closest resolution tier, ranked by
+ * seeders (primary) with release-name similarity as the tiebreak.
  * When no stream exists at the template's resolution, the closest available quality
  * is used instead of giving up (see [matchingResolutionPool]).
  * When [preferEnglishAudio], an English-audio release wins across
@@ -326,18 +355,24 @@ internal fun pickMatchingEpisodeStream(
     targetSeason: Int? = null,
     targetEpisode: Int? = null,
 ): StreamItem? {
-    val templateHash = template.p2pInfoHash?.lowercase()
+    // Compare hashes in canonical form: the same torrent can be reported as
+    // hex by one addon and as base32 by another, and a raw comparison would
+    // miss the pack match. Unparseable values fall back to raw lowercase.
+    val templateHash = canonicalP2pInfoHashOrNull(template.p2pInfoHash)
+        ?: template.p2pInfoHash?.lowercase()
+    fun StreamItem.comparableHash(): String? =
+        canonicalP2pInfoHashOrNull(p2pInfoHash) ?: p2pInfoHash?.lowercase()
     val eligible = if (targetSeason != null && targetEpisode != null) {
         candidates.filter { candidate ->
             val isHashMatch = templateHash != null &&
-                candidate.p2pInfoHash?.lowercase() == templateHash
+                candidate.comparableHash() == templateHash
             isHashMatch || !candidate.hasConflictingEpisodeMarker(targetSeason, targetEpisode)
         }
     } else {
         candidates
     }
     val hashMatch = templateHash?.let { hash ->
-        eligible.firstOrNull { it.p2pInfoHash?.lowercase() == hash }
+        eligible.firstOrNull { it.comparableHash() == hash }
     }
     if (hashMatch != null) {
         // The pack shortcut is safe for the dub rule only when the preference is
@@ -350,20 +385,33 @@ internal fun pickMatchingEpisodeStream(
     val templateResolution = template.streamResolution()
     if (preferEnglishAudio) {
         // Dub over sub, always: an English-audio release at ANY resolution beats
-        // a same-resolution non-English one. Among dubs, the template's own
-        // resolution wins first, then best-seeded, then the closest release
-        // name; ties keep the addon's own ordering (maxWithOrNull keeps the
-        // first of equal scores). The candidate set stays the template addon's
-        // streams, but — like EpisodeDownloadPlanner.pickBestStreamAtQuality —
-        // it is NOT restricted to the template's kind: a dub that exists only
-        // as a direct HTTP/debrid stream still counts. Only the non-English
-        // matching below keeps the same-kind restriction.
+        // a same-resolution non-English one. Among dubs, SEED HEALTH decides
+        // first: a dub with a known seeder count above zero beats a
+        // 0/unknown-seeder dub at any resolution (a dead dub at the template's
+        // resolution would just stall), then best-seeded, then the template's
+        // own resolution, then the closest release name; ties keep the addon's
+        // own ordering (maxWithOrNull keeps the first of equal scores).
+        // Known-oversize dubs are deprioritized the same way: they only
+        // compete when every dub is oversize. The candidate set stays the
+        // template addon's streams, but — like
+        // EpisodeDownloadPlanner.pickBestStreamAtQuality — it is NOT restricted
+        // to the template's kind: a dub that exists only as a direct
+        // HTTP/debrid stream still counts. Only the non-English matching below
+        // keeps the same-kind restriction.
         val englishTokens = template.releaseTokens()
-        eligible
-            .filter { AdaptiveStreamPicker.hasEnglishAudio(it) }
+        val englishAll = eligible.filter { AdaptiveStreamPicker.hasEnglishAudio(it) }
+        val englishSane = englishAll.filterNot {
+            AdaptiveStreamPicker.isKnownOversize(it, templateResolution)
+        }
+        val englishPool = englishSane.ifEmpty { englishAll }
+        englishPool
             .maxWithOrNull(
-                compareBy<StreamItem> { if (it.streamResolution() == templateResolution) 1 else 0 }
+                compareBy<StreamItem> {
+                    val seeders = AdaptiveStreamPicker.parseSeeders(it)
+                    if (seeders != null && seeders > 0) 1 else 0
+                }
                     .thenBy { AdaptiveStreamPicker.parseSeeders(it) ?: -1 }
+                    .thenBy { if (it.streamResolution() == templateResolution) 1 else 0 }
                     .thenBy { jaccard(englishTokens, it.releaseTokens()) },
             )
             ?.let { return it }
@@ -394,8 +442,21 @@ internal fun pickMatchingEpisodeStream(
         pool
     }
     val templateTokens = template.releaseTokens()
-    // maxByOrNull keeps the first of equal scores, so the addon's own ordering breaks ties.
-    return rankedPool.maxByOrNull { jaccard(templateTokens, it.releaseTokens()) }
+    // Seed health is the PRIMARY key: the best-seeded release wins, so a
+    // healthy release beats a dead (0-seeder) one whose name merely looks
+    // closer to the template's; release-name similarity is the tiebreak.
+    // Unknown seeders rank below known ones, as in the planner.
+    // Known-oversize candidates are deprioritized (they only compete when
+    // the whole pool is oversize). maxWithOrNull keeps the first of equal
+    // scores, so the addon's own ordering breaks remaining ties.
+    val sanePool = rankedPool.filterNot {
+        AdaptiveStreamPicker.isKnownOversize(it, templateResolution)
+    }
+    val effectivePool = sanePool.ifEmpty { rankedPool }
+    return effectivePool.maxWithOrNull(
+        compareBy<StreamItem> { AdaptiveStreamPicker.parseSeeders(it) ?: -1 }
+            .thenBy { jaccard(templateTokens, it.releaseTokens()) },
+    )
 }
 
 /**
@@ -426,7 +487,7 @@ private fun matchingResolutionPool(
 }
 
 /** Quality tiers from lowest to highest, mirroring AdaptiveStreamPicker's ranking. */
-private val qualityTierRank = listOf("480p", "576p", "720p", "1080p", "1440p", "2160p")
+private val qualityTierRank = listOf("360p", "480p", "576p", "720p", "1080p", "1440p", "2160p")
 
 /** Closest of [available] to [target]: smallest tier distance, ties to the lower tier. */
 private fun closestQualityLabel(available: List<String>, target: String): String? =

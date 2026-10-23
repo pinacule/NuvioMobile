@@ -6,6 +6,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import com.nuvio.app.core.diagnostics.SentryNetworkBreadcrumbInterceptor
 import com.nuvio.app.core.network.IPv4FirstDns
+import com.nuvio.app.core.network.withoutCredentialHeaders
 import okhttp3.OkHttpClient
 import java.net.HttpURLConnection
 import java.net.URL
@@ -88,7 +89,17 @@ internal object PlayerPlaybackNetworking {
         } ?: baseClient
 
         return OkHttpDataSource.Factory(client).apply {
-            setDefaultRequestProperties(requestHeaders)
+            // Credential headers never become factory defaults: a default
+            // request property is sent on the FIRST request to whatever host
+            // a data source opens — video, separate audio and external
+            // subtitles alike — before any redirect logic runs, so a default
+            // Authorization would leak to a subtitle or audio host on another
+            // domain. The token reaches requests only through the host-pinned
+            // network interceptor above, which attaches it for any request
+            // type whose host matches the pinned host. Other credential
+            // headers (Cookie, API keys) have no attach mechanism and are
+            // dropped for this factory entirely.
+            setDefaultRequestProperties(requestHeaders.withoutCredentialHeaders())
             if (requestHeaders.headerValue("User-Agent") == null) {
                 setUserAgent(DEFAULT_USER_AGENT)
             }
@@ -113,6 +124,7 @@ internal object PlayerPlaybackNetworking {
         connectTimeoutMs: Int,
         readTimeoutMs: Int,
         range: String? = null,
+        followRedirects: Boolean = true,
     ): HttpURLConnection {
         val mergedHeaders = withDefaultUserAgent(headers)
         return (URL(url).openConnection() as HttpURLConnection).apply {
@@ -120,7 +132,7 @@ internal object PlayerPlaybackNetworking {
                 sslSocketFactory = PlaybackTls.sslContext.socketFactory
                 hostnameVerifier = PlaybackTls.hostnameVerifier
             }
-            instanceFollowRedirects = true
+            instanceFollowRedirects = followRedirects
             connectTimeout = connectTimeoutMs
             readTimeout = readTimeoutMs
             requestMethod = method

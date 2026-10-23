@@ -121,6 +121,9 @@ internal object TraktScrobbleRepository : TrackingScrobbler {
         )
     }
 
+    override fun isConnectivityFailure(error: Throwable): Boolean =
+        super.isConnectivityFailure(error) || isTraktQueueableFailure(error)
+
     suspend fun scrobbleStart(profileId: Int, item: TraktScrobbleItem, progressPercent: Float) {
         sendScrobble(profileId = profileId, action = "start", item = item, progressPercent = progressPercent)
     }
@@ -321,6 +324,14 @@ internal object TraktScrobbleRepository : TrackingScrobbler {
             log.w {
                 "Failed Trakt scrobble $action: HTTP ${response.status} ${response.statusText.ifBlank { "<no-status-text>" }}"
             }
+            if (response.status == 429 || response.status in 500..599) {
+                // Transient failure (rate limited / server error): surface
+                // it instead of swallowing it, so the scrobble coordinator
+                // can queue the event in the offline outbox — the same
+                // treatment transport failures already get above, and the
+                // same classification Simkl applies to its 429/5xx.
+                throw TraktScrobbleQueueableException(response.status)
+            }
             return
         }
 
@@ -461,3 +472,18 @@ private data class TraktIdsBody(
     @SerialName("imdb") val imdb: String? = null,
     @SerialName("tmdb") val tmdb: Int? = null,
 )
+
+/** A Trakt HTTP failure that is transient enough to queue for replay. */
+internal class TraktScrobbleQueueableException(
+    val status: Int,
+) : Exception("Trakt scrobble failed with HTTP $status")
+
+/**
+ * Whether a Trakt failure is transient enough that the scrobble outbox
+ * should persist and replay it instead of dropping it — mirrors
+ * `isSimklQueueableFailure`: [TraktScrobbleQueueableException] is thrown
+ * for rate limiting (429) and server errors (5xx) only; other HTTP
+ * failures are permanent (auth, validation, not found) and are not queued.
+ */
+internal fun isTraktQueueableFailure(error: Throwable): Boolean =
+    error is TraktScrobbleQueueableException

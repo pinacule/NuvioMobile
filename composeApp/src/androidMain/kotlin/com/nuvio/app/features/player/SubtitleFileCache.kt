@@ -11,7 +11,9 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.InputStream
 import java.net.URI
+import java.net.URL
 
 /**
  * Downloads subtitle files from remote URLs to local cache and provides
@@ -21,10 +23,18 @@ object SubtitleFileCache {
     private const val TAG = "SubtitleFileCache"
     private const val SUBTITLE_CACHE_DIR = "subtitles"
 
+    /** Hard cap on a downloaded subtitle body; see downloadHttpSubtitleToFile. */
+    private const val MAX_SUBTITLE_BYTES = 8L * 1024L * 1024L
+    private const val MAX_SUBTITLE_REDIRECTS = 3
+
     private var appContext: Context? = null
     private val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .addInterceptor(SentryNetworkBreadcrumbInterceptor())
+            // Redirects are followed manually in downloadHttpSubtitleToFile
+            // so the hop count stays bounded (MAX_SUBTITLE_REDIRECTS).
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build()
     }
 
@@ -82,17 +92,9 @@ object SubtitleFileCache {
                     File(URI(input.url)).copyTo(file, overwrite = true)
                     return@withContext FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                 }
-                val request = Request.Builder().url(input.url).build()
-                okHttpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        Log.w(TAG, "HTTP ${response.code} downloading subtitle: ${input.url.redactedForLogs()}")
-                        return@withContext null
-                    }
-
-                    val body = response.body ?: return@withContext null
-                    file.outputStream().use { output ->
-                        body.byteStream().copyTo(output)
-                    }
+                if (!downloadHttpSubtitleToFile(input.url, file)) {
+                    file.delete()
+                    return@withContext null
                 }
 
                 // Return content:// URI via FileProvider
@@ -107,6 +109,75 @@ object SubtitleFileCache {
                 null
             }
         }
+
+    /**
+     * Fetches [initialUrl] into [target], following at most
+     * [MAX_SUBTITLE_REDIRECTS] redirects. Redirects may cross hosts —
+     * subtitle providers commonly hand off from their API host to a
+     * separate download host (or a subdomain of it) — and this fetch
+     * attaches no credential headers, so a cross-host hop leaks nothing.
+     * The body is capped
+     * at [MAX_SUBTITLE_BYTES]: the fetch aborts (and the caller deletes the
+     * partial file) rather than letting a hostile or broken URL fill the disk.
+     * Real subtitles, including font-heavy ASS, are a few MB at most; the cap
+     * sits well above that while staying under the codebase's 16 MB API cap.
+     */
+    private fun downloadHttpSubtitleToFile(initialUrl: String, target: File): Boolean {
+        var currentUrl = initialUrl
+        var redirects = 0
+        while (true) {
+            val nextUrl = try {
+                val request = Request.Builder().url(currentUrl).build()
+                okHttpClient.newCall(request).execute().use { response ->
+                    when {
+                        response.isSuccessful -> {
+                            val body = response.body ?: return false
+                            if (body.contentLength() > MAX_SUBTITLE_BYTES) {
+                                Log.w(TAG, "Subtitle exceeds the size cap: ${currentUrl.redactedForLogs()}")
+                                return false
+                            }
+                            return copySubtitleBodyCapped(body.byteStream(), target)
+                        }
+                        response.code in 300..399 -> {
+                            val location = response.header("Location")
+                                ?.takeIf { it.isNotBlank() } ?: return false
+                            if (redirects >= MAX_SUBTITLE_REDIRECTS) return false
+                            runCatching { URL(URL(currentUrl), location).toString() }
+                                .getOrNull() ?: return false
+                        }
+                        else -> {
+                            Log.w(TAG, "HTTP ${response.code} downloading subtitle: ${currentUrl.redactedForLogs()}")
+                            return false
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed subtitle fetch: ${currentUrl.redactedForLogs()}", e)
+                return false
+            }
+            currentUrl = nextUrl
+            redirects += 1
+        }
+    }
+
+    /** Streams [input] into [target], returning false once the size cap is exceeded. */
+    private fun copySubtitleBodyCapped(input: InputStream, target: File): Boolean {
+        var copiedBytes = 0L
+        target.outputStream().use { output ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                copiedBytes += read
+                if (copiedBytes > MAX_SUBTITLE_BYTES) {
+                    Log.w(TAG, "Subtitle download exceeded the ${MAX_SUBTITLE_BYTES}-byte cap; aborting")
+                    return false
+                }
+                output.write(buffer, 0, read)
+            }
+        }
+        return true
+    }
 
     /**
      * Removes all cached subtitle files.

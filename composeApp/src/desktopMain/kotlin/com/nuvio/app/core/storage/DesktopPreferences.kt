@@ -77,6 +77,34 @@ internal class DesktopPreferences(nodeName: String) {
 
     companion object {
         /**
+         * Removes every key scoped to [profileId] from all nodes created
+         * through [DesktopPreferences]. Per-profile keys carry the profile
+         * id as a "_<profileId>" suffix (the ProfileScopedKey convention);
+         * string-set entries store under "<key>#count" / "<key>#<index>",
+         * so the suffix is checked on the part before any '#' fragment.
+         * Plugin scraper settings embed the id mid-key
+         * ("settings_<profileId>_<scraperId>") and are matched by prefix.
+         * Used by the per-profile purge on profile deletion.
+         */
+        fun removeProfileKeys(profileId: Int) {
+            runCatching {
+                val suffix = "_$profileId"
+                val root = Preferences.userRoot().node("com/nuvio/app")
+                root.childrenNames().forEach { child ->
+                    runCatching {
+                        val node = root.node(child)
+                        node.keys().filter { key ->
+                            key.endsWith(suffix) ||
+                                key.substringBefore('#').endsWith(suffix) ||
+                                key.startsWith("settings_${profileId}_")
+                        }.forEach { key -> node.remove(key) }
+                        node.flush()
+                    }
+                }
+            }
+        }
+
+        /**
          * Removes every node created through [DesktopPreferences].
          * Used by the account-data wipe; never call for a single storage.
          */

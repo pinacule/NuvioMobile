@@ -1,11 +1,15 @@
 package com.nuvio.app.features.debrid
 
+import com.nuvio.app.features.p2p.canonicalP2pInfoHashOrNull
 import com.nuvio.app.features.streams.StreamItem
 
 internal object DebridMagnetBuilder {
     fun fromStream(stream: StreamItem): String? {
         stream.torrentMagnetUri?.takeIf { it.isNotBlank() }?.let { return it }
-        val hash = stream.p2pInfoHash ?: return null
+        val rawHash = stream.p2pInfoHash ?: return null
+        // Canonicalize base32 hashes to hex: some debrid resolvers only accept
+        // the hex btih form. Unparseable values keep the raw form, as before.
+        val hash = canonicalP2pInfoHashOrNull(rawHash) ?: rawHash
         return buildString {
             append("magnet:?xt=urn:btih:")
             append(hash)

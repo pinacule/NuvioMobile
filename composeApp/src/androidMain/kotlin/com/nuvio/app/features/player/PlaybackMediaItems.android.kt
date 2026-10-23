@@ -2,6 +2,8 @@ package com.nuvio.app.features.player
 
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import com.nuvio.app.core.network.withoutCredentialHeaders
+import java.net.URL
 import java.util.Locale
 
 internal fun playbackMediaItemFromUrl(
@@ -211,40 +213,72 @@ internal fun probeMimeType(url: String, headers: Map<String, String>): String? {
     if (!url.startsWith("http://") && !url.startsWith("https://")) return null
     val methods = listOf("HEAD", "GET")
     methods.forEach { method ->
-        runCatching {
-            // Go through PlayerPlaybackNetworking so the probe uses PlaybackTls
-            // (verified TLS for public hosts) instead of the platform default.
-            // It also sets instanceFollowRedirects = true, as before.
-            // Residual: HttpURLConnection offers no per-redirect-hop hook, so
-            // headers set on the connection can still be forwarded by the
-            // platform to a redirect target on another host.
-            val probeHeaders = buildMap {
-                put("Accept", "*/*")
-                putAll(headers)
-                if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
-                    put("User-Agent", "Mozilla/5.0")
-                }
-            }
-            val connection = PlayerPlaybackNetworking.openConnection(
-                url = url,
-                headers = probeHeaders,
-                method = method,
-                connectTimeoutMs = 3_000,
-                readTimeoutMs = 3_000,
-            )
-            try {
-                val responseCode = connection.responseCode
-                if (responseCode in 200..299) {
-                    val contentType = connection.contentType
-                    normalizeMimeType(contentType)
-                } else null
-            } finally {
-                connection.disconnect()
-            }
-        }.getOrNull()?.let { return it }
+        runCatching { probeMimeTypeWithMethod(url, headers, method) }
+            .getOrNull()?.let { return it }
     }
     return null
 }
+
+private fun probeMimeTypeWithMethod(
+    url: String,
+    headers: Map<String, String>,
+    method: String,
+): String? {
+    val probeHeaders = buildMap {
+        put("Accept", "*/*")
+        putAll(headers)
+        if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+            put("User-Agent", "Mozilla/5.0")
+        }
+    }
+    val originHost = runCatching { URL(url).host }.getOrNull()
+    var currentUrl = url
+    var currentHeaders = probeHeaders
+    var redirects = 0
+    while (true) {
+        // Go through PlayerPlaybackNetworking so the probe uses PlaybackTls
+        // (verified TLS for public hosts) instead of the platform default —
+        // but with automatic redirect following OFF. HttpURLConnection's
+        // automatic following forwards every header set on the connection to
+        // the redirect target and offers no per-hop hook, which handed the
+        // stream's Authorization to whatever host the URL redirected to.
+        // Following manually lets credential headers be dropped the moment a
+        // hop leaves the origin host (and stay dropped for later hops).
+        val connection = PlayerPlaybackNetworking.openConnection(
+            url = currentUrl,
+            headers = currentHeaders,
+            method = method,
+            connectTimeoutMs = 3_000,
+            readTimeoutMs = 3_000,
+            followRedirects = false,
+        )
+        try {
+            when (connection.responseCode) {
+                in 200..299 -> return normalizeMimeType(connection.contentType)
+                in 300..399 -> {
+                    if (redirects >= MAX_PROBE_REDIRECTS) return null
+                    val location = connection.getHeaderField("Location")
+                        ?.takeIf { it.isNotBlank() } ?: return null
+                    val nextUrl = runCatching { URL(URL(currentUrl), location).toString() }
+                        .getOrNull() ?: return null
+                    val nextHost = runCatching { URL(nextUrl).host }.getOrNull()
+                    if (originHost == null || nextHost == null ||
+                        !nextHost.equals(originHost, ignoreCase = true)
+                    ) {
+                        currentHeaders = currentHeaders.withoutCredentialHeaders()
+                    }
+                    currentUrl = nextUrl
+                    redirects += 1
+                }
+                else -> return null
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+}
+
+private const val MAX_PROBE_REDIRECTS = 3
 
 private const val MIME_VIDEO_QUICK_TIME = "video/quicktime"
 private val DELIMITED_M3U8_PATTERN = Regex("(^|[=/_.?&%-])m3u8($|[=/_.?&%-])")

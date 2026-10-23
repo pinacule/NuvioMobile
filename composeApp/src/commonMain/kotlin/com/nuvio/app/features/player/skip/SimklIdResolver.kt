@@ -1,8 +1,13 @@
 package com.nuvio.app.features.player.skip
 
-import com.nuvio.app.features.addons.httpGetText
-import com.nuvio.app.features.simkl.SIMKL_API_BASE_URL
+import com.nuvio.app.features.simkl.SimklApi
+import com.nuvio.app.features.simkl.SimklApiRequest
 import com.nuvio.app.features.simkl.SimklConfig
+import com.nuvio.app.features.simkl.SimklHttpMethod
+import com.nuvio.app.features.simkl.SimklPlatformClock
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -32,23 +37,66 @@ internal object SimklIdResolver {
         val tvdbEpisode: Int
     )
 
+    // SkipIntroRepository reaches this resolver from parallel async callers, so
+    // every cache access goes through cacheMutex (the ParentalGuideRepository
+    // pattern: short locked sections, network calls stay outside the lock).
+    private val cacheMutex = Mutex()
     private val idsCache = HashMap<String, ResolvedIds?>()
     private val episodeCache = HashMap<Long, List<EpisodeMapping>>()
     private val animeSeasonCache = HashMap<String, List<AnimeSeasonEntry>>()
 
-    private fun commonParams(): String {
-        val clientId = SimklConfig.CLIENT_ID
-        val appName = SimklConfig.APP_NAME
-        return "client_id=$clientId&app-name=$appName&app-version=1.0"
+    // Negative cache: epoch-ms of the last failed lookup per cache key. A
+    // failing Simkl API used to be re-hit on every playback attempt because
+    // failures were never recorded; within NEGATIVE_CACHE_TTL_MS a known-bad
+    // key short-circuits to the same null/empty result a fresh failure gives.
+    private val failedLookups = HashMap<String, Long>()
+    private const val NEGATIVE_CACHE_TTL_MS = 60_000L
+
+    /**
+     * Runs a GET through the shared Simkl API client so these lookups inherit
+     * its pacing, mutex, retry classification and error mapping (previously
+     * this resolver issued raw httpGetText calls with none of those). The
+     * client also appends client_id/app-name/app-version itself, using the
+     * real app version. The endpoints used here are public (client_id only)
+     * and skip-intro resolution must keep working while the user is signed
+     * out of Simkl, so no account token is required.
+     */
+    private suspend fun fetchSimklText(path: String, query: Map<String, String> = emptyMap()): String =
+        SimklApi.client.execute(
+            SimklApiRequest(
+                method = SimklHttpMethod.GET,
+                path = path,
+                query = query,
+                requiresAuthentication = false,
+            ),
+        ).body
+
+    private suspend fun hasRecentFailure(cacheKey: String): Boolean = cacheMutex.withLock {
+        val failedAt = failedLookups[cacheKey] ?: return@withLock false
+        if (SimklPlatformClock.nowEpochMs() - failedAt in 0..NEGATIVE_CACHE_TTL_MS) {
+            true
+        } else {
+            failedLookups.remove(cacheKey)
+            false
+        }
+    }
+
+    private suspend fun recordFailure(cacheKey: String) {
+        cacheMutex.withLock {
+            failedLookups[cacheKey] = SimklPlatformClock.nowEpochMs()
+        }
     }
 
     suspend fun resolveIds(source: String, id: String, contentTypeHint: String? = null): ResolvedIds? {
         val cacheKey = if (contentTypeHint != null) "$source:$id:$contentTypeHint" else "$source:$id"
-        idsCache[cacheKey]?.let { return it }
+        cacheMutex.withLock {
+            if (idsCache.containsKey(cacheKey)) return idsCache[cacheKey]
+        }
         if (SimklConfig.CLIENT_ID.isBlank()) return null
+        if (hasRecentFailure(cacheKey)) return null
 
         return try {
-            val searchText = httpGetText("$SIMKL_API_BASE_URL/search/id?$source=$id&${commonParams()}")
+            val searchText = fetchSimklText("/search/id", mapOf(source to id))
             val results = json.parseToJsonElement(searchText).jsonArray
             if (results.isEmpty()) return null
 
@@ -76,11 +124,11 @@ internal object SimklIdResolver {
                 else -> "anime"
             }
 
-            val detailsText = httpGetText("$SIMKL_API_BASE_URL/$mediaType/$simklId?extended=full&${commonParams()}")
+            val detailsText = fetchSimklText("/$mediaType/$simklId", mapOf("extended" to "full"))
             val details = json.parseToJsonElement(detailsText).jsonObject
             val ids = details["ids"]?.jsonObject
 
-            ResolvedIds(
+            val resolved = ResolvedIds(
                 simklId = simklId,
                 type = mediaType,
                 mal = ids?.get("mal")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
@@ -88,18 +136,27 @@ internal object SimklIdResolver {
                 kitsu = ids?.get("kitsu")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
                 imdb = ids?.get("imdb")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
                 tvdbSeason = details["season"]?.jsonPrimitive?.int?.takeIf { it > 0 }
-            ).also { idsCache[cacheKey] = it }
+            )
+            cacheMutex.withLock { idsCache[cacheKey] = resolved }
+            resolved
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (_: Exception) {
+            recordFailure(cacheKey)
             null
         }
     }
 
     suspend fun getEpisodeMapping(simklId: Long, type: String = "anime"): List<EpisodeMapping> {
-        episodeCache[simklId]?.let { return it }
+        cacheMutex.withLock {
+            episodeCache[simklId]?.let { return it }
+        }
         if (SimklConfig.CLIENT_ID.isBlank()) return emptyList()
+        val failureKey = "episodes:$simklId"
+        if (hasRecentFailure(failureKey)) return emptyList()
 
         return try {
-            val text = httpGetText("$SIMKL_API_BASE_URL/$type/episodes/$simklId?${commonParams()}")
+            val text = fetchSimklText("/$type/episodes/$simklId")
             val episodes = json.parseToJsonElement(text).jsonArray
             val mapping = mutableListOf<EpisodeMapping>()
             for (ep in episodes) {
@@ -112,8 +169,12 @@ internal object SimklIdResolver {
                     mapping.add(EpisodeMapping(epNum, tvdbSeason, tvdbEpisode))
                 }
             }
-            mapping.also { episodeCache[simklId] = it }
+            cacheMutex.withLock { episodeCache[simklId] = mapping }
+            mapping
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (_: Exception) {
+            recordFailure(failureKey)
             emptyList()
         }
     }
@@ -152,13 +213,17 @@ internal object SimklIdResolver {
 
     private suspend fun resolveSeasonSimklId(parentSimklId: Long, type: String, tvdbSeason: Int): Long? {
         val cacheKey = "anime_seasons:$parentSimklId"
-        animeSeasonCache[cacheKey]?.let { seasons ->
-            return seasons.firstOrNull { it.tvdbSeason == tvdbSeason }?.simklId
+        cacheMutex.withLock {
+            animeSeasonCache[cacheKey]?.let { seasons ->
+                return seasons.firstOrNull { it.tvdbSeason == tvdbSeason }?.simklId
+            }
         }
+        if (hasRecentFailure(cacheKey)) return null
 
         return try {
-            val text = httpGetText(
-                "$SIMKL_API_BASE_URL/$type/$parentSimklId?extended=full_anime_seasons&${commonParams()}"
+            val text = fetchSimklText(
+                "/$type/$parentSimklId",
+                mapOf("extended" to "full_anime_seasons"),
             )
             val details = json.parseToJsonElement(text).jsonObject
             val seasonsArray = details["mapped_tvdb_seasons"]?.jsonArray ?: return null
@@ -170,23 +235,29 @@ internal object SimklIdResolver {
                 val mappedSeason = obj["tvdb_season"]?.jsonPrimitive?.int?.takeIf { it > 0 } ?: continue
                 seasons.add(AnimeSeasonEntry(simklId, mappedSeason))
             }
-            animeSeasonCache[cacheKey] = seasons
+            cacheMutex.withLock { animeSeasonCache[cacheKey] = seasons }
             seasons.firstOrNull { it.tvdbSeason == tvdbSeason }?.simklId
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (_: Exception) {
+            recordFailure(cacheKey)
             null
         }
     }
 
     private suspend fun resolveIdsBySimklId(simklId: Long, type: String): ResolvedIds? {
         val cacheKey = "simkl:$simklId"
-        idsCache[cacheKey]?.let { return it }
+        cacheMutex.withLock {
+            if (idsCache.containsKey(cacheKey)) return idsCache[cacheKey]
+        }
+        if (hasRecentFailure(cacheKey)) return null
 
         return try {
-            val text = httpGetText("$SIMKL_API_BASE_URL/$type/$simklId?extended=full&${commonParams()}")
+            val text = fetchSimklText("/$type/$simklId", mapOf("extended" to "full"))
             val details = json.parseToJsonElement(text).jsonObject
             val ids = details["ids"]?.jsonObject
 
-            ResolvedIds(
+            val resolved = ResolvedIds(
                 simklId = simklId,
                 type = type,
                 mal = ids?.get("mal")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
@@ -194,16 +265,32 @@ internal object SimklIdResolver {
                 kitsu = ids?.get("kitsu")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
                 imdb = ids?.get("imdb")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() },
                 tvdbSeason = details["season"]?.jsonPrimitive?.int?.takeIf { it > 0 }
-            ).also { idsCache[cacheKey] = it }
+            )
+            cacheMutex.withLock { idsCache[cacheKey] = resolved }
+            resolved
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (_: Exception) {
+            recordFailure(cacheKey)
             null
         }
     }
 
     fun clearCache() {
-        idsCache.clear()
-        episodeCache.clear()
-        animeSeasonCache.clear()
+        // Non-suspend by contract with SkipIntroRepository.clearCache. All
+        // locked sections above are short map operations that never span a
+        // network call, so tryLock effectively always succeeds; if a lookup
+        // is mid-update the clear is skipped rather than blocking the caller.
+        if (cacheMutex.tryLock()) {
+            try {
+                idsCache.clear()
+                episodeCache.clear()
+                animeSeasonCache.clear()
+                failedLookups.clear()
+            } finally {
+                cacheMutex.unlock()
+            }
+        }
     }
 }
 

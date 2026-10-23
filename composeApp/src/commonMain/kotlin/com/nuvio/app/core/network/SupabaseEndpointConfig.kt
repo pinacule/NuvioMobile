@@ -30,11 +30,21 @@ internal object SupabaseEndpointConfig {
     }
 
     fun shouldRetryWithFallback(requestUrl: String, cause: Throwable): Boolean {
-        return fallbackUrlFor(requestUrl) != null && cause.isOriginFailure()
+        val fallbackUrl = fallbackUrlFor(requestUrl) ?: return false
+        // A TLS/certificate failure is never an "origin failure": it means the
+        // encrypted channel to the primary could not be established, and
+        // re-sending the authenticated request anywhere else would reward
+        // exactly the interference (hostile Wi-Fi, MITM) that broke it. Hard
+        // fail instead. An http fallback is likewise never eligible — these
+        // requests carry the account JWT.
+        return isHttpsBackendUrl(fallbackUrl) &&
+            !isTlsOrCertificateFailure(cause) &&
+            cause.isOriginFailure()
     }
 
     fun shouldRetryWithFallback(requestUrl: String, statusCode: Int): Boolean {
-        return fallbackUrlFor(requestUrl) != null && statusCode.isOriginFailureStatus()
+        val fallbackUrl = fallbackUrlFor(requestUrl) ?: return false
+        return isHttpsBackendUrl(fallbackUrl) && statusCode.isOriginFailureStatus()
     }
 
     private fun endpointUrls(path: String): List<String> =
@@ -49,22 +59,10 @@ internal object SupabaseEndpointConfig {
     private fun Int.isOriginFailureStatus(): Boolean =
         this in 520..526 || this == 502 || this == 503 || this == 504
 
-    private fun Throwable.isOriginFailure(): Boolean {
-        val text = generateSequence(this) { it.cause }
-            .joinToString(separator = " ") { error ->
-                listOfNotNull(error::class.simpleName, error.message).joinToString(separator = " ")
-            }
-            .lowercase()
-
-        return originFailureMarkers.any(text::contains)
-    }
+    private fun Throwable.isOriginFailure(): Boolean =
+        originFailureMarkers.any(failureChainText()::contains)
 
     private val originFailureMarkers = listOf(
-        "ssl",
-        "tls",
-        "certificate",
-        "certpath",
-        "handshake",
         "timeout",
         "timed out",
         "connection reset",
@@ -74,3 +72,34 @@ internal object SupabaseEndpointConfig {
         "closed",
     )
 }
+
+/** True only for an https URL: the only fallback scheme an authenticated backend request may use. */
+internal fun isHttpsBackendUrl(url: String): Boolean =
+    url.startsWith("https://", ignoreCase = true)
+
+/**
+ * True when the failure chain names a TLS/certificate problem (SSL/TLS
+ * handshake, certificate path validation, trust anchors). Such failures must
+ * never be "recovered" by sending the request — credentials included — to a
+ * different server.
+ */
+internal fun isTlsOrCertificateFailure(error: Throwable): Boolean =
+    tlsFailureMarkers.any(error.failureChainText()::contains)
+
+private val tlsFailureMarkers = listOf(
+    "ssl",
+    "tls",
+    "certificate",
+    "certpath",
+    "cert path",
+    "pkix",
+    "trust anchor",
+)
+
+/** Class names + messages of the whole cause chain, lowercased, for marker matching. */
+private fun Throwable.failureChainText(): String =
+    generateSequence(this) { it.cause }
+        .joinToString(separator = " ") { error ->
+            listOfNotNull(error::class.simpleName, error.message).joinToString(separator = " ")
+        }
+        .lowercase()

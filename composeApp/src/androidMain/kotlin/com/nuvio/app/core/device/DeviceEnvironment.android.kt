@@ -20,16 +20,32 @@ actual object DeviceEnvironment {
      */
     internal var testWifiOverride: Boolean? = null
 
+    /**
+     * Test-only override for [isUnmetered], mirroring [testWifiOverride].
+     * When null but [testWifiOverride] is set, the simulated WiFi counts as
+     * unmetered (an ordinary home network). Always null in production.
+     */
+    internal var testUnmeteredOverride: Boolean? = null
+
     actual fun isWifi(): Boolean = testWifiOverride ?: (activeTransport() == NetworkCapabilities.TRANSPORT_WIFI)
 
     actual fun isCellular(): Boolean = activeTransport() == NetworkCapabilities.TRANSPORT_CELLULAR
 
-    private fun activeTransport(): Int? {
+    actual fun isUnmetered(): Boolean =
+        testUnmeteredOverride
+            ?: testWifiOverride
+            ?: activeCapabilities()?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+            ?: false
+
+    private fun activeCapabilities(): NetworkCapabilities? {
         val connectivityManager =
             appContext?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
                 ?: return null
-        val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-            ?: return null
+        return connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+    }
+
+    private fun activeTransport(): Int? {
+        val capabilities = activeCapabilities() ?: return null
         return when {
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ->
                 NetworkCapabilities.TRANSPORT_WIFI

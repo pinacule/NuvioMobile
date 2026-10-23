@@ -1,5 +1,6 @@
 package com.nuvio.app.features.downloads
 
+import co.touchlab.kermit.Logger
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.buildP2pMagnetUri
@@ -40,6 +41,8 @@ internal fun isTransientTorrentFailureMessage(message: String): Boolean =
         staleHttpCodeInMessage.containsMatchIn(message)
 
 object DownloadsRepository {
+    private val log = Logger.withTag("DownloadsRepository")
+
     private val _uiState = MutableStateFlow(DownloadsUiState())
     val uiState: StateFlow<DownloadsUiState> = _uiState.asStateFlow()
 
@@ -478,7 +481,7 @@ object DownloadsRepository {
         }
 
         var shouldPersistNormalized = false
-        val decoded = DownloadsCodec.decode(payload)
+        val decoded = decodePersistedPayload(payload)
         val restoredItems = decoded.items
             .map { item ->
                 val statusNormalized = DownloadsPlatformDownloader.restoreItem(item)
@@ -726,12 +729,35 @@ object DownloadsRepository {
     }
 
     private fun persist() {
-        DownloadsStorage.savePayload(
-            DownloadsCodec.encodeItems(
-                items = _uiState.value.items,
-                stashedReplacements = stashedReplacements.toMap(),
-            ),
+        val payload = DownloadsCodec.encodeItems(
+            items = _uiState.value.items,
+            stashedReplacements = stashedReplacements.toMap(),
         )
+        DownloadsStorage.savePayload(payload)
+        // Last-good backup for decodePersistedPayload: written after the
+        // primary, so a crash mid-persist leaves the previous good payload
+        // in the backup rather than a torn one in both.
+        DownloadsStorage.saveBackupPayload(payload)
+    }
+
+    /**
+     * Decodes the persisted payload, recovering from the last-good backup
+     * when the primary copy is corrupt. Without this, one truncated payload
+     * silently decoded to an empty payload and the next [persist] made the
+     * loss permanent — the files stayed on disk but orphaned from the UI.
+     */
+    private fun decodePersistedPayload(payload: String): StoredDownloadsPayload {
+        DownloadsCodec.decodeOrNull(payload)?.let { return it }
+        val backup = DownloadsStorage.loadBackupPayload()?.trim().orEmpty()
+        val recovered = backup.takeIf { it.isNotEmpty() }
+            ?.let { DownloadsCodec.decodeOrNull(it) }
+        if (recovered != null) {
+            log.w { "Downloads payload failed to decode; restored the last-good backup" }
+            DownloadsStorage.savePayload(backup)
+            return recovered
+        }
+        log.e { "Downloads payload failed to decode and no valid backup exists; starting empty" }
+        return StoredDownloadsPayload()
     }
 
     private fun nextDownloadId(nowEpochMs: Long): String {
@@ -790,9 +816,13 @@ internal object DownloadsCodec {
     }
 
     fun decode(payload: String): StoredDownloadsPayload =
+        decodeOrNull(payload) ?: StoredDownloadsPayload()
+
+    /** Strict decode: null when [payload] is not a valid stored payload. */
+    fun decodeOrNull(payload: String): StoredDownloadsPayload? =
         runCatching {
             json.decodeFromString<StoredDownloadsPayload>(payload)
-        }.getOrDefault(StoredDownloadsPayload())
+        }.getOrNull()
 
     fun decodeItems(payload: String): List<DownloadItem> = decode(payload).items
 

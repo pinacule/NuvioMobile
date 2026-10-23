@@ -11,6 +11,8 @@ class EpisodePreloadPolicyTest {
         wifi: Boolean = true,
         cellular: Boolean = false,
         battery: Int = 80,
+        dataSaver: Boolean = false,
+        unmetered: Boolean = true,
         triggered: Boolean = false,
         series: Boolean = true,
     ) = EpisodePreloadPolicy.shouldTriggerPreload(
@@ -18,6 +20,8 @@ class EpisodePreloadPolicyTest {
         isWifi = wifi,
         isCellular = cellular,
         batteryPercent = battery,
+        dataSaverActive = dataSaver,
+        isUnmetered = unmetered,
         alreadyTriggeredForVideo = triggered,
         isSeries = series,
     )
@@ -55,6 +59,20 @@ class EpisodePreloadPolicyTest {
     @Test
     fun unknownBatteryIsAllowed() {
         assertTrue(gate(battery = -1))
+    }
+
+    @Test
+    fun dataSaverBlocksEvenOnUnmeteredWifi() {
+        assertFalse(gate(dataSaver = true))
+        // The data-saver dimension is independent of the battery rule:
+        // it blocks even where unknown battery alone would be allowed.
+        assertFalse(gate(dataSaver = true, battery = -1))
+    }
+
+    @Test
+    fun meteredWifiBlocks() {
+        // WiFi transport but metered (e.g. another phone's hotspot).
+        assertFalse(gate(unmetered = false))
     }
 
     @Test

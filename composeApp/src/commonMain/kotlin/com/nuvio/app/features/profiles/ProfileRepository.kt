@@ -6,6 +6,7 @@ import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.auth.isAnonymous
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.core.poster.CustomPosterUrlRepository
+import com.nuvio.app.core.storage.LocalAccountDataCleaner
 import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.putSyncOriginClientId
 import com.nuvio.app.core.tracking.ensureTrackingProvidersRegistered
@@ -288,11 +289,15 @@ object ProfileRepository {
     }
 
     suspend fun deleteProfile(profileIndex: Int) {
+        val wasActiveProfile = activeProfileIndex == profileIndex
         if (AuthRepository.state.value.isAnonymous) {
             val remaining = _state.value.profiles.filter { it.profileIndex != profileIndex }
             ProfilePinCacheStorage.removePayload(profileIndex)
             CustomProfileAvatarRepository.removeCustomAvatar(profileIndex)
             ServerRepository.removeProfile(profileIndex)
+            // The index is recycled by the next created profile; purge every
+            // local per-profile store so nothing is inherited by it.
+            LocalAccountDataCleaner.purgeStoredProfile(profileIndex)
             _state.value = _state.value.copy(
                 profiles = remaining,
                 activeProfile = if (_state.value.activeProfile?.profileIndex == profileIndex) remaining.firstOrNull() else _state.value.activeProfile,
@@ -301,6 +306,18 @@ object ProfileRepository {
                 activeProfileIndex = _state.value.activeProfile!!.profileIndex
             }
             persist()
+            if (wasActiveProfile) {
+                // Repositories still hold the deleted profile's in-memory
+                // state; re-point them at the new active profile so nothing
+                // re-saves purged data under it. Only when one actually
+                // exists: with none remaining, activeProfileIndex still
+                // names the just-deleted profile, and re-selecting it would
+                // fire the fan-out under the purged index (re-seeding
+                // per-profile defaults there).
+                _state.value.activeProfile?.let { newActiveProfile ->
+                    selectProfile(newActiveProfile.profileIndex)
+                }
+            }
             return
         }
         try {
@@ -311,7 +328,22 @@ object ProfileRepository {
             SupabaseProvider.client.postgrest.rpc("sync_delete_profile_data", params)
             CustomProfileAvatarRepository.removeCustomAvatar(profileIndex)
             ServerRepository.removeProfile(profileIndex)
+            // The RPC removed the server-side data; purge the local
+            // per-profile stores too, or the next profile created at this
+            // recycled index inherits them.
+            LocalAccountDataCleaner.purgeStoredProfile(profileIndex)
             pullProfiles()
+            if (wasActiveProfile && _state.value.profiles.none { it.profileIndex == profileIndex }) {
+                // Re-point repositories at the new active profile (same
+                // fan-out as the anonymous path). Only when the pull left
+                // one: with no profiles remaining, activeProfile is null
+                // but activeProfileIndex still names the just-deleted
+                // profile, and re-selecting it would fire the fan-out
+                // under the purged index.
+                _state.value.activeProfile?.let { newActiveProfile ->
+                    selectProfile(newActiveProfile.profileIndex)
+                }
+            }
         } catch (e: Throwable) {
             if (AuthRepository.signOutIfSessionInvalid(e, "Profile delete")) return
             log.e(e) { "Failed to delete profile $profileIndex" }

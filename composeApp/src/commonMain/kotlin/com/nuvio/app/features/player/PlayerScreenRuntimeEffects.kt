@@ -15,7 +15,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.nuvio.app.features.debrid.DirectDebridPlayableResult
+import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.p2p.P2P_STALL_SAMPLE_INTERVAL_MS
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamRequest
 import com.nuvio.app.features.p2p.P2pStreamingEngine
@@ -36,6 +39,7 @@ import com.nuvio.app.features.tracking.TrackingScrobbleAction
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import com.nuvio.app.features.watching.application.WatchingState
+import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -186,6 +190,45 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
             initialLoadCompleted = true
             errorMessage = getString(Res.string.player_error_torrent, state.message)
             controlsVisible = !playerControlsLocked
+        }
+    }
+
+    // Stall watchdog for torrent playback (audit P1): neither the engine
+    // (inactivity timeout disabled by design) nor the loopback read
+    // timeout (bounds only total silence) rescues a stream whose swarm
+    // trickles bytes but never fills the buffer — the user sat on an
+    // endless spinner. Sample the engine's delivered-bytes/buffer
+    // progress while the player is starving; on a sustained no-progress
+    // window, fail over to the next auto-pick candidate (or surface an
+    // error when none is left). Keyed on the torrent identity so every
+    // new source starts a fresh window; the 65 s read-timeout behaviour
+    // for total silence is untouched.
+    LaunchedEffect(activeTorrentInfoHash, activeSourceIdentityKey, activeVideoId) {
+        p2pStallTracker.reset()
+        if (activeTorrentInfoHash == null) return@LaunchedEffect
+        val clock = TimeSource.Monotonic.markNow()
+        while (true) {
+            delay(P2P_STALL_SAMPLE_INTERVAL_MS)
+            if (activeTorrentInfoHash == null) return@LaunchedEffect
+            val streaming = p2pStreamingState as? P2pStreamingState.Streaming ?: continue
+            val starving = playbackSnapshot.isLoading &&
+                !playbackSnapshot.isEnded &&
+                errorMessage == null
+            val stalled = p2pStallTracker.onSample(
+                nowMs = clock.elapsedNow().inWholeMilliseconds,
+                deliveredBytes = streaming.deliveredBytes,
+                bufferProgress = streaming.bufferProgress,
+                starving = starving,
+            )
+            if (stalled) {
+                // Handled = we switched sources (the key change restarts
+                // this effect anyway) or an error was surfaced. When the
+                // switch is still resolving asynchronously, keep watching
+                // with a fresh window so a failed resolve gets another
+                // failover attempt instead of silence.
+                if (failOverFromStalledP2pStream()) return@LaunchedEffect
+                p2pStallTracker.reset()
+            }
         }
     }
 
@@ -739,6 +782,11 @@ internal fun PlayerScreenRuntime.removeFailedStreamFromCache() {
 internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message: String?): Boolean {
     if (ServerStreams.isServerSourceId(activeProviderAddonId)) return retryServerSourceAfterError(message)
     val failedUrl = activeSourceUrl
+    // The URL that just failed must not be handed back by the debrid
+    // resolver's success cache for the rest of its 15-minute TTL; drop it so
+    // any re-resolve — including the refresh below — fetches a fresh URL
+    // instead of re-serving the dead one.
+    scope.launch { DirectDebridPlaybackResolver.invalidateCachedResolveForUrl(failedUrl) }
     if (!failedUrl.hasLikelyExpiringPlaybackCredentials()) return false
     if (credentialRefreshJob?.isActive == true) return true
     if (credentialRefreshAttemptedSourceUrl == failedUrl) return false
@@ -792,18 +840,49 @@ internal fun PlayerScreenRuntime.tryRefreshCredentialedSourceAfterError(message:
                 pollCount++
             }
 
-            val stream = refreshedStream
-            if (stream == null) {
-                errorMessage = message
-                controlsVisible = !playerControlsLocked
-                return@launch
-            }
-
-            val refreshedUrl = stream.playableDirectUrl
-            if (refreshedUrl.isNullOrBlank() || refreshedUrl == failedUrl) {
-                errorMessage = message
-                controlsVisible = !playerControlsLocked
-                return@launch
+            val directStream = refreshedStream
+            val directUrl = directStream?.playableDirectUrl
+                ?.takeIf { it.isNotBlank() && it != failedUrl }
+            val stream: StreamItem
+            val refreshedUrl: String
+            if (directStream != null && directUrl != null) {
+                stream = directStream
+                refreshedUrl = directUrl
+            } else {
+                // The refreshed list may only carry the matching stream in
+                // its unresolved debrid form: those streams reach the list
+                // with no direct URL and only gain one when the resolver
+                // runs, so the direct-URL finder above can never select
+                // them and the refresh used to just restore the error.
+                // Match and resolve one instead of giving up.
+                val debridCandidate = findCredentialRefreshDebridCandidate(
+                    streams = PlayerStreamsRepository.sourceState.value.groups.flatMap { it.streams },
+                    expectedProviderAddonId = expectedProviderAddonId,
+                    expectedProviderName = expectedProviderName,
+                    expectedStreamTitle = expectedStreamTitle,
+                    expectedBingeGroup = expectedBingeGroup,
+                )
+                val resolvedStream = debridCandidate?.let { candidate ->
+                    when (
+                        val result = DirectDebridPlaybackResolver.resolveToPlayableStream(
+                            candidate,
+                            season,
+                            episode,
+                        )
+                    ) {
+                        is DirectDebridPlayableResult.Success -> result.stream
+                        else -> null
+                    }
+                }
+                val resolvedUrl = resolvedStream?.playableDirectUrl
+                    ?.takeIf { it.isNotBlank() && it != failedUrl }
+                if (resolvedStream == null || resolvedUrl == null) {
+                    errorMessage = message
+                    controlsVisible = !playerControlsLocked
+                    return@launch
+                }
+                stream = resolvedStream
+                refreshedUrl = resolvedUrl
             }
 
             flushWatchProgress()
@@ -879,6 +958,42 @@ private fun findCredentialRefreshCandidate(
                 score += 20
             }
             if (refreshedUrl.hasLikelyExpiringPlaybackCredentials()) score += 5
+            score to stream
+        }
+        .maxByOrNull { (score, _) -> score }
+        ?.second
+
+/**
+ * The debrid counterpart of [findCredentialRefreshCandidate]: same provider /
+ * title / binge-group matching, but the candidate is an as-yet-unresolved
+ * debrid stream — the shape debrid streams arrive in from a fresh source
+ * load, with no direct URL until [DirectDebridPlaybackResolver] runs (the
+ * same eligibility check the instant-playback preparer filters by). The
+ * caller resolves the returned stream and uses its fresh URL.
+ */
+private fun findCredentialRefreshDebridCandidate(
+    streams: List<StreamItem>,
+    expectedProviderAddonId: String?,
+    expectedProviderName: String,
+    expectedStreamTitle: String,
+    expectedBingeGroup: String?,
+): StreamItem? =
+    streams
+        .asSequence()
+        .filter { stream -> DirectDebridPlaybackResolver.shouldResolveToPlayableStream(stream) }
+        .mapNotNull { stream ->
+            val providerMatches = if (!expectedProviderAddonId.isNullOrBlank()) {
+                stream.addonId == expectedProviderAddonId
+            } else {
+                stream.addonName == expectedProviderName
+            }
+            if (!providerMatches) return@mapNotNull null
+
+            var score = 100
+            if (stream.streamLabel == expectedStreamTitle) score += 40
+            if (!expectedBingeGroup.isNullOrBlank() && stream.behaviorHints.bingeGroup == expectedBingeGroup) {
+                score += 20
+            }
             score to stream
         }
         .maxByOrNull { (score, _) -> score }

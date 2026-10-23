@@ -5,6 +5,7 @@ import com.nuvio.app.core.storage.ProfileScopedKey
 
 internal actual object DownloadsStorage {
     private const val payloadKey = "downloads_payload"
+    private const val backupPayloadKey = "downloads_payload_backup"
 
     /** Key of the removed DownloadsSettingsRepository (batch 21 cleanup, R-19). */
     private const val legacySettingsPayloadKey = "downloads_settings_payload"
@@ -30,6 +31,13 @@ internal actual object DownloadsStorage {
 
     actual fun savePayload(payload: String) {
         prefs.putString(ProfileScopedKey.of(payloadKey), payload)
+    }
+
+    actual fun loadBackupPayload(): String? =
+        prefs.getString(ProfileScopedKey.of(backupPayloadKey))
+
+    actual fun saveBackupPayload(payload: String) {
+        prefs.putString(ProfileScopedKey.of(backupPayloadKey), payload)
     }
 
 }

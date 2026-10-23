@@ -123,6 +123,20 @@ data class WatchProgressEntry(
 
     fun resolveResumePosition(actualDurationMs: Long): Long {
         if (actualDurationMs <= 0L) return lastPositionMs.coerceAtLeast(0L)
+        // Provider-sourced entries carry a position that was itself derived
+        // from the provider's percent — Simkl converts its percent using a
+        // whole-minute-rounded runtime — so the stored position is only
+        // approximate by construction. With the real duration known, the
+        // percent (the value the provider actually recorded) rescaled
+        // against it is the better resume point. Local entries keep their
+        // recorded absolute position: for them the position is measured
+        // truth and any percent is the derived value.
+        if (source != WatchProgressSourceLocal) {
+            normalizedProgressPercent?.let { percent ->
+                val fraction = (percent / 100f).coerceIn(0f, 1f)
+                return (actualDurationMs * fraction).toLong()
+            }
+        }
         if (durationMs > 0L && lastPositionMs > 0L) {
             return lastPositionMs.coerceIn(0L, actualDurationMs)
         }

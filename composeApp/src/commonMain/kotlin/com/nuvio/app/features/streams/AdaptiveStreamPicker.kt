@@ -7,6 +7,7 @@ private val resolutionPatterns = listOf(
     "720p" to Regex("\\b720p\\b"),
     "576p" to Regex("\\b576p\\b"),
     "480p" to Regex("\\b480p\\b"),
+    "360p" to Regex("\\b360p\\b"),
 )
 
 /** Resolution label parsed from the stream's name/title/description/filename, or null if unknown. */
@@ -16,20 +17,24 @@ internal fun StreamItem.streamResolution(): String? {
 }
 
 /** Quality rank from lowest to highest; used for "closest quality" fallback. */
-private val qualityRank = listOf("480p", "576p", "720p", "1080p", "1440p", "2160p")
+private val qualityRank = listOf("360p", "480p", "576p", "720p", "1080p", "1440p", "2160p")
 
 /**
  * Sane per-episode size ceiling per quality. For auto-pick, a stream whose
  * KNOWN size exceeds its tier's ceiling is never eligible (e.g. a 30 GB
  * remux at a 1080p target): the ceiling is a hard filter in [pickFromPool],
- * not a preference. Streams with unknown size stay eligible. Downloads do
- * not use this picker and are unaffected. The single exception is
+ * not a preference. Streams with unknown size stay eligible. Download picks
+ * share these ceilings through [AdaptiveStreamPicker.isKnownOversize] and
+ * [AdaptiveStreamPicker.pickLeastOversize]: known-oversize candidates are
+ * deprioritized there, with the least-oversize stream as the all-oversize
+ * fallback. The single exception is
  * [AdaptiveStreamPicker.pickBestSeeded]'s English-oversize fallback: when
  * the user prefers English audio and EVERY English dub is oversize, the
  * least-oversize dub is still picked — dub over sub, always — while the
  * non-English pool keeps the hard filter unchanged.
  */
 private val saneSizeBytesByQuality = mapOf(
+    "360p" to 500L * 1024 * 1024,
     "480p" to 900L * 1024 * 1024,
     "576p" to 1_100L * 1024 * 1024,
     "720p" to 2_200L * 1024 * 1024,
@@ -38,7 +43,13 @@ private val saneSizeBytesByQuality = mapOf(
     "2160p" to 18_000L * 1024 * 1024,
 )
 
-private val seedersPattern = Regex("[\uD83D\uDC64\uD83D\uDC65]\\s*(\\d[\\d,.]*)|\\b(\\d[\\d,.]*)\\s*seeders?\\b", RegexOption.IGNORE_CASE)
+// "👤 500", "👥 1.5K", "500 seeders", "1.5K seeders": an optional K/M suffix
+// scales the count (groups 2 and 4). The suffix must not be the head of a
+// longer word ("500 MB" is not 500M seeders), hence the letter lookahead.
+private val seedersPattern = Regex(
+    "[\uD83D\uDC64\uD83D\uDC65]\\s*(\\d[\\d,.]*)\\s*([kKmM](?![a-zA-Z]))?|\\b(\\d[\\d,.]*)\\s*([kKmM](?![a-zA-Z]))?\\s*seeders?\\b",
+    RegexOption.IGNORE_CASE,
+)
 private val sizePattern = Regex("[\uD83D\uDCBE]\\s*([\\d.,]+)\\s*(GB|MB)", RegexOption.IGNORE_CASE)
 
 // English-specific audio indicators (word-boundaried): "English Dub",
@@ -307,16 +318,48 @@ object AdaptiveStreamPicker {
         return "1080p"
     }
 
-    /** Seeders parsed from the stream description ("👤 500", "500 seeders"), or null if unknown. */
+    /** Seeders parsed from the stream description ("👤 500", "1.5K seeders"), or null if unknown. */
     fun parseSeeders(stream: StreamItem): Int? {
         val text = listOfNotNull(stream.name, stream.title, stream.description).joinToString(" ")
         val match = seedersPattern.find(text) ?: return null
-        val raw = match.groups[1]?.value ?: match.groups[2]?.value ?: return null
-        return raw.replace(",", "").replace(".", "").toIntOrNull()
+        val raw = match.groups[1]?.value ?: match.groups[3]?.value ?: return null
+        val suffix = match.groups[2]?.value ?: match.groups[4]?.value
+        return parseSeederCount(raw, suffix)
+    }
+
+    private fun parseSeederCount(raw: String, suffix: String?): Int? {
+        val multiplier = when (suffix?.lowercase()) {
+            "k" -> 1_000.0
+            "m" -> 1_000_000.0
+            else -> 1.0
+        }
+        if (multiplier == 1.0) {
+            // Plain counts may use "," or "." as the thousands separator.
+            return raw.replace(",", "").replace(".", "").toIntOrNull()
+        }
+        // Suffixed counts are decimal: "1.5K" = 1500. Commas stay separators.
+        val value = raw.replace(",", "").toDoubleOrNull() ?: return null
+        return (value * multiplier).toInt()
     }
 
     /** Minimum known seeder count for an HDR stream to be auto-play eligible. */
     const val MIN_SEEDERS_FOR_HDR_AUTOPLAY = 50
+
+    /**
+     * Minimum known seeder count for an ordinary (non-HDR) stream to count
+     * as a healthy auto-pick. Below this, piece availability from a tiny
+     * swarm is unreliable for sustained streaming, so in [pickBestSeeded] a
+     * quality tier whose best sane candidate is known to sit below the
+     * floor yields to the next tier (the same way an all-oversize tier
+     * does) when that tier offers a healthy candidate. Unknown seeder
+     * counts are neutral: they neither satisfy nor violate the floor. If
+     * every candidate is below the floor, the best-seeded one is still
+     * picked — the floor is a preference, never a no-pick. Deliberately
+     * far below the HDR gate (50): HDR bitrates need a much fatter swarm
+     * than ordinary SD/HD streams, which a healthy handful of seeders
+     * sustains fine.
+     */
+    const val MIN_SEEDERS_FOR_AUTOPLAY = 10
 
     /**
      * Whether the English-dub-first ranking applies: follows the user's preferred
@@ -653,6 +696,13 @@ object AdaptiveStreamPicker {
      * exempt from the HDR seeder gate when [preferEnglishAudio] — dub preference
      * outranks the seeder requirement.
      *
+     * Seeder floor: while walking the quality tiers, a tier whose best sane
+     * candidate is KNOWN to have fewer than [MIN_SEEDERS_FOR_AUTOPLAY] seeders
+     * does not end the walk — a healthy candidate (at/above the floor, or an
+     * unknown seeder count) at a neighbouring tier beats a dying swarm at the
+     * target tier. If no tier offers a healthy candidate, the best-seeded of
+     * the weak tier picks is returned, so the floor never starves the pick.
+     *
      * Returns null when [streams] is empty, or when every candidate is
      * known to exceed its tier's size ceiling — the auto-pick callers then
      * fall back to the manual source list / next-episode card instead of
@@ -699,10 +749,24 @@ object AdaptiveStreamPicker {
             .sortedWith(compareBy({ kotlin.math.abs(qualityRank.indexOf(it) - qualityRank.indexOf(targetQuality)) }, { qualityRank.indexOf(it) }))
             .filter { it in byQuality }
         val fallbackOrder = (listOf(targetQuality) + orderedQualities).distinct()
+        // Seeder floor (see MIN_SEEDERS_FOR_AUTOPLAY): the first healthy
+        // tier pick wins. A weak pick — best sane candidate of its tier,
+        // known to sit below the floor — is only remembered while the walk
+        // continues; among weak picks the best-seeded one is kept, with
+        // ties going to the tier closest to the target (the walk order).
+        var weakPick: StreamItem? = null
         for (quality in fallbackOrder) {
             val pool = byQuality[quality] ?: continue
-            pickFromPool(pool, quality)?.let { return it }
+            val pick = pickFromPool(pool, quality) ?: continue
+            if (isSeederHealthy(pick)) return pick
+            val currentWeak = weakPick
+            if (currentWeak == null ||
+                (parseSeeders(pick) ?: -1) > (parseSeeders(currentWeak) ?: -1)
+            ) {
+                weakPick = pick
+            }
         }
+        weakPick?.let { return it }
         // Last tier: streams whose resolution could not be parsed. They
         // never outrank a parseable candidate, but they stay selectable —
         // e.g. an English dub with no resolution token in its metadata when
@@ -713,6 +777,101 @@ object AdaptiveStreamPicker {
             pickFromPool(pool, targetQuality)?.let { return it }
         }
         return null
+    }
+
+    /**
+     * Bytes by which [stream]'s KNOWN size exceeds the sane ceiling of its
+     * own quality tier (or of [fallbackQuality] when the stream's resolution
+     * cannot be parsed); 0 when the stream is not known to be oversize
+     * (unknown size or unknown tier never counts as oversize).
+     */
+    fun oversizeExcessBytes(stream: StreamItem, fallbackQuality: String? = null): Long {
+        val quality = stream.streamResolution() ?: fallbackQuality ?: return 0L
+        val ceiling = saneSizeBytesByQuality[quality] ?: return 0L
+        val size = parseSizeBytes(stream) ?: return 0L
+        return (size - ceiling).coerceAtLeast(0L)
+    }
+
+    /**
+     * True when [stream] is known to exceed its tier's sane size ceiling.
+     * Download picks use this to deprioritize oversize candidates with the
+     * same ceilings playback enforces in [pickFromPool].
+     */
+    fun isKnownOversize(stream: StreamItem, fallbackQuality: String? = null): Boolean =
+        oversizeExcessBytes(stream, fallbackQuality) > 0L
+
+    /**
+     * The least-oversize member of [pool] — smallest excess over its own
+     * tier's sane ceiling, then best-seeded — or null when no member is
+     * known to be oversize. The download picks' fallback for a pool whose
+     * every member is oversize; same ordering as [pickOversizeFallback],
+     * exposed for them.
+     */
+    fun pickLeastOversize(pool: List<StreamItem>, targetQuality: String): StreamItem? =
+        pickOversizeFallback(pool, targetQuality)
+
+    /**
+     * Best stream for an explicit in-player quality switch. The caller
+     * pre-filters [pool] to the tapped resolution. Unlike the auto-pick,
+     * nothing is hard-excluded — the user explicitly chose this quality, so
+     * every candidate stays eligible and the ranking only orders them,
+     * mirroring the other pickers:
+     *
+     * 1. the transport the user is already on ([preferTorrent]) — a
+     *    debrid/direct watcher tapping a quality chip is not silently moved
+     *    onto a torrent (which starts the P2P engine and uses torrent data
+     *    unannounced), or vice versa;
+     * 2. English audio first when [preferEnglishAudio] (dub over sub);
+     * 3. immediately playable streams (direct URL, server target, or a
+     *    torrent hash) ahead of ones that still need an async debrid
+     *    resolve;
+     * 4. sane-sized ahead of known-oversize for [quality] (a preference
+     *    here, not the auto-pick's hard filter — the user asked for this
+     *    quality, so an oversize candidate can still win if nothing else
+     *    is left);
+     * 5. best-seeded, unknown counts ranking below known ones (mirrors
+     *    [pickFromPool]).
+     *
+     * Ties keep the addon's own ordering (sortedWith is stable).
+     */
+    fun pickForQualitySwitch(
+        pool: List<StreamItem>,
+        quality: String,
+        preferEnglishAudio: Boolean = false,
+        preferTorrent: Boolean = false,
+    ): StreamItem? {
+        if (pool.isEmpty()) return null
+        val saneCeiling = saneSizeBytesByQuality[quality] ?: Long.MAX_VALUE
+        return pool.sortedWith(
+            compareBy<StreamItem> { if (it.isTorrentStream == preferTorrent) 0 else 1 }
+                .thenByDescending { preferEnglishAudio && hasEnglishAudio(it) }
+                .thenByDescending { isImmediatelyPlayable(it) }
+                .thenBy { stream ->
+                    val size = parseSizeBytes(stream)
+                    if (size != null && size > saneCeiling) 1 else 0
+                }
+                .thenByDescending { parseSeeders(it) ?: -1 },
+        ).first()
+    }
+
+    /**
+     * Playable without an async resolve step: direct URL, server stream, or
+     * a torrent hash. An addon debrid candidate also carries a hash but
+     * routes through the debrid resolver first, so it does not count.
+     */
+    private fun isImmediatelyPlayable(stream: StreamItem): Boolean =
+        stream.playableDirectUrl != null ||
+            stream.serverTarget != null ||
+            (stream.p2pInfoHash != null && !stream.isAddonDebridCandidate)
+
+    /**
+     * True when the stream counts as a healthy auto-pick under the seeder
+     * floor: its seeder count is unknown (neutral — no evidence of weakness)
+     * or at/above [MIN_SEEDERS_FOR_AUTOPLAY].
+     */
+    private fun isSeederHealthy(stream: StreamItem): Boolean {
+        val seeders = parseSeeders(stream) ?: return true
+        return seeders >= MIN_SEEDERS_FOR_AUTOPLAY
     }
 
     private fun pickFromPool(pool: List<StreamItem>, quality: String): StreamItem? {

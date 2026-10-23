@@ -148,6 +148,17 @@ private suspend fun prefetchOne(
     } catch (timeout: TimeoutCancellationException) {
         // Our own deadline, not an external cancellation: the torrent is dead or unreachable.
         // Best-effort — playback still works, it just pays the metadata round-trip itself.
+        //
+        // Cancellation bookkeeping: if the native add ignored the cancellation and delivered
+        // the torrent anyway, acquireTorrent notices the cancelled caller and hands the fresh
+        // lease straight back (see NuvioEngineHost.acquireTorrent), so no registered-but-unheld
+        // lease is left behind. Two residuals cannot be closed from Kotlin, both inside the
+        // closed-source engine bridge: (1) if the bridge honours cancellation by throwing after
+        // the native side already added the torrent, the torrent sits in the engine untracked —
+        // metadata only, no content download — until a later acquire of the same hash adopts it
+        // through the engine's own dedup, or the engine restarts; (2) if the native add never
+        // returns and ignores cancellation, it keeps the host's torrent mutex, and no
+        // Kotlin-side timeout can preempt a non-cooperative native call.
         Log.i(PREFETCH_TAG, "Metadata prefetch timed out for ${target.infoHash.take(12)}")
         return null
     } catch (cancellation: CancellationException) {

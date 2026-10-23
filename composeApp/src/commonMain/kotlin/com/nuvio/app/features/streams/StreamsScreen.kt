@@ -72,6 +72,7 @@ import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.downloads.EpisodeDownloadPlanner
 import com.nuvio.app.features.downloads.SeasonDownloadResult
 import com.nuvio.app.features.downloads.SeasonDownloads
+import com.nuvio.app.features.downloads.qualityLabel
 import com.nuvio.app.features.downloads.TORRENT_DOWNLOAD_OWNER_PREFIX
 import com.nuvio.app.features.p2p.P2P_METADATA_PREFETCH_MAX_STREAMS
 import com.nuvio.app.features.p2p.P2pConsentDialog
@@ -243,12 +244,22 @@ fun StreamsScreen(
                         when {
                             result.queued == 0 && result.missingEpisodes.isEmpty() -> seasonDownloadNothingNewText
                             result.missingEpisodes.isEmpty() ->
-                                getString(Res.string.season_download_queued, result.queued)
-                            else -> getString(
-                                Res.string.season_download_queued_missing,
-                                result.queued,
-                                result.missingEpisodes.joinToString(", ") { "E$it" },
-                            )
+                                // Disclose the quality actually queued: episodes
+                                // may have landed at a different tier than picked.
+                                result.qualityLabel?.let { quality ->
+                                    getString(Res.string.season_download_queued_quality, result.queued, quality)
+                                } ?: getString(Res.string.season_download_queued, result.queued)
+                            else -> {
+                                val missing = result.missingEpisodes.joinToString(", ") { "E$it" }
+                                result.qualityLabel?.let { quality ->
+                                    getString(
+                                        Res.string.season_download_queued_missing_quality,
+                                        result.queued,
+                                        missing,
+                                        quality,
+                                    )
+                                } ?: getString(Res.string.season_download_queued_missing, result.queued, missing)
+                            }
                         },
                     )
                 }
@@ -256,6 +267,15 @@ fun StreamsScreen(
         }
     }
     var preferredFilterApplied by remember(videoId) { mutableStateOf(false) }
+    // Set the moment the user taps the provider filter row during this
+    // visit: from then on the stored "last provider" auto-apply below must
+    // not override their choice (audit playback finding 10). Both layouts
+    // route their filter taps through handleFilterSelected.
+    var filterSelectedByUser by remember(videoId) { mutableStateOf(false) }
+    val handleFilterSelected: (String?) -> Unit = { addonId ->
+        filterSelectedByUser = true
+        StreamsRepository.selectFilter(addonId)
+    }
     val episodeProgress = watchProgressUiState.progressForVideo(
         videoId = videoId,
         parentMetaId = parentMetaId,
@@ -289,6 +309,12 @@ fun StreamsScreen(
 
     LaunchedEffect(uiState.groups, storedProgress?.providerAddonId, preferredFilterApplied) {
         if (preferredFilterApplied) return@LaunchedEffect
+        if (filterSelectedByUser) {
+            // The user already picked a filter during this visit; the
+            // stored provider must not override it when later groups land.
+            preferredFilterApplied = true
+            return@LaunchedEffect
+        }
         val preferredAddonId = storedProgress?.providerAddonId ?: return@LaunchedEffect
         if (uiState.groups.any { it.addonId == preferredAddonId }) {
             StreamsRepository.selectFilter(preferredAddonId)
@@ -403,6 +429,7 @@ fun StreamsScreen(
                     onStreamSelected(stream, positionMs, progressFraction)
                 },
                 onStreamLongPress = { stream -> streamActionsTarget = stream },
+                onFilterSelected = handleFilterSelected,
                 onRefresh = reloadStreams,
             )
         } else {
@@ -425,6 +452,7 @@ fun StreamsScreen(
                     onStreamSelected(stream, positionMs, progressFraction)
                 },
                 onStreamLongPress = { stream -> streamActionsTarget = stream },
+                onFilterSelected = handleFilterSelected,
                 onRefresh = reloadStreams,
             )
         }
@@ -556,7 +584,7 @@ fun StreamsScreen(
                     selectedQuality = selectedQuality,
                     onQualitySelected = { seasonQualitySelected = it },
                     onConfirm = {
-                        // Dub over sub, always: with the dub preference on, an English-audio release at any quality wins; otherwise the chosen quality applies.
+                        // Dub over sub, always: with the dub preference on, an English-audio release wins — at the chosen quality first, the closest tier as fallback; otherwise the chosen quality applies.
                         val template =
                             EpisodeDownloadPlanner.pickBestStreamAtQuality(
                                 allStreams,
@@ -597,6 +625,7 @@ private fun MobileStreamsLayout(
     resumeProgressFraction: Float?,
     onStreamSelected: (stream: StreamItem, resumePositionMs: Long?, resumeProgressFraction: Float?) -> Unit,
     onStreamLongPress: (StreamItem) -> Unit,
+    onFilterSelected: (String?) -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -670,7 +699,7 @@ private fun MobileStreamsLayout(
                     ProviderFilterRow(
                         groups = uiState.groups,
                         selectedFilter = uiState.selectedFilter,
-                        onFilterSelected = { addonId -> StreamsRepository.selectFilter(addonId) },
+                        onFilterSelected = onFilterSelected,
                         onRefresh = onRefresh,
                     )
 

@@ -32,6 +32,7 @@ internal class SimklSyncEngine(
                 fetched = remote.fetchPlayback(),
                 held = current.playback,
                 lastSyncedAtEpochMs = current.lastSyncedAtEpochMs,
+                fetchedAtEpochMs = nowEpochMs(),
             )
         } else {
             current.playback
@@ -64,11 +65,27 @@ internal class SimklSyncEngine(
             isInitialized = true,
             watermark = activities.all,
             activities = activities,
-            entries = entries.distinctBy(SimklLibraryEntry::stableKey),
+            entries = entries.distinctByStableKeyKeepingUnkeyed(),
             playback = playback,
             lastSyncedAtEpochMs = now,
             lastCheckedAtEpochMs = now,
         ).reconcileWatchedPlayback()
+    }
+}
+
+/**
+ * De-duplicates entries by stable key, keeping the first of each key.
+ *
+ * An entry whose media carries none of the known ID types has no stable key.
+ * `distinctBy { stableKey }` would collapse ALL such entries into a single
+ * null-keyed survivor, silently dropping library items; unkeyed entries
+ * cannot be told apart, so each one is kept as its own entry instead.
+ */
+private fun List<SimklLibraryEntry>.distinctByStableKeyKeepingUnkeyed(): List<SimklLibraryEntry> {
+    val seenKeys = mutableSetOf<String>()
+    return filter { entry ->
+        val key = entry.stableKey()
+        key == null || seenKeys.add(key)
     }
 }
 
@@ -82,7 +99,12 @@ internal fun mergeDelta(
             entry.stableKey()?.let { key -> merged[key] = entry }
         }
     }
-    return merged.values.sortedWith(simklEntryComparator)
+    // Unkeyed current entries cannot be matched against the delta (an
+    // unkeyed delta entry is skipped for the same reason), but discarding
+    // them here would delete them from the local library on every delta
+    // sync — carry them through untouched instead.
+    val unkeyedCurrent = current.filter { entry -> entry.stableKey() == null }
+    return (merged.values + unkeyedCurrent).sortedWith(simklEntryComparator)
 }
 
 internal fun reconcileRemovedEntries(
@@ -92,8 +114,13 @@ internal fun reconcileRemovedEntries(
     val allowedKeys = SimklMediaType.entries.flatMapTo(mutableSetOf()) { type ->
         authoritative.entriesFor(type).mapNotNull(SimklLibraryEntry::stableKey)
     }
-    return current.filter { entry -> entry.stableKey() in allowedKeys }
-        .sortedWith(simklEntryComparator)
+    return current.filter { entry ->
+        val key = entry.stableKey()
+        // An unkeyed entry can never appear in the authoritative ID list, so
+        // its absence there proves nothing — keep it rather than treating it
+        // as removed.
+        key == null || key in allowedKeys
+    }.sortedWith(simklEntryComparator)
 }
 
 private fun hasAllItemsActivityChanged(

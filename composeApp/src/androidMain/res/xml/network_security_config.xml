@@ -1,10 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is scoped to the user's own network instead of being permitted
+  globally: loopback plus the conventional local naming suffixes (the same
+  set PlaybackTls' isLocalNetworkHost treats as local). Everything else —
+  debrid and addon streams, the sync backend, all hardcoded services —
+  must use https.
+
+  The XML format cannot express IP ranges or bare single-label hostnames,
+  so two LAN shapes are NOT covered and now require https (or a name under
+  one of the suffixes below): media/sync servers addressed by a private IP
+  literal (e.g. http://192.168.1.10:8096) and by a bare hostname
+  (e.g. http://emby:8096). Servers reached as e.g. http://emby.local:8096
+  or http://nas.lan:8096 keep working over http.
+-->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
             <certificates src="@raw/isrg_root_x1" />
             <certificates src="@raw/isrg_root_x2" />
         </trust-anchors>
     </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="true">local</domain>
+        <domain includeSubdomains="true">lan</domain>
+        <domain includeSubdomains="true">home.arpa</domain>
+        <domain includeSubdomains="true">internal</domain>
+        <domain includeSubdomains="true">localdomain</domain>
+    </domain-config>
 </network-security-config>

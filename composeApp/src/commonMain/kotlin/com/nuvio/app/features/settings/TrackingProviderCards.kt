@@ -88,8 +88,10 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_cancel
 import nuvio.composeapp.generated.resources.action_collapse
 import nuvio.composeapp.generated.resources.action_expand
+import nuvio.composeapp.generated.resources.settings_simkl_authorization_denied
 import nuvio.composeapp.generated.resources.settings_simkl_authorization_expired
 import nuvio.composeapp.generated.resources.settings_simkl_authorization_revoked
+import nuvio.composeapp.generated.resources.settings_simkl_reauthentication_required
 import nuvio.composeapp.generated.resources.settings_simkl_connect
 import nuvio.composeapp.generated.resources.settings_simkl_connected_as
 import nuvio.composeapp.generated.resources.settings_simkl_connected_description
@@ -809,6 +811,10 @@ private fun simklErrorMessage(error: SimklAuthError?): String? = when (error) {
     -> stringResource(Res.string.settings_simkl_sign_in_failed)
     SimklAuthError.AUTHORIZATION_REVOKED ->
         stringResource(Res.string.settings_simkl_authorization_revoked)
+    SimklAuthError.REAUTHENTICATION_REQUIRED ->
+        stringResource(Res.string.settings_simkl_reauthentication_required)
+    SimklAuthError.AUTHORIZATION_DENIED ->
+        stringResource(Res.string.settings_simkl_authorization_denied)
 }
 
 private val TrackingErrorColor = Color(0xFFFFDAD6)

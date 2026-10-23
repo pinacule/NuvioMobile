@@ -127,9 +127,18 @@ enum class DownloadEnqueueResult {
 internal fun List<DownloadItem>.sortedForSeriesDownloads(): List<DownloadItem> =
     sortedWith(downloadSeriesEpisodeComparator)
 
+/**
+ * Series-episode order, scoped PER SERIES: a show's own title/parent first,
+ * then season, then episode. The old global season/episode ordering let
+ * every S01E01 (preloads, other shows) jump ahead of the show the user
+ * actually queued, and movies (no season) sorted behind every episode of
+ * every show. Display sorting shares this order, so each series' episodes
+ * stay contiguous there too.
+ */
 internal val downloadSeriesEpisodeComparator: Comparator<DownloadItem> =
-    compareBy<DownloadItem> { it.seasonNumber ?: Int.MAX_VALUE }
+    compareBy<DownloadItem> { it.title.trim().lowercase() }
+        .thenBy { it.parentMetaId.trim().lowercase() }
+        .thenBy { it.seasonNumber ?: Int.MAX_VALUE }
         .thenBy { it.episodeNumber ?: Int.MAX_VALUE }
         .thenBy { it.episodeTitle?.trim().orEmpty().lowercase() }
-        .thenBy { it.title.trim().lowercase() }
         .thenBy { it.id }

@@ -315,9 +315,14 @@ private fun buildShowHistoryItem(
     items: List<TrackingHistoryItem>,
     includeWatchedAt: Boolean,
 ): SimklHistoryItemDto {
-    val first = items.first()
-    val parentMutation = items.lastOrNull { item -> item.media.episode == null }
-    if (parentMutation != null) {
+    val episodeMutations = items.mapNotNull { item ->
+        item.media.episode?.let { episode -> item to episode }
+    }
+    if (episodeMutations.isEmpty()) {
+        // A group with no episode items at all is a genuine show-level mark:
+        // the only item(s) describe the whole show, so emit the show-level
+        // entry (status COMPLETED on the add path) exactly as before.
+        val parentMutation = items.last()
         return parentMutation.media.toHistoryItemDto(
             watchedAtEpochMs = parentMutation.watchedAtEpochMs.takeIf { includeWatchedAt },
             includeWatchedAt = includeWatchedAt,
@@ -325,9 +330,16 @@ private fun buildShowHistoryItem(
         )
     }
 
-    val episodeMutations = items.mapNotNull { item ->
-        item.media.episode?.let { episode -> item to episode }
-    }
+    // The group carries episode items, so they are the mutation. An
+    // episode-less item riding in the same batch (e.g. an external-player
+    // STOP for the series with no episode number) must never swallow them:
+    // answering with the show-level entry instead would mark every episode
+    // of the show watched on Simkl, including ones never opened. This is
+    // the mutation-layer twin of the adapter guard in
+    // `simklHistoryPushItems`, which drops whole-series marks for the same
+    // reason — a whole-series action reports its episodes one by one, so
+    // dropping the parent here loses no information.
+    val first = episodeMutations.first().first
     val flatEpisodes = episodeMutations
         .filter { (_, episode) -> episode.season == null }
         .map { (item, episode) ->

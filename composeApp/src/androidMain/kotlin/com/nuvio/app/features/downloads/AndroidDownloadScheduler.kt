@@ -331,6 +331,54 @@ internal class AndroidDownloadScheduler(val context: Context) {
                     return@withLock TransferOutcome.RetryNow
                 }
             }
+            if (error is TorrentDownloadStalledException &&
+                latest.item.sourceKind == DownloadSourceKind.Torrent &&
+                refreshBudget != null
+            ) {
+                // The swarm stalled: swap in a DIFFERENT torrent (excluding
+                // the stalled one) instead of dying terminally on the first
+                // stall. When no other torrent is offered, fall through to
+                // the generic retry below — the stall is retryable now, and
+                // the stalled torrent stays warm in the engine for it.
+                val refreshed = try {
+                    refreshTorrentDownloadSource(latest.item, error.infoHash)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (refreshError: Exception) {
+                    null
+                }
+                if (refreshed != null && refreshed.torrentInfoHash != latest.item.torrentInfoHash) {
+                    // A different torrent means different bytes: the partial
+                    // must NOT be resumed (the HTTP branch's size guard does
+                    // not exist for torrents), so it is deleted and the item
+                    // restarts from zero with no resolved output name.
+                    deleteDownloadPartialFiles(directory, fileName)
+                    val applied = updateActive(transfer) {
+                        it.copy(
+                            item = refreshed.copy(
+                                status = DownloadStatus.Downloading,
+                                downloadedBytes = 0L,
+                                totalBytes = null,
+                                errorMessage = null,
+                            ),
+                            validator = null,
+                            retryCount = 0,
+                            outputFileName = null,
+                        ).withSourceRefreshBudget(refreshBudget)
+                    }
+                    if (applied == null || !isActive(transfer) ||
+                        applied.item.torrentInfoHash != refreshed.torrentInfoHash
+                    ) {
+                        return@withLock TransferOutcome.Done
+                    }
+                    // The repository owns the UI/pause-resume copy of the item:
+                    // it must see the new torrent too, or a later resume would
+                    // restart the stalled one.
+                    DownloadsRepository.refreshItemSource(applied.item)
+                    // A fresh torrent deserves an immediate try, not an OS backoff.
+                    return@withLock TransferOutcome.RetryNow
+                }
+            }
             var retry = false
             if (isRetryableAndroidDownloadError(error, isTorrent = torrent)) {
                 updateActive(transfer) { current ->
@@ -496,6 +544,10 @@ internal fun shouldRetryAndroidDownload(error: Exception, retries: Int, isTorren
     retries < MAX_CONSECUTIVE_DOWNLOAD_RETRIES && isRetryableAndroidDownloadError(error, isTorrent)
 
 internal fun isRetryableAndroidDownloadError(error: Exception, isTorrent: Boolean): Boolean = when {
+    // A stalled swarm is recoverable: the stall branch below re-picks a
+    // different torrent when the refresh budget allows, and even without a
+    // re-pick a plain retry can find a healthier swarm later.
+    error is TorrentDownloadStalledException -> true
     error.isStreamPreparationFailure() -> true
     error is DownloadHttpException ->
         error.statusCode == 408 || error.statusCode == 429 || error.statusCode in 500..599 ||

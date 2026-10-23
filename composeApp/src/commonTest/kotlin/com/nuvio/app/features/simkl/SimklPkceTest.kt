@@ -130,6 +130,47 @@ class SimklPkceTest {
         assertFalse(isSimklAuthorizationExpired(1_000L, 301_000L))
         assertTrue(isSimklAuthorizationExpired(1_000L, 301_001L))
         assertTrue(isSimklAuthorizationExpired(null, 1_000L))
-        assertTrue(isSimklAuthorizationExpired(2_000L, 1_000L))
+    }
+
+    @Test
+    fun `backwards clock movement does not expire a pending authorization`() {
+        // The device clock jumping back (or a start timestamp recorded
+        // ahead of the current clock) means no time has elapsed against
+        // the pending flow yet — it must survive.
+        assertFalse(isSimklAuthorizationExpired(2_000L, 1_000L))
+        assertFalse(isSimklAuthorizationExpired(2_000L, 2_000L))
+    }
+
+    @Test
+    fun `oauth error callbacks parse as invalid only with a state`() {
+        assertEquals(
+            SimklAuthCallback.Invalid(state = "b"),
+            parseSimklAuthCallback(
+                "nuvio://auth/simkl?error=access_denied&state=b",
+                "nuvio://auth/simkl",
+            ),
+        )
+        // An error without a state cannot be tied to the pending flow.
+        assertIs<SimklAuthCallback.NotSimkl>(
+            parseSimklAuthCallback(
+                "nuvio://auth/simkl?error=access_denied",
+                "nuvio://auth/simkl",
+            ),
+        )
+        // Errors on other routes are not Simkl callbacks at all.
+        assertIs<SimklAuthCallback.NotSimkl>(
+            parseSimklAuthCallback(
+                "nuvio://auth/trakt?error=access_denied&state=b",
+                "nuvio://auth/simkl",
+            ),
+        )
+        // A blank error parameter is not an error callback.
+        assertEquals(
+            SimklAuthCallback.AuthorizationCode(code = "a", state = "b"),
+            parseSimklAuthCallback(
+                "nuvio://auth/simkl?error=&code=a&state=b",
+                "nuvio://auth/simkl",
+            ),
+        )
     }
 }

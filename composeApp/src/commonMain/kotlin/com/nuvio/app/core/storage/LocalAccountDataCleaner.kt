@@ -92,6 +92,28 @@ internal object LocalAccountDataCleaner {
     }
 
     /**
+     * Purges every local store keyed by [profileId] when a profile is
+     * deleted. Profile indices are recycled by the next created profile, so
+     * anything left behind would be inherited by that unrelated profile:
+     * tracking-provider credentials and sync snapshots (via
+     * [TrackingProviderRegistry.removeStoredProfiles]), the scrobble outbox,
+     * [ProfileSettingsSync]'s pending-push marker for the profile (keyed by
+     * index inside an account-scoped payload, so the sweep cannot reach it),
+     * and — via the platform sweep — every persisted key the storage layer
+     * scoped to the profile (`ProfileScopedKey` suffix), including watched
+     * and watch-progress payloads, installed addons, downloads metadata and
+     * per-profile settings. Server-side profile data is the caller's job
+     * (the `sync_delete_profile_data` RPC); this is the local half.
+     */
+    fun purgeStoredProfile(profileId: Int) {
+        ensureTrackingProvidersRegistered()
+        TrackingProviderRegistry.removeStoredProfiles(listOf(profileId))
+        TrackingScrobbleOutboxStorage.removeProfile(profileId)
+        ProfileSettingsSync.removeProfile(profileId)
+        PlatformLocalAccountDataCleaner.removeProfile(profileId)
+    }
+
+    /**
      * Clears only [ProfileSettingsSync]'s account-scoped sync state: its
      * pending-push markers in memory and in persisted storage, plus the
      * account generation bump that invalidates markers recorded before the
@@ -115,4 +137,10 @@ internal object LocalAccountDataCleaner {
 
 internal expect object PlatformLocalAccountDataCleaner {
     fun wipe()
+
+    /**
+     * Removes every persisted key scoped to [profileId] across all platform
+     * stores, without touching other profiles' keys or unscoped keys.
+     */
+    fun removeProfile(profileId: Int)
 }

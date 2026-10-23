@@ -1,11 +1,11 @@
 package com.nuvio.app.features.library
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material3.Icon
@@ -17,10 +17,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.home.OfflineHomeRepository
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.offline_home_toggle_label
+import org.jetbrains.compose.resources.stringResource
 
 /**
  * Toggle for the offline homepage, sitting at the right end of the Library
@@ -57,7 +61,12 @@ internal fun OfflineHomeToggle(
         modifier = modifier
             .clip(tokens.shapes.compactCard)
             .background(background)
-            .clickable {
+            .toggleable(
+                value = isActive,
+                role = Role.Switch,
+            ) {
+                // The repository owns the effective state (connectivity can
+                // flip it too), so ignore the requested value and toggle.
                 OfflineHomeRepository.toggle()
             }
             .padding(horizontal = NuvioTokens.Space.s12, vertical = tokens.components.chipVerticalPadding),
@@ -71,7 +80,7 @@ internal fun OfflineHomeToggle(
             tint = contentColor,
         )
         Text(
-            text = "Offline",
+            text = stringResource(Res.string.offline_home_toggle_label),
             style = MaterialTheme.typography.labelLarge,
             color = contentColor,
             maxLines = 1,

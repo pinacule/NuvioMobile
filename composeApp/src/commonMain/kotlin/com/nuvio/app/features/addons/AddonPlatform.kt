@@ -8,6 +8,14 @@ internal expect object AddonStorage {
     /** One-time migration flag: true once the pre-installed default addons were seeded. */
     fun loadPreinstalledAddonsSeeded(profileId: Int): Boolean
     fun savePreinstalledAddonsSeeded(profileId: Int, seeded: Boolean)
+    /**
+     * Opaque per-profile addons sync bookkeeping (JSON owned by
+     * AddonRepository: base revision, pending-push flag, last
+     * server-acknowledged list). Persisted so a failed push is still
+     * known-dirty after a process restart.
+     */
+    fun loadAddonSyncState(profileId: Int): String?
+    fun saveAddonSyncState(profileId: Int, payload: String?)
 }
 
 data class RawHttpResponse(

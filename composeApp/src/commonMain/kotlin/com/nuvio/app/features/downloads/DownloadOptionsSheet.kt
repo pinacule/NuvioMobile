@@ -66,6 +66,7 @@ import nuvio.composeapp.generated.resources.downloads_options_close
 import nuvio.composeapp.generated.resources.downloads_options_load_failed
 import nuvio.composeapp.generated.resources.downloads_options_no_streams
 import nuvio.composeapp.generated.resources.downloads_options_quality
+import nuvio.composeapp.generated.resources.downloads_options_scope_custom
 import nuvio.composeapp.generated.resources.downloads_options_scope_next_episodes
 import nuvio.composeapp.generated.resources.downloads_options_scope_rest_of_season
 import nuvio.composeapp.generated.resources.downloads_options_title
@@ -74,6 +75,8 @@ import nuvio.composeapp.generated.resources.season_download_no_episodes
 import nuvio.composeapp.generated.resources.season_download_nothing_new
 import nuvio.composeapp.generated.resources.season_download_queued
 import nuvio.composeapp.generated.resources.season_download_queued_missing
+import nuvio.composeapp.generated.resources.season_download_queued_missing_quality
+import nuvio.composeapp.generated.resources.season_download_queued_quality
 import nuvio.composeapp.generated.resources.season_download_started
 import nuvio.composeapp.generated.resources.season_download_unsupported
 import org.jetbrains.compose.resources.getString
@@ -203,7 +206,7 @@ fun PosterDownloadCoordinator(
             NuvioToastController.show(if (anythingToDownload) nothingNewText else noEpisodesText)
             return
         }
-        // Dub over sub, always: with the dub preference on, an English-audio release at any quality wins; otherwise the chosen quality applies.
+        // Dub over sub, always: with the dub preference on, an English-audio release wins — at the chosen quality first, the closest tier as fallback; otherwise the chosen quality applies.
         runCatching { PlayerSettingsRepository.ensureLoaded() }
         val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
             PlayerSettingsRepository.uiState.value.preferredAudioLanguage,
@@ -262,12 +265,22 @@ fun PosterDownloadCoordinator(
                         result.missingEpisodes.isEmpty() && !result.missingMovie ->
                         movieQueuedText
                     result.missingEpisodes.isEmpty() ->
-                        getString(Res.string.season_download_queued, result.queued)
-                    else -> getString(
-                        Res.string.season_download_queued_missing,
-                        result.queued,
-                        result.missingEpisodes.joinToString(", ") { "E$it" },
-                    )
+                        // Disclose the quality actually queued: episodes may
+                        // have landed at a different tier than picked.
+                        result.qualityLabel?.let { quality ->
+                            getString(Res.string.season_download_queued_quality, result.queued, quality)
+                        } ?: getString(Res.string.season_download_queued, result.queued)
+                    else -> {
+                        val missing = result.missingEpisodes.joinToString(", ") { "E$it" }
+                        result.qualityLabel?.let { quality ->
+                            getString(
+                                Res.string.season_download_queued_missing_quality,
+                                result.queued,
+                                missing,
+                                quality,
+                            )
+                        } ?: getString(Res.string.season_download_queued_missing, result.queued, missing)
+                    }
                 },
             )
         }
@@ -481,7 +494,7 @@ private fun DownloadOptionsContent(
                             )
                         }
                     DownloadOptionChip(
-                        label = "Custom",
+                        label = stringResource(Res.string.downloads_options_scope_custom),
                         selected = state.customMode,
                         onClick = { onStateChange(state.copy(customMode = true)) },
                     )

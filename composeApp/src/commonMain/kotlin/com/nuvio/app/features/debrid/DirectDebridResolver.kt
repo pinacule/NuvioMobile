@@ -95,6 +95,22 @@ object DirectDebridPlaybackResolver {
             ?.let { result -> stream.withResolvedDebridUrl(result) }
     }
 
+    /**
+     * Drops every cached resolve that produced [url] — e.g. a URL that just
+     * failed playback. Without this, the 15-minute success cache keeps
+     * handing the dead URL back on every retry/reopen until it ages out;
+     * with it, the next resolve asks the provider for a fresh URL.
+     */
+    suspend fun invalidateCachedResolveForUrl(url: String) {
+        if (url.isBlank()) return
+        mutex.withLock {
+            val staleKeys = resolvedCache.entries
+                .filter { entry -> entry.value.result.url == url }
+                .map { entry -> entry.key }
+            staleKeys.forEach { key -> resolvedCache.remove(key) }
+        }
+    }
+
     private suspend fun getCachedResult(cacheKey: String): DirectDebridResolveResult.Success? =
         mutex.withLock { getCachedResultLocked(cacheKey) }
 

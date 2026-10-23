@@ -4,4 +4,8 @@ internal actual object PlatformLocalAccountDataCleaner {
     actual fun wipe() {
         DesktopPreferences.clearAll()
     }
+
+    actual fun removeProfile(profileId: Int) {
+        DesktopPreferences.removeProfileKeys(profileId)
+    }
 }

@@ -72,6 +72,22 @@ internal val torrentDownloadHttpClient: OkHttpClient = downloadHttpClient.newBui
 internal class TorrentDownloadException(message: String) : Exception(message)
 
 /**
+ * The swarm made no progress for the whole stall window. Unlike
+ * [TorrentDownloadException] this is RECOVERABLE: the scheduler retries the
+ * download within its recovery budget and, budget permitting, first re-picks
+ * a different torrent (see refreshTorrentDownloadSource), so a single dead
+ * torrent no longer fails the download terminally. Deliberately NOT a
+ * [TorrentDownloadException] subclass: that class's catch marks the transfer
+ * finished and evicts the torrent from the engine, while a stalled torrent
+ * stays warm for the retry.
+ */
+internal class TorrentDownloadStalledException(
+    /** The stalled torrent's info hash, so the re-pick can exclude it. */
+    val infoHash: String,
+    message: String,
+) : Exception(message)
+
+/**
  * Budget for re-preparing a stale loopback stream during one torrent download run: a
  * [DownloadRecoveryBudget] that counts CONSECUTIVE refreshes without progress, not refreshes
  * over the whole run. A stream that expires repeatedly at well-spaced points of a long download
@@ -153,7 +169,7 @@ internal suspend fun transferTorrentDownload(
                     }
                 }
             }
-            val swarm = launch { sampleSwarm(item.id, attempt, activeEngine, writtenBytes) }
+            val swarm = launch { sampleSwarm(item.id, attempt, activeEngine, writtenBytes, infoHash) }
             try {
                 // Serialized app-wide (see NuvioEngineHost.withPrepareStreamLock):
                 // the native engine fails a second concurrent preparation with
@@ -316,6 +332,7 @@ private suspend fun sampleSwarm(
     attempt: Any,
     engine: NuvioEngine,
     writtenBytes: AtomicLong,
+    infoHash: String,
 ) {
     var lastBytes = writtenBytes.get()
     var lastSampleAt = SystemClock.elapsedRealtime()
@@ -340,7 +357,7 @@ private suspend fun sampleSwarm(
         val speed = windowBytes * 1_000L / windowMs
         TorrentDownloadSwarmRepository.publish(downloadId, swarmFrom(engine, speed), attempt)
         if (now - lastProgressAt >= STALL_TIMEOUT_MS) {
-            throw TorrentDownloadException(getString(Res.string.downloads_torrent_stalled))
+            throw TorrentDownloadStalledException(infoHash, getString(Res.string.downloads_torrent_stalled))
         }
     }
 }

@@ -18,8 +18,9 @@ import com.nuvio.app.features.downloads.DownloadItem
  * filterContinueWatchingForOfflineHome): ids are compared trimmed, and the
  * two download kinds validate different item kinds — an episode download
  * (season and episode set) only validates its series, a movie download (no
- * coordinates at all) only validates a movie item. An episode record must
- * never keep a movie visible just because the ids coincide, and vice versa.
+ * coordinates at all, parent type "movie") only validates a movie item. An
+ * episode record must never keep a movie visible just because the ids
+ * coincide, and vice versa.
  */
 internal fun filterLibrarySectionsForOfflineHome(
     sections: List<LibrarySection>,
@@ -30,7 +31,10 @@ internal fun filterLibrarySectionsForOfflineHome(
         .filter { download -> download.seasonNumber != null && download.episodeNumber != null }
         .mapTo(mutableSetOf()) { download -> download.parentMetaId.trim() }
     val downloadedMovieIds = downloads
-        .filter { download -> download.seasonNumber == null && download.episodeNumber == null }
+        .filter { download ->
+            download.seasonNumber == null && download.episodeNumber == null &&
+                download.parentMetaType.equals("movie", ignoreCase = true)
+        }
         .mapTo(mutableSetOf()) { download -> download.parentMetaId.trim() }
     if (downloadedSeriesIds.isEmpty() && downloadedMovieIds.isEmpty()) return emptyList()
 

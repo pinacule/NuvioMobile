@@ -32,6 +32,7 @@ actual object AddonStorage {
     private const val addonUrlsKey = "installed_manifest_urls"
     private const val addonEnabledStatesKey = "installed_manifest_enabled_states"
     private const val preinstalledSeededKey = "preinstalled_addons_seeded"
+    private const val addonSyncStateKey = "addons_sync_state"
 
     private var preferences: SharedPreferences? = null
 
@@ -80,6 +81,19 @@ actual object AddonStorage {
             ?.edit()
             ?.putBoolean("${preinstalledSeededKey}_$profileId", seeded)
             ?.apply()
+    }
+
+    actual fun loadAddonSyncState(profileId: Int): String? =
+        preferences?.getString("${addonSyncStateKey}_$profileId", null)
+
+    actual fun saveAddonSyncState(profileId: Int, payload: String?) {
+        val editor = preferences?.edit() ?: return
+        if (payload == null) {
+            editor.remove("${addonSyncStateKey}_$profileId")
+        } else {
+            editor.putString("${addonSyncStateKey}_$profileId", payload)
+        }
+        editor.apply()
     }
 }
 

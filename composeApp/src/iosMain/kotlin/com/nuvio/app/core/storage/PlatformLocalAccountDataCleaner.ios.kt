@@ -107,4 +107,26 @@ internal actual object PlatformLocalAccountDataCleaner {
             NSFileManager.defaultManager.removeItemAtPath(membershipPath, null)
         }
     }
+
+    actual fun removeProfile(profileId: Int) {
+        val defaults = NSUserDefaults.standardUserDefaults
+        // Per-profile keys carry the profile id as a "_<profileId>" suffix
+        // (the ProfileScopedKey convention); plugin scraper settings embed
+        // it mid-key ("settings_<profileId>_<scraperId>").
+        val suffix = "_$profileId"
+        val scraperSettingsPrefix = "settings_${profileId}_"
+        for (key in defaults.dictionaryRepresentation().keys) {
+            val keyString = key as? String ?: continue
+            if (keyString.endsWith(suffix) || keyString.startsWith(scraperSettingsPrefix)) {
+                defaults.removeObjectForKey(keyString)
+            }
+        }
+
+        // Plugin scraper code lives in a per-profile directory.
+        val scraperProfilePath =
+            "${NSHomeDirectory()}/Library/Application Support/nuvio_plugin_scrapers/$profileId"
+        if (NSFileManager.defaultManager.fileExistsAtPath(scraperProfilePath)) {
+            NSFileManager.defaultManager.removeItemAtPath(scraperProfilePath, null)
+        }
+    }
 }

@@ -69,6 +69,7 @@ internal fun TabletStreamsLayout(
     resumeProgressFraction: Float?,
     onStreamSelected: (stream: StreamItem, resumePositionMs: Long?, resumeProgressFraction: Float?) -> Unit,
     onStreamLongPress: (StreamItem) -> Unit,
+    onFilterSelected: (String?) -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -198,7 +199,7 @@ internal fun TabletStreamsLayout(
                         ProviderFilterRow(
                             groups = uiState.groups,
                             selectedFilter = uiState.selectedFilter,
-                            onFilterSelected = { addonId -> StreamsRepository.selectFilter(addonId) },
+                            onFilterSelected = onFilterSelected,
                             onRefresh = onRefresh,
                         )
 

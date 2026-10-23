@@ -140,7 +140,10 @@ actual object P2pStreamingEngine {
      * [NuvioEngineHost]. The host counts holds per owner (R-8), but playback is
      * a session, not a counted lease: [ensureEngine] runs on every start and
      * cache clear while [releasePlaybackEngine] runs once per shutdown, so
-     * re-acquires are balanced immediately to keep the net hold at one.
+     * re-acquires are balanced immediately to keep the net hold at one. A cache
+     * clear that is the call which took the lease releases it again on the way
+     * out (see clearCache): it has no shutdown of its own, so without that
+     * balance the lease would pin the engine for the rest of the process.
      */
     @Volatile
     private var playbackEngineLeaseHeld = false
@@ -167,18 +170,34 @@ actual object P2pStreamingEngine {
             }
             _cacheState.value = _cacheState.value.copy(isClearing = true)
             try {
-                val activeEngine = ensureEngine()
-                val before = activeEngine.stats.value
-                activeEngine.reclaimDiskCache(0L)
-                delay(DIAGNOSTIC_SAMPLE_INTERVAL_MS + 100L)
-                val after = activeEngine.stats.value
-                updateCacheState(after.diskCacheUsedBytes, after.diskCacheProtectedBytes)
-                P2pCacheClearResult(
-                    reclaimedBytes = (after.diskCacheReclaimedBytes - before.diskCacheReclaimedBytes)
-                        .coerceAtLeast(0L),
-                    remainingBytes = after.diskCacheUsedBytes,
-                    protectedBytes = after.diskCacheProtectedBytes,
-                )
+                // ensureEngine() takes this session's playback lease when it
+                // is not already held, and playback releases that lease from
+                // its own shutdown. A cache clear launched from Settings has
+                // no shutdown coming, so when this call is the one that took
+                // the lease, balance it back before returning — otherwise the
+                // lease (and with it the engine, its peer connections and
+                // seeding) stays alive for the rest of the process instead of
+                // idling out. When the lease was already held, playback still
+                // owns it and it is left exactly as it was.
+                val tookPlaybackLease = !playbackEngineLeaseHeld
+                try {
+                    val activeEngine = ensureEngine()
+                    val before = activeEngine.stats.value
+                    activeEngine.reclaimDiskCache(0L)
+                    delay(DIAGNOSTIC_SAMPLE_INTERVAL_MS + 100L)
+                    val after = activeEngine.stats.value
+                    updateCacheState(after.diskCacheUsedBytes, after.diskCacheProtectedBytes)
+                    P2pCacheClearResult(
+                        reclaimedBytes = (after.diskCacheReclaimedBytes - before.diskCacheReclaimedBytes)
+                            .coerceAtLeast(0L),
+                        remainingBytes = after.diskCacheUsedBytes,
+                        protectedBytes = after.diskCacheProtectedBytes,
+                    )
+                } finally {
+                    if (tookPlaybackLease && playbackEngineLeaseHeld) {
+                        releasePlaybackEngine()
+                    }
+                }
             } finally {
                 _cacheState.value = _cacheState.value.copy(isClearing = false)
             }

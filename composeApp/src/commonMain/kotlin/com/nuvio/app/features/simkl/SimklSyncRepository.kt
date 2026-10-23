@@ -111,6 +111,8 @@ object SimklSyncRepository : TrackingProfileStore {
                         lastCheckedAtEpochMs = current.snapshot.lastCheckedAtEpochMs,
                         nowEpochMs = nowEpochMs,
                         hasError = current.errorMessage != null,
+                        consecutiveSyncFailures = current.snapshot.consecutiveSyncFailures,
+                        lastSyncFailureAtEpochMs = current.snapshot.lastSyncFailureAtEpochMs,
                     )
                 SimklWatchDiagnostics.logRefreshDecision(
                     requestId = requestId,
@@ -155,9 +157,18 @@ object SimklSyncRepository : TrackingProfileStore {
         } catch (error: Throwable) {
             log.w { "Simkl sync failed: ${error.message}" }
             if (generation == profileGeneration && profileId == ProfileRepository.activeProfileId) {
+                // Record the failure on the snapshot (its library data
+                // is untouched) and persist it, so the automatic-refresh
+                // backoff in SimklRefreshPolicy survives restarts.
+                val failedSnapshot = previous.snapshot.copy(
+                    consecutiveSyncFailures = previous.snapshot.consecutiveSyncFailures + 1,
+                    lastSyncFailureAtEpochMs = SimklPlatformClock.nowEpochMs(),
+                )
+                SimklSyncStorage.savePayload(json.encodeToString(failedSnapshot))
                 _state.value = previous.copy(
                     isLoading = false,
                     hasLoaded = true,
+                    snapshot = failedSnapshot,
                     errorMessage = error.message ?: "Unable to sync Simkl",
                 )
             }
@@ -171,12 +182,18 @@ object SimklSyncRepository : TrackingProfileStore {
         if (generation != profileGeneration || profileId != ProfileRepository.activeProfileId) {
             return@withLock
         }
-        SimklSyncStorage.savePayload(json.encodeToString(result))
+        // The engine's delta path copies the incoming snapshot, failure
+        // bookkeeping included; a success always clears it.
+        val committed = result.copy(
+            consecutiveSyncFailures = 0,
+            lastSyncFailureAtEpochMs = null,
+        )
+        SimklSyncStorage.savePayload(json.encodeToString(committed))
         _state.value = SimklSyncUiState(
-            snapshot = result,
+            snapshot = committed,
             hasLoaded = true,
         )
-        SimklWatchDiagnostics.logSnapshot(stage = "network-commit", snapshot = result)
+        SimklWatchDiagnostics.logSnapshot(stage = "network-commit", snapshot = committed)
     }
 
     internal suspend fun commitPlaybackRemoval(sessionIds: Set<Long>) {
@@ -249,6 +266,7 @@ object SimklSyncRepository : TrackingProfileStore {
         hasLoaded = false
         _state.value = SimklSyncUiState()
         SimklSyncStorage.savePayload("")
+        SimklAnimeWatchedFallback.clearAllOptimisticRemovals()
     }
 
     /**
@@ -263,5 +281,6 @@ object SimklSyncRepository : TrackingProfileStore {
 
     override fun removeStoredProfile(profileId: Int) {
         SimklSyncStorage.removeProfile(profileId)
+        SimklAnimeWatchedFallback.forgetOptimisticRemovals(profileId)
     }
 }

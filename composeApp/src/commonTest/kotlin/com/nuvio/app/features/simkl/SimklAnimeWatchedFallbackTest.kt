@@ -58,6 +58,30 @@ class SimklAnimeWatchedFallbackTest {
     }
 
     @Test
+    fun `optimistic removals are scoped per profile`() {
+        val profileA = 987_001
+        val profileB = 987_002
+        val scopedVideoId = "mal:515151:3"
+        try {
+            SimklAnimeWatchedFallback.markOptimisticallyRemovedForProfile(profileA, scopedVideoId)
+
+            // Profile B never unmarked this episode: its blacklist is empty
+            // and reconciliation against B's snapshots leaves A's set alone.
+            assertTrue(scopedVideoId in SimklAnimeWatchedFallback.optimisticallyRemovedVideoIdsForProfile(profileA))
+            assertFalse(scopedVideoId in SimklAnimeWatchedFallback.optimisticallyRemovedVideoIdsForProfile(profileB))
+            SimklAnimeWatchedFallback.clearOptimisticRemovalsForProfile(profileB, SimklSyncSnapshot())
+            assertTrue(scopedVideoId in SimklAnimeWatchedFallback.optimisticallyRemovedVideoIdsForProfile(profileA))
+
+            // A's confirming snapshot clears only A's entry.
+            SimklAnimeWatchedFallback.clearOptimisticRemovalsForProfile(profileA, SimklSyncSnapshot())
+            assertFalse(scopedVideoId in SimklAnimeWatchedFallback.optimisticallyRemovedVideoIdsForProfile(profileA))
+        } finally {
+            SimklAnimeWatchedFallback.forgetOptimisticRemovals(profileA)
+            SimklAnimeWatchedFallback.forgetOptimisticRemovals(profileB)
+        }
+    }
+
+    @Test
     fun `optimistic removal is cleared by a snapshot without the entry`() {
         SimklAnimeWatchedFallback.markOptimisticallyRemoved(videoId)
         try {

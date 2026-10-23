@@ -1,6 +1,8 @@
 package com.nuvio.app.features.simkl
 
 import com.nuvio.app.features.addons.RawHttpResponse
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -13,14 +15,51 @@ class SimklApiClientTest {
     fun `response classification retries only documented transient statuses`() {
         assertEquals(SimklResponseAction.SUCCESS, classifySimklResponse(200))
         assertEquals(SimklResponseAction.REAUTHENTICATE, classifySimklResponse(401))
+        // Transient set matches the mutation layer's queueable failures:
+        // 408, 429, and the whole 5xx range (504 included).
+        assertEquals(SimklResponseAction.RETRY, classifySimklResponse(408))
         assertEquals(SimklResponseAction.RETRY, classifySimklResponse(429))
         assertEquals(SimklResponseAction.RETRY, classifySimklResponse(500))
+        assertEquals(SimklResponseAction.RETRY, classifySimklResponse(501))
         assertEquals(SimklResponseAction.RETRY, classifySimklResponse(502))
         assertEquals(SimklResponseAction.RETRY, classifySimklResponse(503))
+        assertEquals(SimklResponseAction.RETRY, classifySimklResponse(504))
+        assertEquals(SimklResponseAction.RETRY, classifySimklResponse(599))
         assertEquals(SimklResponseAction.FAIL, classifySimklResponse(400))
+        assertEquals(SimklResponseAction.FAIL, classifySimklResponse(404))
         assertEquals(SimklResponseAction.FAIL, classifySimklResponse(409))
         assertEquals(SimklResponseAction.SOFT_SUCCESS, classifySimklResponse(409, true))
         assertEquals(SimklResponseAction.FAIL, classifySimklResponse(412))
+    }
+
+    @Test
+    fun `retry after accepts the http date form`() {
+        // Wed, 21 Oct 2015 07:28:00 GMT == 1_445_412_480_000 ms.
+        val now = 1_445_412_480_000L
+        assertEquals(30_000L, parseRetryAfterMs("Wed, 21 Oct 2015 07:28:30 GMT", now))
+        assertEquals(0L, parseRetryAfterMs("Wed, 21 Oct 2015 07:27:30 GMT", now))
+        assertEquals(45_000L, parseRetryAfterMs("45", now))
+        assertEquals(null, parseRetryAfterMs("not-a-date", now))
+        assertEquals(null, parseRetryAfterMs(null, now))
+        // The date form feeds the same max(exponential, retryAfter) rule.
+        assertEquals(
+            30_000L,
+            retryDelayMs(
+                attempt = 0,
+                retryAfterHeader = "Wed, 21 Oct 2015 07:28:30 GMT",
+                jitterMs = 0L,
+                nowEpochMs = now,
+            ),
+        )
+        assertEquals(
+            1_000L,
+            retryDelayMs(
+                attempt = 0,
+                retryAfterHeader = "Wed, 21 Oct 2015 07:27:30 GMT",
+                jitterMs = 0L,
+                nowEpochMs = now,
+            ),
+        )
     }
 
     @Test
@@ -289,6 +328,61 @@ class SimklApiClientTest {
         }
         assertTrue(unauthorizedHarness.wasUnauthorized)
         assertEquals(1, unauthorizedEngine.requests.size)
+    }
+
+    @Test
+    fun `a request in retry backoff does not stall unrelated requests`() = runBlocking {
+        val engine = object : SimklHttpEngine {
+            private val counts = mutableMapOf<String, Int>()
+
+            override suspend fun execute(
+                method: String,
+                url: String,
+                headers: Map<String, String>,
+                body: String,
+            ): RawHttpResponse {
+                val key = if ("/flaky" in url) "flaky" else "steady"
+                val count = (counts[key] ?: 0) + 1
+                counts[key] = count
+                return if (key == "flaky" && count == 1) response(503) else response(200)
+            }
+        }
+        var now = 0L
+        var sleepCalls = 0
+        val backoffEntered = CompletableDeferred<Unit>()
+        val releaseBackoff = CompletableDeferred<Unit>()
+        val client = SimklApiClient(
+            engine = engine,
+            accessToken = { "token" },
+            onUnauthorized = {},
+            nowEpochMs = { now },
+            sleep = { delayMs ->
+                sleepCalls += 1
+                now += delayMs
+                if (sleepCalls == 1) {
+                    // Park the first caller (the flaky request's retry
+                    // backoff) until the test releases it.
+                    backoffEntered.complete(Unit)
+                    releaseBackoff.await()
+                }
+            },
+            retryJitterMs = { 0L },
+        )
+
+        val flaky = async {
+            client.execute(SimklApiRequest(SimklHttpMethod.GET, "/flaky"))
+        }
+        backoffEntered.await()
+
+        // The flaky request is parked in its backoff sleep; an unrelated
+        // request must still complete. (Before the pacing rework, one
+        // mutex was held across every sleep, so this call never started
+        // until the backoff — and all retries — had finished.)
+        val steady = client.execute(SimklApiRequest(SimklHttpMethod.GET, "/steady"))
+        assertEquals(200, steady.status)
+
+        releaseBackoff.complete(Unit)
+        assertEquals(200, flaky.await().status)
     }
 
     @Test

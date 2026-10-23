@@ -148,15 +148,25 @@ internal object EpisodeDownloadPlanner {
     }
 
     /**
-     * Best stream for a download: when [preferEnglishAudio], an English-audio
-     * release wins across ALL qualities (dub over sub, always — a 480p dub beats
-     * a 1080p sub, as in playback's [AdaptiveStreamPicker.pickBestSeeded]). The
-     * ordering among dubs is the download path's own, though: torrent streams
-     * first (they carry the P2P path the download manager prefers), then
-     * best-seeded, with quality ignored — unlike pickBestSeeded, which prefers
-     * the dub closest to the target quality. Only when no dub exists anywhere
-     * does the pick fall back to the best stream at [quality]: English-audio
-     * first, then torrent, then best-seeded. Addon ordering breaks ties.
+     * Best stream for a download at the user's requested [quality].
+     *
+     * The requested quality is the PRIMARY key — also for the dub rule.
+     * When [preferEnglishAudio], an English-audio release still beats any
+     * non-English one (dub over sub, always — a 480p dub beats a 1080p sub),
+     * but among dubs the requested tier wins first; a dub at another tier is
+     * only the fallback when NO dub exists at the requested tier, and then
+     * the CLOSEST tier (ties to the lower) supplies it — never simply the
+     * best-seeded dub across all tiers. (Playback's pickBestSeeded ranks
+     * dubs across qualities; downloads deliberately do not: the user picked
+     * this quality explicitly, for files that persist.) Only when no dub
+     * exists anywhere does the pick fall back to the best stream at
+     * [quality]: English-audio first, then torrent, then best-seeded.
+     * Addon ordering breaks ties.
+     *
+     * Known-oversize candidates (past their tier's sane ceiling, see
+     * [AdaptiveStreamPicker.isKnownOversize]) are deprioritized in every
+     * pool; a pool that is entirely oversize yields its least-oversize
+     * member instead of nothing.
      *
      * Last resort, mirroring [SeasonDownloads.pickMatchingEpisodeStream]:
      * when NO candidate's resolution parses, no quality can be resolved at
@@ -173,10 +183,7 @@ internal object EpisodeDownloadPlanner {
         if (preferEnglishAudio) {
             val english = streams.filter { AdaptiveStreamPicker.hasEnglishAudio(it) }
             if (english.isNotEmpty()) {
-                return english.sortedWith(
-                    compareBy<StreamItem> { if (it.isTorrentStream) 0 else 1 }
-                        .thenByDescending { AdaptiveStreamPicker.parseSeeders(it) ?: -1 },
-                ).firstOrNull()
+                pickEnglishForDownload(english, quality)?.let { return it }
             }
         }
         val exactPool = streams.filter { it.streamResolution() == quality }
@@ -185,8 +192,50 @@ internal object EpisodeDownloadPlanner {
             streams.none { it.streamResolution() != null } -> streams
             else -> return null
         }
-        return pool.sortedWith(
-            compareBy<StreamItem> { if (preferEnglishAudio && AdaptiveStreamPicker.hasEnglishAudio(it)) 0 else 1 }
+        return rankDownloadPool(pool, quality, englishFirst = preferEnglishAudio)
+    }
+
+    /**
+     * The dub pick for downloads: dubs at [quality] first; when none exist
+     * there, dubs at the closest other tier (ties to the lower tier); dubs
+     * whose resolution cannot be parsed last. Null only when [english] is
+     * empty (the caller guarantees it is not).
+     */
+    private fun pickEnglishForDownload(english: List<StreamItem>, quality: String): StreamItem? {
+        val atRequested = english.filter { it.streamResolution() == quality }
+        if (atRequested.isNotEmpty()) return rankDownloadPool(atRequested, quality, englishFirst = false)
+        var remainingTiers = english.mapNotNull { it.streamResolution() }.distinct()
+        while (remainingTiers.isNotEmpty()) {
+            val tier = closestQuality(remainingTiers, quality) ?: break
+            val tierPool = english.filter { it.streamResolution() == tier }
+            rankDownloadPool(tierPool, tier, englishFirst = false)?.let { return it }
+            remainingTiers = remainingTiers - tier
+        }
+        val unparseable = english.filter { it.streamResolution() == null }
+        if (unparseable.isNotEmpty()) return rankDownloadPool(unparseable, quality, englishFirst = false)
+        return null
+    }
+
+    /**
+     * Ranks one download pool at [tierQuality]: known-oversize candidates
+     * are dropped while any sane one remains, and an entirely oversize pool
+     * yields its least-oversize member. Otherwise English-audio first (only
+     * with [englishFirst] — dub pools are English by construction), torrent
+     * streams first (they carry the P2P path the download manager prefers),
+     * then best-seeded; addon ordering breaks ties.
+     */
+    private fun rankDownloadPool(
+        pool: List<StreamItem>,
+        tierQuality: String,
+        englishFirst: Boolean,
+    ): StreamItem? {
+        if (pool.isEmpty()) return null
+        val sane = pool.filterNot { AdaptiveStreamPicker.isKnownOversize(it, tierQuality) }
+        if (sane.isEmpty()) return AdaptiveStreamPicker.pickLeastOversize(pool, tierQuality)
+        return sane.sortedWith(
+            compareBy<StreamItem> {
+                if (englishFirst && !AdaptiveStreamPicker.hasEnglishAudio(it)) 1 else 0
+            }
                 .thenByDescending { it.isTorrentStream }
                 .thenByDescending { AdaptiveStreamPicker.parseSeeders(it) ?: -1 },
         ).firstOrNull()

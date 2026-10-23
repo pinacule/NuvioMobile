@@ -323,6 +323,118 @@ class StreamAutoPlaySelectorTest {
     }
 
     @Test
+    fun `seeder floor drops a nearly dead first stream for a healthy later one`() {
+        // The selector otherwise keeps addon order: without the floor, the
+        // first-listed stream wins even at 2 seeders while a healthy stream
+        // sits further down the same list.
+        val dead = stream(
+            addonName = "AddonA",
+            url = "https://example.com/dead.m3u8",
+            name = "The Show 1080p \uD83D\uDC64 2",
+        )
+        val healthy = stream(
+            addonName = "AddonA",
+            url = "https://example.com/healthy.m3u8",
+            name = "The Show 1080p \uD83D\uDC64 400",
+        )
+
+        val selected = StreamAutoPlaySelector.selectAutoPlayStream(
+            streams = listOf(dead, healthy),
+            mode = StreamAutoPlayMode.FIRST_STREAM,
+            regexPattern = "",
+            source = StreamAutoPlaySource.ALL_SOURCES,
+            installedAddonNames = setOf("AddonA"),
+            selectedAddons = emptySet(),
+            selectedPlugins = emptySet(),
+        )
+
+        assertEquals(healthy, selected)
+    }
+
+    @Test
+    fun `seeder floor never picks nothing when every stream is below it`() {
+        val dead = stream(
+            addonName = "AddonA",
+            url = "https://example.com/dead.m3u8",
+            name = "The Show 1080p \uD83D\uDC64 2",
+        )
+        val weak = stream(
+            addonName = "AddonA",
+            url = "https://example.com/weak.m3u8",
+            name = "The Show 1080p \uD83D\uDC64 5",
+        )
+
+        val selected = StreamAutoPlaySelector.selectAutoPlayStream(
+            streams = listOf(dead, weak),
+            mode = StreamAutoPlayMode.FIRST_STREAM,
+            regexPattern = "",
+            source = StreamAutoPlaySource.ALL_SOURCES,
+            installedAddonNames = setOf("AddonA"),
+            selectedAddons = emptySet(),
+            selectedPlugins = emptySet(),
+        )
+
+        // The gate falls back to the ungated list: addon order is kept.
+        assertEquals(dead, selected)
+    }
+
+    @Test
+    fun `seeder floor treats unknown counts as neutral`() {
+        val dead = stream(
+            addonName = "AddonA",
+            url = "https://example.com/dead.m3u8",
+            name = "The Show 1080p \uD83D\uDC64 1",
+        )
+        val unknown = stream(
+            addonName = "AddonA",
+            url = "https://example.com/unknown.m3u8",
+            name = "The Show 1080p",
+        )
+
+        val selected = StreamAutoPlaySelector.selectAutoPlayStream(
+            streams = listOf(dead, unknown),
+            mode = StreamAutoPlayMode.FIRST_STREAM,
+            regexPattern = "",
+            source = StreamAutoPlaySource.ALL_SOURCES,
+            installedAddonNames = setOf("AddonA"),
+            selectedAddons = emptySet(),
+            selectedPlugins = emptySet(),
+        )
+
+        assertEquals(unknown, selected)
+    }
+
+    @Test
+    fun `seeder floor exempts the english dub like the hdr gate does`() {
+        // Dub over sub, always: a below-floor English dub still beats a
+        // healthy non-English stream (mirrors pickBestSeeded's recursion,
+        // where the floor never overrides the dub rule).
+        val japanese = stream(
+            addonName = "AddonA",
+            url = "https://example.com/jp.m3u8",
+            name = "The Show 1080p \uD83D\uDC64 900",
+        )
+        val englishDub = stream(
+            addonName = "AddonA",
+            url = "https://example.com/en.m3u8",
+            name = "The Show 1080p Dual Audio \uD83D\uDC64 3",
+        )
+
+        val selected = StreamAutoPlaySelector.selectAutoPlayStream(
+            streams = listOf(japanese, englishDub),
+            mode = StreamAutoPlayMode.FIRST_STREAM,
+            regexPattern = "",
+            source = StreamAutoPlaySource.ALL_SOURCES,
+            installedAddonNames = setOf("AddonA"),
+            selectedAddons = emptySet(),
+            selectedPlugins = emptySet(),
+            preferEnglishAudio = true,
+        )
+
+        assertEquals(englishDub, selected)
+    }
+
+    @Test
     fun `hdr gate still filters the low seeder hdr dub when dub preference is off`() {
         val japanese = stream(
             addonName = "AddonA",

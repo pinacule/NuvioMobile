@@ -503,7 +503,7 @@ object WatchedRepository {
             }
             return false
         }
-        val tombstonedServerItems = itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, pendingDeleteNuvioKeys, pendingDeleteProviderKeys ->
+        val (tombstonedServerItems, dirtyMarkItems) = itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, pendingDeleteNuvioKeys, pendingDeleteProviderKeys ->
             val items = source.providerId
                 ?.let { providerId -> providerItems[providerId]?.values.orEmpty() }
                 ?: nuvioItems.values
@@ -533,10 +533,16 @@ object WatchedRepository {
             // Server items the merge dropped solely because a tombstone is
             // still pending: the delete never landed, so it is retried below
             // with the full server copies.
-            serverItems.filter { serverItem ->
+            val tombstoned = serverItems.filter { serverItem ->
                 watchedItemKey(serverItem.type, serverItem.id, serverItem.season, serverItem.episode) in
                     merged.pendingDeleteKeys
             }
+            // Local items whose dirty keys survived the merge: the merge
+            // already acknowledged every key the server holds (by presence
+            // for providers, by freshness for Nuvio), so these are marks
+            // whose original push never landed — retried below.
+            val dirtyMarks = merged.items.filterKeys { key -> key in merged.dirtyKeys }.values.toList()
+            tombstoned to dirtyMarks
         }
         fullyWatchedSeriesKeys?.let { keys ->
             setFullyWatchedSeriesKeysForSource(source, keys)
@@ -560,6 +566,14 @@ object WatchedRepository {
                 profileId = profileId,
                 operationGeneration = operation.profileGeneration,
                 items = tombstonedServerItems,
+                source = source,
+            )
+        }
+        if (dirtyMarkItems.isNotEmpty() && isActiveOperation(operation)) {
+            retryPendingMarksForSource(
+                profileId = profileId,
+                operationGeneration = operation.profileGeneration,
+                items = dirtyMarkItems,
                 source = source,
             )
         }
@@ -587,6 +601,40 @@ object WatchedRepository {
         // Provider tombstones are not acknowledged here: provider delete
         // calls can swallow failures internally, so they are cleared by
         // absence at the next snapshot merge instead (mergeWatchedSnapshot).
+    }
+
+    /**
+     * Re-pushes watched marks whose original push never landed — the marks
+     * whose dirty keys survived a snapshot merge (or a delta pass). This is
+     * the marks counterpart of [retryPendingDeletesForSource]: without it a
+     * mark made while offline looked synced on this device forever but
+     * never reached the server or any other device.
+     */
+    private suspend fun retryPendingMarksForSource(
+        profileId: Int,
+        operationGeneration: Long,
+        items: Collection<WatchedItem>,
+        source: WatchProgressSource,
+    ) {
+        if (items.isEmpty()) return
+        log.i { "Re-pushing ${items.size} undelivered watched marks for source=$source profile=$profileId" }
+        val outcome = pushToTargetsForSource(
+            profileId = profileId,
+            items = items,
+            trackerHistorySync = WatchedTrackerHistorySync.Mirror,
+            source = source,
+        )
+        if (shouldAcknowledgeNuvioWatchedPush(source = source, outcome = outcome)) {
+            recordSuccessfulPush(
+                profileId = profileId,
+                operationGeneration = operationGeneration,
+                items = items,
+            )
+        }
+        // Provider dirty keys are not acknowledged here: provider push
+        // calls can swallow failures internally, so they are cleared by
+        // presence at the next snapshot merge instead (mergeWatchedSnapshot),
+        // mirroring provider delete tombstones above.
     }
 
     private suspend fun pullSupabaseDeltaFromServer(
@@ -660,6 +708,22 @@ object WatchedRepository {
         }
         if (changed) {
             persist()
+        }
+        // Delta events preserve strictly-fresher dirty locals and
+        // acknowledge the rest; any mark still dirty after the pass was
+        // never delivered, so re-push it like the snapshot path does.
+        val dirtyMarkItems = itemsStore.read { nuvioItems, _, dirtyNuvioKeys, _, _, _ ->
+            nuvioItems.values.filter { item ->
+                watchedItemKey(item.type, item.id, item.season, item.episode) in dirtyNuvioKeys
+            }
+        }
+        if (dirtyMarkItems.isNotEmpty()) {
+            retryPendingMarksForSource(
+                profileId = profileId,
+                operationGeneration = operation.profileGeneration,
+                items = dirtyMarkItems,
+                source = operation.sourceOperation.source,
+            )
         }
         return true
     }
@@ -943,9 +1007,15 @@ object WatchedRepository {
                         }
                     }
                 }
-                if (matchingKey == null && source.providerId != null) {
-                    // Provider sources still push a delete below for items
-                    // that exist only remotely, so tombstone that delete too.
+                if (matchingKey == null) {
+                    // The item exists only remotely (or under a key variant
+                    // the local store does not hold): a delete is still
+                    // pushed below, so tombstone it for every source. The
+                    // Nuvio source used to skip this, leaving its unmark
+                    // with no delete and no tombstone — a server-side copy
+                    // under a different key variant then resurrected the
+                    // watched state at the next snapshot merge, which honors
+                    // pendingDeleteNuvioKeys exactly like provider keys.
                     val key = watchedItemKey(
                         type = watchedItem.type,
                         id = watchedItem.id,
@@ -977,7 +1047,13 @@ object WatchedRepository {
             publish()
             persist()
             if (syncRemote) pushDeleteToServer(items = removedItems, source = source)
-        } else if (source.providerId != null) {
+        } else {
+            // Nothing was removed locally, but a tombstone may have been
+            // recorded above (or provider extra keys cleared): persist it so
+            // the unmark survives the next snapshot pull, and push the delete
+            // for the remotely-held copy. This tail used to run only for
+            // provider sources, which is why a Nuvio-source unmark of a
+            // not-locally-present item silently did nothing at all.
             if (removedExtraKeys || pendingDeletesChanged) {
                 publish()
                 persist()

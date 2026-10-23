@@ -28,11 +28,28 @@ class MdbListTrackingWrites(
         scrobble.scrobble(scope(profileId), action, event)
 
     override fun isConnectivityFailure(error: Throwable): Boolean =
-        super.isConnectivityFailure(error) ||
-            // MDBList wraps transport failures after exhausting retries.
-            (error is MdbListApiException && error.code == "transport_failure")
+        super.isConnectivityFailure(error) || isMdbListQueueableFailure(error)
 
     private fun scope(profileId: Int): MdbListAuthScope = sync.currentScope().also {
         if (it.profileId != profileId) throw CancellationException("MDBList profile changed")
     }
+}
+
+/**
+ * Whether an MDBList failure is transient enough that the scrobble
+ * coordinator / outbox should persist and replay it instead of dropping
+ * it — mirrors `isSimklQueueableFailure`. MDBList's client reports
+ * exhausted transport retries as code "transport_failure" and rate
+ * limiting as HTTP 429 / code "rate_limited"; those, plus 408 and 5xx,
+ * are queueable. Other 4xx are permanent (auth, validation, not found)
+ * and must not be queued. Before this classification existed, a
+ * rate-limited or server-errored MDBList scrobble surfaced as a plain
+ * failure the coordinator dropped — and during outbox replay the record
+ * was removed as if sent.
+ */
+internal fun isMdbListQueueableFailure(error: Throwable): Boolean {
+    if (error !is MdbListApiException) return false
+    if (error.code == "transport_failure" || error.code == "rate_limited") return true
+    val status = error.status ?: return false
+    return status == 408 || status == 429 || status in 500..599
 }

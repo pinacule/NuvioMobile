@@ -87,6 +87,39 @@ class AdaptiveStreamPickerTest {
     }
 
     @Test
+    fun parseSeeders_kAndMSuffixes() {
+        // Suffixed counts are decimal: "1.5K" = 1500, "1.5M" = 1,500,000.
+        assertEquals(1500, AdaptiveStreamPicker.parseSeeders(stream("x", "Release \uD83D\uDC64 1.5K")))
+        assertEquals(2000, AdaptiveStreamPicker.parseSeeders(stream("x", "Release 2K seeders")))
+        assertEquals(1_500_000, AdaptiveStreamPicker.parseSeeders(stream("x", "Release \uD83D\uDC65 1.5M")))
+        assertEquals(250, AdaptiveStreamPicker.parseSeeders(stream("x", "Release 0.25K seeders")))
+    }
+
+    @Test
+    fun parseSeeders_suffixMustNotBeAWordHead() {
+        // "500 MB" is a size, not 500M seeders: the plain count still parses.
+        assertEquals(500, AdaptiveStreamPicker.parseSeeders(stream("x", "Release \uD83D\uDC64 500 MB")))
+        // Plain thousands separators keep working in both spellings.
+        assertEquals(1500, AdaptiveStreamPicker.parseSeeders(stream("x", "Release \uD83D\uDC64 1,500")))
+        assertEquals(1500, AdaptiveStreamPicker.parseSeeders(stream("x", "Release 1.500 seeders")))
+    }
+
+    @Test
+    fun oversizeHelpersUseTheTierCeilings() {
+        val oversize720 = stream("Show 720p", "Release \uD83D\uDCBE 30 GB")
+        val sane720 = stream("Show 720p", "Release \uD83D\uDCBE 1.5 GB")
+        val unknownSize = stream("Show 720p", "Release")
+        assertTrue(AdaptiveStreamPicker.isKnownOversize(oversize720))
+        assertFalse(AdaptiveStreamPicker.isKnownOversize(sane720))
+        // Unknown size never counts as oversize.
+        assertFalse(AdaptiveStreamPicker.isKnownOversize(unknownSize))
+        // The least-oversize member wins the all-oversize fallback.
+        val lessOversize720 = stream("Show 720p", "Release \uD83D\uDCBE 3 GB")
+        assertEquals(lessOversize720, AdaptiveStreamPicker.pickLeastOversize(listOf(oversize720, lessOversize720), "720p"))
+        assertNull(AdaptiveStreamPicker.pickLeastOversize(listOf(sane720), "720p"))
+    }
+
+    @Test
     fun parseSizeBytes_gigabytes() {
         val s = stream("x", "\uD83D\uDC64 100 \uD83D\uDCBE 2.5 GB")
         assertEquals(2_684_354_560L, AdaptiveStreamPicker.parseSizeBytes(s))
@@ -110,6 +143,7 @@ class AdaptiveStreamPickerTest {
         assertEquals("1080p", stream("Show.S01E01.1080p.WEB-DL").streamResolution())
         assertEquals("720p", stream("Show.S01E01.720p.HDTV").streamResolution())
         assertEquals("480p", stream("Show.S01E01.480p.WEB-DL").streamResolution())
+        assertEquals("360p", stream("Show.S01E01.360p.WEB-DL").streamResolution())
         assertEquals("2160p", stream("Show.S01E01.2160p.WEB-DL.DV").streamResolution())
         assertNull(stream("Show.S01E01.WEB-DL").streamResolution())
     }
@@ -166,6 +200,75 @@ class AdaptiveStreamPickerTest {
             stream("Second.1080p", "\uD83D\uDC64 100 \uD83D\uDCBE 2.0 GB"),
         )
         assertEquals("First.1080p", AdaptiveStreamPicker.pickBestSeeded(streams, "1080p")?.name)
+    }
+
+    // pickBestSeeded — seeder floor (audit P2)
+
+    @Test
+    fun pickBestSeeded_belowFloorAtTargetTier_healthyNeighbourTierWins() {
+        // The audit's playback scenario: on a 480p target (cellular / data
+        // saver), the only 480p torrent is nearly dead while a healthy 720p
+        // exists. The floor makes the well-seeded neighbour tier win instead
+        // of auto-playing the dying swarm.
+        val streams = listOf(
+            stream("Dead.480p", "\uD83D\uDC64 2 \uD83D\uDCBE 700 MB"),
+            stream("Healthy.720p", "\uD83D\uDC64 300 \uD83D\uDCBE 1.5 GB"),
+        )
+        assertEquals("Healthy.720p", AdaptiveStreamPicker.pickBestSeeded(streams, "480p")?.name)
+    }
+
+    @Test
+    fun pickBestSeeded_allBelowFloor_picksBestSeededWeak() {
+        // Every candidate is below the floor: the floor is a preference,
+        // never a no-pick — the best-seeded weak candidate wins.
+        val streams = listOf(
+            stream("Weak.480p", "\uD83D\uDC64 2 \uD83D\uDCBE 700 MB"),
+            stream("Weak.720p", "\uD83D\uDC64 8 \uD83D\uDCBE 1.5 GB"),
+        )
+        assertEquals("Weak.720p", AdaptiveStreamPicker.pickBestSeeded(streams, "480p")?.name)
+    }
+
+    @Test
+    fun pickBestSeeded_allBelowFloorSameTier_picksBestInTier() {
+        val streams = listOf(
+            stream("A.1080p", "\uD83D\uDC64 1 \uD83D\uDCBE 2.0 GB"),
+            stream("B.1080p", "\uD83D\uDC64 6 \uD83D\uDCBE 2.1 GB"),
+        )
+        assertEquals("B.1080p", AdaptiveStreamPicker.pickBestSeeded(streams, "1080p")?.name)
+    }
+
+    @Test
+    fun pickBestSeeded_atFloorCountsHealthy() {
+        // Exactly at the floor the target tier is healthy: it wins over a
+        // far better seeded neighbour tier (quality proximity still rules
+        // among healthy picks).
+        val streams = listOf(
+            stream("Floor.480p", "\uD83D\uDC64 10 \uD83D\uDCBE 700 MB"),
+            stream("Healthy.720p", "\uD83D\uDC64 900 \uD83D\uDCBE 1.5 GB"),
+        )
+        assertEquals("Floor.480p", AdaptiveStreamPicker.pickBestSeeded(streams, "480p")?.name)
+    }
+
+    @Test
+    fun pickBestSeeded_unknownSeedersAreNeutral_keepTargetTier() {
+        // Unknown seeder counts are neutral, not zero: an uncounted stream
+        // at the target tier is a healthy pick and keeps the tier.
+        val streams = listOf(
+            stream("Unknown.480p", "\uD83D\uDCBE 700 MB"),
+            stream("Healthy.720p", "\uD83D\uDC64 900 \uD83D\uDCBE 1.5 GB"),
+        )
+        assertEquals("Unknown.480p", AdaptiveStreamPicker.pickBestSeeded(streams, "480p")?.name)
+    }
+
+    @Test
+    fun pickBestSeeded_knownBelowFloorLosesToUnknownOneTierAway() {
+        // Known-bad evidence (3 seeders) loses to no evidence (unknown
+        // count) one tier away.
+        val streams = listOf(
+            stream("Dead.480p", "\uD83D\uDC64 3 \uD83D\uDCBE 700 MB"),
+            stream("Unknown.720p", "\uD83D\uDCBE 1.5 GB"),
+        )
+        assertEquals("Unknown.720p", AdaptiveStreamPicker.pickBestSeeded(streams, "480p")?.name)
     }
 
     @Test
@@ -870,6 +973,84 @@ class AdaptiveStreamPickerTest {
                 equalExcess, "1080p", preferEnglishAudio = true,
             )?.name,
         )
+    }
+
+    // pickForQualitySwitch (audit playback finding 3)
+
+    @Test
+    fun pickForQualitySwitch_seedersBeatAddonOrder() {
+        // Previously the quality switcher took the first stream at the
+        // resolution in addon order; seeders must decide within a class.
+        val first = stream("First.720p", "\uD83D\uDC64 5 \uD83D\uDCBE 1.5 GB")
+            .copy(url = "https://example.com/first.mp4")
+        val seeded = stream("Seeded.720p", "\uD83D\uDC64 400 \uD83D\uDCBE 1.4 GB")
+            .copy(url = "https://example.com/seeded.mp4")
+        val picked = AdaptiveStreamPicker.pickForQualitySwitch(
+            listOf(first, seeded), "720p",
+        )
+        assertEquals("Seeded.720p", picked?.name)
+    }
+
+    @Test
+    fun pickForQualitySwitch_keepsCurrentTransportAheadOfSeeders() {
+        // Deliberate existing behaviour: a torrent watcher tapping a
+        // quality chip stays on torrents even when a direct stream at the
+        // same quality is far better seeded.
+        val direct = stream("Direct.720p", "\uD83D\uDC64 900 \uD83D\uDCBE 1.4 GB")
+            .copy(url = "https://example.com/direct.mp4")
+        val torrent = stream("Torrent.720p", "\uD83D\uDC64 5 \uD83D\uDCBE 1.5 GB")
+            .copy(infoHash = "0123456789abcdef0123456789abcdef01234567")
+        val picked = AdaptiveStreamPicker.pickForQualitySwitch(
+            listOf(direct, torrent), "720p", preferTorrent = true,
+        )
+        assertEquals("Torrent.720p", picked?.name)
+    }
+
+    @Test
+    fun pickForQualitySwitch_englishDubBeatsBetterSeededNonDub() {
+        val japanese = stream("JP.720p", "\uD83D\uDC64 900 \uD83D\uDCBE 1.4 GB")
+            .copy(url = "https://example.com/jp.mp4")
+        val dub = stream("EN.Dual.Audio.720p", "\uD83D\uDC64 50 \uD83D\uDCBE 1.5 GB")
+            .copy(url = "https://example.com/en.mp4")
+        val picked = AdaptiveStreamPicker.pickForQualitySwitch(
+            listOf(japanese, dub), "720p", preferEnglishAudio = true,
+        )
+        assertEquals("EN.Dual.Audio.720p", picked?.name)
+    }
+
+    @Test
+    fun pickForQualitySwitch_readyTorrentBeatsUnresolvedDebridCandidate() {
+        // Both are torrent-transport; the plain torrent can start now,
+        // the installed-addon debrid candidate still needs its async
+        // resolve, so it ranks below despite far more seeders.
+        val ready = stream("Ready.720p", "\uD83D\uDC64 10 \uD83D\uDCBE 1.5 GB")
+            .copy(infoHash = "0123456789abcdef0123456789abcdef01234567")
+        val candidate = stream("Candidate.720p", "\uD83D\uDC64 900 \uD83D\uDCBE 1.4 GB")
+            .copy(
+                infoHash = "89abcdef0123456789abcdef0123456789abcdef",
+                addonId = "addon:debridio",
+            )
+        val picked = AdaptiveStreamPicker.pickForQualitySwitch(
+            listOf(candidate, ready), "720p", preferTorrent = true,
+        )
+        assertEquals("Ready.720p", picked?.name)
+    }
+
+    @Test
+    fun pickForQualitySwitch_knownOversizeRanksBelowSane() {
+        val oversize = stream("Oversize.720p", "\uD83D\uDC64 900 \uD83D\uDCBE 3.0 GB")
+            .copy(url = "https://example.com/oversize.mp4")
+        val sane = stream("Sane.720p", "\uD83D\uDC64 50 \uD83D\uDCBE 1.5 GB")
+            .copy(url = "https://example.com/sane.mp4")
+        val picked = AdaptiveStreamPicker.pickForQualitySwitch(
+            listOf(oversize, sane), "720p",
+        )
+        assertEquals("Sane.720p", picked?.name)
+    }
+
+    @Test
+    fun pickForQualitySwitch_emptyPoolReturnsNull() {
+        assertNull(AdaptiveStreamPicker.pickForQualitySwitch(emptyList(), "720p"))
     }
 
     @Test

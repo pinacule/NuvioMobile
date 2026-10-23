@@ -75,6 +75,77 @@ class TrackingScrobbleOutboxTest {
         assertEquals(listOf(movieStop), records)
     }
 
+    @Test
+    fun `pause above the watched threshold replays as a pause instead of flushing to history`() {
+        val pauseAt85 = queued(action = "pause", season = 1, episode = 3, progress = 85.0, queuedAt = 1_000L)
+
+        val (history, replay) = splitQueuedScrobblesForFlush(listOf(pauseAt85))
+
+        assertEquals(emptyList(), history)
+        assertEquals(listOf(pauseAt85), replay)
+    }
+
+    @Test
+    fun `stop above the watched threshold flushes to history`() {
+        val stopAt85 = queued(action = "stop", season = 1, episode = 3, progress = 85.0, queuedAt = 1_000L)
+        val stopAt50 = queued(action = "stop", season = 1, episode = 4, progress = 50.0, queuedAt = 2_000L)
+        val startAt95 = queued(action = "start", season = 1, episode = 5, progress = 95.0, queuedAt = 3_000L)
+
+        val (history, replay) = splitQueuedScrobblesForFlush(listOf(stopAt85, stopAt50, startAt95))
+
+        assertEquals(listOf(stopAt85), history)
+        assertEquals(listOf(stopAt50, startAt95), replay)
+    }
+
+    @Test
+    fun `history flush decision removes only fully delivered batches`() {
+        assertEquals(
+            HistoryFlushDecision.REMOVE,
+            historyFlushDecision(TrackingMutationResult(attemptedCount = 3, notFoundCount = 0)),
+        )
+        assertEquals(
+            HistoryFlushDecision.KEEP_UNATTEMPTED,
+            historyFlushDecision(TrackingMutationResult(attemptedCount = 0)),
+        )
+        assertEquals(
+            HistoryFlushDecision.KEEP_PARTIAL,
+            historyFlushDecision(TrackingMutationResult(attemptedCount = 3, notFoundCount = 1)),
+        )
+    }
+
+    @Test
+    fun `failed flush attempts increment only the failed records`() {
+        val failed = queued(action = "pause", season = 1, episode = 3, progress = 40.0, queuedAt = 1_000L)
+        val untouched = queued(action = "pause", season = 1, episode = 4, progress = 40.0, queuedAt = 2_000L)
+
+        val application = applyFlushFailures(
+            records = listOf(failed, untouched),
+            failedIdentities = setOf(failed.identity),
+            maxAttempts = 5,
+        )
+
+        assertEquals(emptyList(), application.dropped)
+        assertEquals(
+            listOf(failed.copy(attemptCount = 1), untouched),
+            application.records,
+        )
+    }
+
+    @Test
+    fun `record is dropped when its failed attempts reach the cap`() {
+        val almostOut = queued(action = "stop", season = 1, episode = 3, progress = 90.0, queuedAt = 1_000L)
+            .copy(attemptCount = 4)
+
+        val application = applyFlushFailures(
+            records = listOf(almostOut),
+            failedIdentities = setOf(almostOut.identity),
+            maxAttempts = 5,
+        )
+
+        assertEquals(emptyList(), application.records)
+        assertEquals(listOf(almostOut.copy(attemptCount = 5)), application.dropped)
+    }
+
     private fun queued(
         action: String,
         season: Int?,

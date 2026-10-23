@@ -73,6 +73,66 @@ class SimklMutationRepositoryTest {
     }
 
     @Test
+    fun `history mutation keeps episodes when an episode-less item rides in the same show group`() {
+        // A whole-show item (no episode) mixed with episode items for the
+        // same show must not swallow them into a show-level COMPLETED entry.
+        val body = buildSimklHistoryMutationBody(
+            listOf(
+                TrackingHistoryItem(show(), watchedAtEpochMs = 1_700_000_000_000L),
+                TrackingHistoryItem(
+                    show(TrackingEpisode(season = 1, number = 1)),
+                    watchedAtEpochMs = 1_700_000_000_000L,
+                ),
+                TrackingHistoryItem(
+                    show(TrackingEpisode(season = 1, number = 2)),
+                    watchedAtEpochMs = 1_700_003_600_000L,
+                ),
+            ),
+        ).asObject()
+
+        val showItem = body.getValue("shows").jsonArray.single().jsonObject
+        assertNull(showItem["status"])
+        assertNull(showItem["watched_at"])
+        val episodes = showItem
+            .getValue("seasons").jsonArray.single().jsonObject
+            .getValue("episodes").jsonArray
+        assertEquals(2, episodes.size)
+    }
+
+    @Test
+    fun `history mutation keeps show level completed entry for a parent only group`() {
+        val body = buildSimklHistoryMutationBody(
+            listOf(
+                TrackingHistoryItem(show(), watchedAtEpochMs = 1_700_000_000_000L),
+            ),
+        ).asObject()
+
+        val showItem = body.getValue("shows").jsonArray.single().jsonObject
+        assertEquals("completed", showItem.getValue("status").jsonPrimitive.content)
+        assertEquals("2023-11-14T22:13:20Z", showItem.getValue("watched_at").jsonPrimitive.content)
+        // Empty episode/season lists are the DTO defaults and are not encoded.
+        assertTrue(showItem["episodes"]?.jsonArray?.isEmpty() ?: true)
+        assertTrue(showItem["seasons"]?.jsonArray?.isEmpty() ?: true)
+    }
+
+    @Test
+    fun `history removal keeps episodes when an episode-less item rides in the same show group`() {
+        val body = buildSimklHistoryRemovalBody(
+            listOf(
+                show(),
+                show(TrackingEpisode(season = 1, number = 1)),
+            ),
+        ).asObject()
+
+        val showItem = body.getValue("shows").jsonArray.single().jsonObject
+        val episodes = showItem
+            .getValue("seasons").jsonArray.single().jsonObject
+            .getValue("episodes").jsonArray
+        assertEquals(1, episodes.size)
+        assertEquals(1, episodes[0].jsonObject.getValue("number").jsonPrimitive.content.toInt())
+    }
+
+    @Test
     fun `anime history uses tvdb mapping flag only for seasonal coordinates`() {
         val seasonalBody = buildSimklHistoryMutationBody(
             listOf(
@@ -200,6 +260,37 @@ class SimklMutationRepositoryTest {
         assertEquals(SimklScrobbleOutcome.SCROBBLE, scrobbleResult.outcome)
         assertEquals("2026-05-14T23:46:29Z", scrobbleResult.watchedAt)
         assertEquals(1, committed)
+    }
+
+    @Test
+    fun `duplicate stop below the watched threshold reconciles as a pause`() = runBlocking {
+        val engine = RecordingEngine(
+            response(
+                status = 409,
+                body = """{"watched_at":"2026-05-14T23:46:29Z","expires_at":"2026-05-15T00:46:29Z"}""",
+            ),
+        )
+        val service = SimklMutationService(
+            client = SimklApiClient(
+                engine = engine,
+                accessToken = { "token" },
+                onUnauthorized = {},
+                nowEpochMs = { 0L },
+                sleep = {},
+                retryJitterMs = { 0L },
+            ),
+        )
+
+        val result = service.scrobble(
+            action = TrackingScrobbleAction.STOP,
+            event = TrackingScrobbleEvent(movie(), progressPercent = 30.0),
+        )
+
+        // A 409 proves a duplicate stop, not a completed view: at 30% the
+        // local reconciliation must keep the resume point (PAUSE), exactly
+        // like a normal low-progress stop.
+        assertEquals(SimklScrobbleOutcome.PAUSE, result.outcome)
+        assertEquals(30.0, result.progress)
     }
 
     @Test

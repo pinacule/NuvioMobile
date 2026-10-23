@@ -13,6 +13,7 @@ import com.nuvio.app.features.details.MetaDetailsUiState
 import com.nuvio.app.features.details.MetaScreenSettingsUiState
 import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.p2p.P2pSettingsUiState
+import com.nuvio.app.features.p2p.P2pStallTracker
 import com.nuvio.app.features.p2p.P2pStreamingState
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.SkipInterval
@@ -68,6 +69,14 @@ internal class PlayerScreenRuntime(
     var playerSettingsUiState: PlayerSettingsUiState = PlayerSettingsUiState()
     var p2pSettingsUiState by mutableStateOf(P2pSettingsUiState())
     var p2pStreamingState by mutableStateOf<P2pStreamingState>(P2pStreamingState.Idle)
+    // Stall watchdog (audit P1): progress tracker for the active torrent
+    // stream, plus the identity keys that already stalled or were already
+    // tried as a failover target for the current video, so the watchdog
+    // never re-picks a stream that just died. The video id scopes the set;
+    // it self-resets when the playback item changes.
+    val p2pStallTracker = P2pStallTracker()
+    var stalledP2pFailoverIdentityKeys by mutableStateOf<Set<String>>(emptySet())
+    var stalledP2pFailoverVideoId by mutableStateOf<String?>(null)
     var metaScreenSettingsUiState: MetaScreenSettingsUiState = MetaScreenSettingsUiState()
     var watchedUiState: WatchedUiState = WatchedUiState()
     var watchProgressUiState: WatchProgressUiState = WatchProgressUiState()
@@ -221,6 +230,16 @@ internal class PlayerScreenRuntime(
     var serverSubtitleTracks by mutableStateOf<List<SubtitleTrack>>(emptyList())
     var serverTrackSwitchJob by mutableStateOf<Job?>(null)
     var serverAudioPreferenceKey: String? = null
+    // Server subtitle baseline (audit playback finding 9): the subtitle
+    // index the server session itself started with for the current
+    // identity key, so a server-side DEFAULT is never mistaken for a
+    // user choice. serverSubtitleUserDrivenChange is set by the subtitle
+    // modal actions (select/clear) before they restart the stream, which
+    // is how refreshServerTracks tells a user-driven change apart from
+    // the server renegotiating its own default.
+    var serverDefaultSubtitleIndex: Int? = null
+    var serverDefaultSubtitleKey: String? = null
+    var serverSubtitleUserDrivenChange: Boolean = false
     var subtitleTracks by mutableStateOf<List<SubtitleTrack>>(emptyList())
     var selectedAudioIndex by mutableStateOf(-1)
     var selectedSubtitleIndex by mutableStateOf(-1)

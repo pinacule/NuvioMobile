@@ -35,6 +35,10 @@ internal object WatchProgressCodec {
         decodePayload(payload).entries
 
     fun decodePayload(payload: String): StoredWatchProgressPayload =
+        decodePayloadOrNull(payload) ?: StoredWatchProgressPayload()
+
+    /** Strict decode (with the usual migrations): null when [payload] is not a valid stored payload. */
+    fun decodePayloadOrNull(payload: String): StoredWatchProgressPayload? =
         runCatching {
             json.decodeFromString<StoredWatchProgressPayload>(payload).let { storedPayload ->
                 val migratedEntries = storedPayload.entries
@@ -49,7 +53,7 @@ internal object WatchProgressCodec {
                     ),
                 )
             }
-        }.getOrDefault(StoredWatchProgressPayload())
+        }.getOrNull()
 
     fun encodeEntries(entries: Collection<WatchProgressEntry>): String =
         encodePayload(

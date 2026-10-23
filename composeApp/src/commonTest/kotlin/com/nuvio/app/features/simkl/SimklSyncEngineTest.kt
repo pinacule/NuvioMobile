@@ -425,6 +425,78 @@ class SimklSyncEngineTest {
         }
     }
 
+    @Test
+    fun `initial sync keeps every unkeyed entry instead of collapsing them into one`() = runBlocking {
+        val unkeyedShow = SimklLibraryEntry(
+            mediaType = SimklMediaType.SHOWS,
+            status = SimklListStatus.WATCHING,
+            show = SimklMedia(title = "Unkeyed Show", ids = emptyMap()),
+        )
+        val unkeyedMovie = SimklLibraryEntry(
+            mediaType = SimklMediaType.MOVIES,
+            status = SimklListStatus.WATCHING,
+            movie = SimklMedia(title = "Unkeyed Movie", ids = emptyMap()),
+        )
+        val remote = ScriptedRemote(
+            Step.AllItems(SimklMediaType.SHOWS, SimklAllItemsResponse(shows = listOf(unkeyedShow))),
+            Step.AllItems(SimklMediaType.MOVIES, SimklAllItemsResponse(movies = listOf(unkeyedMovie))),
+            Step.AllItems(SimklMediaType.ANIME, SimklAllItemsResponse(anime = emptyList())),
+            Step.Playback(emptyList()),
+            Step.Activities(activities(all = "v1")),
+        )
+
+        val result = SimklSyncEngine(remote) { 500L }.synchronize(SimklSyncSnapshot())
+
+        assertEquals(
+            listOf("Unkeyed Movie", "Unkeyed Show"),
+            result.entries.map { it.media?.title }.sorted(),
+        )
+        assertTrue(remote.isExhausted)
+    }
+
+    @Test
+    fun `delta merge and removal reconciliation keep unkeyed entries`() {
+        val keyed = entry(SimklMediaType.SHOWS, "1")
+        val unkeyed = SimklLibraryEntry(
+            mediaType = SimklMediaType.SHOWS,
+            status = SimklListStatus.WATCHING,
+            show = SimklMedia(title = "Unkeyed Show", ids = emptyMap()),
+        )
+        val current = listOf(keyed, unkeyed)
+
+        // A delta that only touches the keyed entry must not drop the
+        // unkeyed one, and the authoritative ID list — which by construction
+        // cannot contain the unkeyed entry — must not read as its removal.
+        val merged = mergeDelta(
+            current = current,
+            delta = SimklAllItemsResponse(
+                shows = listOf(entry(SimklMediaType.SHOWS, "1", SimklListStatus.COMPLETED)),
+            ),
+        )
+        assertEquals(2, merged.size)
+        assertEquals(
+            SimklListStatus.COMPLETED,
+            merged.single { it.stableKey() != null }.status,
+        )
+        assertTrue(merged.any { it.media?.title == "Unkeyed Show" })
+
+        val reconciled = reconcileRemovedEntries(
+            current = current,
+            authoritative = SimklAllItemsResponse(
+                shows = listOf(entry(SimklMediaType.SHOWS, "1")),
+            ),
+        )
+        assertEquals(2, reconciled.size)
+
+        // The keyed entry is still removed when the authoritative list
+        // drops it — only the unkeyed one is exempt.
+        val afterRemoval = reconcileRemovedEntries(
+            current = current,
+            authoritative = SimklAllItemsResponse(shows = emptyList()),
+        )
+        assertEquals(listOf("Unkeyed Show"), afterRemoval.map { it.media?.title })
+    }
+
     private sealed interface Step {
         data class Activities(val value: SimklActivities) : Step
         data class AllItems(val type: SimklMediaType?, val value: SimklAllItemsResponse) : Step

@@ -4,6 +4,7 @@ import platform.Foundation.NSUserDefaults
 
 internal actual object TrackingScrobbleOutboxStorage {
     private const val PAYLOAD_KEY = "scrobble_outbox_payload"
+    private const val CORRUPT_BACKUP_KEY = "scrobble_outbox_corrupt_backup"
 
     private val defaults: NSUserDefaults = NSUserDefaults.standardUserDefaults
 
@@ -11,6 +12,10 @@ internal actual object TrackingScrobbleOutboxStorage {
 
     actual fun savePayload(payload: String) {
         defaults.setObject(payload, forKey = PAYLOAD_KEY)
+    }
+
+    actual fun saveCorruptPayloadBackup(payload: String) {
+        defaults.setObject(payload, forKey = CORRUPT_BACKUP_KEY)
     }
 
     actual fun removeProfile(profileId: Int) {

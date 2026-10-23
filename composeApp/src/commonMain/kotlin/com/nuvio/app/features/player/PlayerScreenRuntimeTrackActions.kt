@@ -150,9 +150,20 @@ internal fun PlayerScreenRuntime.restorePersistedTrackPreferenceIfNeeded(): Bool
         }
     }
 
-    trackPreferenceRestoreApplied = audioTracks.isNotEmpty() ||
-        (preference.audioTrackId.isNullOrBlank() && preference.audioLanguage.isNullOrBlank() &&
-            preference.audioName.isNullOrBlank())
+    // An INTERNAL subtitle preference can only be restored once subtitle
+    // tracks exist; engines often deliver audio tracks first. If the
+    // subtitle list was still empty, the restore above silently did
+    // nothing for the subtitle half — don't mark the restore applied, so
+    // the next refreshTracks() pass retries it when the tracks arrive
+    // (audit playback finding 8). The return value stays true either way:
+    // subtitlePreferenceReady semantics for the addon auto-select path
+    // must not block on internal tracks that may never exist.
+    val internalSubtitleRestorePending =
+        preference.subtitleType == PersistedSubtitleSelectionType.INTERNAL && subtitleTracks.isEmpty()
+    trackPreferenceRestoreApplied = !internalSubtitleRestorePending &&
+        (audioTracks.isNotEmpty() ||
+            (preference.audioTrackId.isNullOrBlank() && preference.audioLanguage.isNullOrBlank() &&
+                preference.audioName.isNullOrBlank()))
     return true
 }
 

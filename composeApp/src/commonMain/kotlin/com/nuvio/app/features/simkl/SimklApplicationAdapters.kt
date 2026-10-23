@@ -267,6 +267,16 @@ object SimklProgressRepository {
                     SimklApiRequest(
                         method = SimklHttpMethod.DELETE,
                         path = "/sync/playback/$sessionId",
+                        // Simkl offers no batch playback removal, so a
+                        // clear is inherently one DELETE per session;
+                        // the client's slot pacing already spaces them
+                        // 1 s apart. One attempt each is enough: with
+                        // the retrying policy a large clear could burn
+                        // five attempts (plus backoff) per session, and
+                        // a failed removal is harmless — the entry just
+                        // stays in Continue Watching and only confirmed
+                        // removals are committed locally below.
+                        retryPolicy = SimklRetryPolicy.NEVER,
                     ),
                 )
                 removed += sessionId

@@ -22,7 +22,15 @@ import kotlinx.coroutines.launch
 
 /**
  * Gating for the background next-episode preload (item 11): 60% watched,
- * WiFi only, battery above 25% (unknown battery is allowed), never on cellular.
+ * WiFi only, battery above 25% (unknown battery is allowed), never on
+ * cellular, never on a metered connection, and never while data saver is
+ * active (DataSaverRepository's contract: background fetching stays off).
+ *
+ * The data-saver dimension is deliberately folded in here instead of
+ * delegating to DataSaverGating.shouldPreload: that gate also fails closed
+ * on unknown battery, while this policy's pinned semantics allow it
+ * (see EpisodePreloadPolicyTest.unknownBatteryIsAllowed). Only the
+ * data-saver check is shared; the battery rule stays as written below.
  */
 object EpisodePreloadPolicy {
     const val TRIGGER_FRACTION = 0.6f
@@ -33,12 +41,16 @@ object EpisodePreloadPolicy {
         isWifi: Boolean,
         isCellular: Boolean,
         batteryPercent: Int,
+        dataSaverActive: Boolean,
+        isUnmetered: Boolean,
         alreadyTriggeredForVideo: Boolean,
         isSeries: Boolean,
     ): Boolean {
         if (alreadyTriggeredForVideo || !isSeries) return false
         if (progressFraction < TRIGGER_FRACTION) return false
         if (!isWifi || isCellular) return false
+        if (!isUnmetered) return false
+        if (dataSaverActive) return false
         if (batteryPercent != -1 && batteryPercent <= MIN_BATTERY_PERCENT) return false
         return true
     }
@@ -78,7 +90,7 @@ internal object EpisodePreloader {
             EpisodeDownloadPlanner.distinctQualities(allStreams),
             targetQuality,
         ) ?: return
-        // Dub over sub, always: with the dub preference on, an English-audio release at any quality wins; otherwise the chosen quality applies.
+        // Dub over sub, always: with the dub preference on, an English-audio release wins — at the chosen quality first, the closest tier as fallback; otherwise the chosen quality applies.
         runCatching { PlayerSettingsRepository.ensureLoaded() }
         val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
             PlayerSettingsRepository.uiState.value.preferredAudioLanguage,
@@ -192,13 +204,28 @@ internal object EpisodePreloader {
 }
 
 /**
- * Pauses the active preload fetch when the network turns cellular and resumes
- * it when WiFi returns. Stops itself once no fetch is active or paused.
+ * Pauses the active preload fetch when the network stops being
+ * preload-eligible (cellular, or metered) and resumes it when unmetered
+ * WiFi returns. Stops itself once no fetch is active or paused.
+ *
+ * The network is checked immediately when watching starts — before the
+ * first poll delay — so a fetch that starts into an already-bad network
+ * is paused at once instead of transferring until the first tick. There
+ * is no transport-change callback in the codebase to collect instead
+ * (NetworkStatusRepository exposes reachability probes only, and a
+ * WiFi-to-cellular handover leaves those probes Online, so it cannot
+ * signal the switch), so the watcher polls: every [POLL_INTERVAL_MS]
+ * while a fetch is active or paused, which bounds the cellular leak
+ * after a mid-preload handover to about a second of transfer. Pause
+ * cancels the fetch job and keeps the .part; resume restarts from the
+ * partial — unchanged semantics.
  *
  * NOTE: calls DeviceEnvironment, which is provided by the playback worker's
  * expect/actual (see batch-11 spec); this file only calls it.
  */
 internal object EpisodePreloadWatcher {
+    private const val POLL_INTERVAL_MS = 1_000L
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var watchJob: Job? = null
 
@@ -206,17 +233,22 @@ internal object EpisodePreloadWatcher {
         if (watchJob?.isActive == true) return
         watchJob = scope.launch {
             while (currentCoroutineContext().isActive) {
-                delay(5_000)
-                val cellular = runCatching { DeviceEnvironment.isCellular() }.getOrDefault(false)
-                val wifi = runCatching { DeviceEnvironment.isWifi() }.getOrDefault(false)
-                if (cellular) {
-                    PreloadCacheFetcher.pause()
-                } else if (wifi) {
-                    PreloadCacheFetcher.resume()
-                }
+                syncFetchWithNetwork()
                 if (!PreloadCacheFetcher.hasActiveFetch && !PreloadCacheFetcher.hasPausedFetch) break
+                delay(POLL_INTERVAL_MS)
             }
             watchJob = null
+        }
+    }
+
+    private fun syncFetchWithNetwork() {
+        val cellular = runCatching { DeviceEnvironment.isCellular() }.getOrDefault(false)
+        val wifi = runCatching { DeviceEnvironment.isWifi() }.getOrDefault(false)
+        val unmetered = runCatching { DeviceEnvironment.isUnmetered() }.getOrDefault(false)
+        if (cellular || !unmetered) {
+            PreloadCacheFetcher.pause()
+        } else if (wifi) {
+            PreloadCacheFetcher.resume()
         }
     }
 }
@@ -237,17 +269,23 @@ internal fun PlayerScreenRuntime.maybePreloadNextEpisodeDownload() {
     val wifi = runCatching { DeviceEnvironment.isWifi() }.getOrDefault(false)
     val cellular = runCatching { DeviceEnvironment.isCellular() }.getOrDefault(false)
     val battery = runCatching { DeviceEnvironment.batteryPercent() }.getOrDefault(-1)
+    val unmetered = runCatching { DeviceEnvironment.isUnmetered() }.getOrDefault(false)
+    val dataSaverActive = runCatching {
+        DataSaverRepository.ensureLoaded()
+        DataSaverRepository.isActiveNow()
+    }.getOrDefault(false)
     if (!EpisodePreloadPolicy.shouldTriggerPreload(
             progressFraction = fraction,
             isWifi = wifi,
             isCellular = cellular,
             batteryPercent = battery,
+            dataSaverActive = dataSaverActive,
+            isUnmetered = unmetered,
             alreadyTriggeredForVideo = false,
             isSeries = true,
         )
     ) return
     nextEpisodeDownloadPreloadVideoId = videoKey
-    val dataSaverActive = runCatching { DataSaverRepository.isActiveNow() }.getOrDefault(false)
     val targetQuality = AdaptiveStreamPicker.targetQuality(
         isCellular = cellular,
         batteryPercent = battery,

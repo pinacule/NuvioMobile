@@ -181,6 +181,11 @@ data class SimklSyncSnapshot(
     val playback: List<SimklPlaybackSession> = emptyList(),
     val lastSyncedAtEpochMs: Long? = null,
     val lastCheckedAtEpochMs: Long? = null,
+    // Automatic-refresh failure bookkeeping (see SimklRefreshPolicy):
+    // persisted with the snapshot so a failing backend cannot reset
+    // its backoff by restarting the process.
+    val consecutiveSyncFailures: Int = 0,
+    val lastSyncFailureAtEpochMs: Long? = null,
 )
 
 data class SimklSyncUiState(

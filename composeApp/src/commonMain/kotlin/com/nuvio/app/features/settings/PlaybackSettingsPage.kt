@@ -758,6 +758,14 @@ private fun PlaybackSettingsSection(
                     )
                     SettingsGroupDivider(isTablet = isTablet)
                     SettingsSwitchRow(
+                        title = stringResource(Res.string.settings_p2p_upload_title),
+                        description = stringResource(Res.string.settings_p2p_upload_subtitle),
+                        checked = p2pSettings.enableUpload,
+                        isTablet = isTablet,
+                        onCheckedChange = P2pSettingsRepository::setEnableUpload,
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
                         title = stringResource(Res.string.settings_p2p_hide_stats_title),
                         description = stringResource(Res.string.settings_p2p_hide_stats_subtitle),
                         checked = p2pSettings.hideTorrentStats,
@@ -1406,6 +1414,14 @@ private fun PlaybackSettingsSection(
         ) {
             SettingsGroup(isTablet = isTablet) {
                 SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_playback_auto_play_next_episode),
+                    description = stringResource(Res.string.settings_playback_auto_play_next_episode_description),
+                    checked = autoPlayPlayerSettings.streamAutoPlayNextEpisodeEnabled,
+                    isTablet = isTablet,
+                    onCheckedChange = PlayerSettingsRepository::setStreamAutoPlayNextEpisodeEnabled,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
                     title = stringResource(Res.string.settings_playback_prefer_binge_group),
                     description = stringResource(Res.string.settings_playback_prefer_binge_group_description),
                     checked = autoPlayPlayerSettings.streamAutoPlayPreferBingeGroup,
@@ -1420,6 +1436,14 @@ private fun PlaybackSettingsSection(
                         checked = autoPlayPlayerSettings.streamAutoPlayReuseBingeGroup,
                         isTablet = isTablet,
                         onCheckedChange = PlayerSettingsRepository::setStreamAutoPlayReuseBingeGroup,
+                    )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.settings_playback_auto_play_next_episode_fallback),
+                        description = stringResource(Res.string.settings_playback_auto_play_next_episode_fallback_description),
+                        checked = autoPlayPlayerSettings.streamAutoPlayNextEpisodeFallbackEnabled,
+                        isTablet = isTablet,
+                        onCheckedChange = PlayerSettingsRepository::setStreamAutoPlayNextEpisodeFallbackEnabled,
                     )
                 }
                 SettingsGroupDivider(isTablet = isTablet)

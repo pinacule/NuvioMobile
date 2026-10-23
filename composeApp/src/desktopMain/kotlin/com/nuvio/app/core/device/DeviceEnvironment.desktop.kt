@@ -6,5 +6,7 @@ actual object DeviceEnvironment {
 
     actual fun isCellular(): Boolean = false
 
+    actual fun isUnmetered(): Boolean = true
+
     actual fun batteryPercent(): Int = -1
 }

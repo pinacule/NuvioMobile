@@ -4,6 +4,7 @@ import com.nuvio.app.features.tracking.TrackingMediaKind
 import com.nuvio.app.features.tracking.TrackingMediaReference
 import com.nuvio.app.features.tracking.TrackingScrobbleAction
 import com.nuvio.app.features.tracking.TrackingScrobbleEvent
+import com.nuvio.app.features.tracking.TrackingWatchedThresholdPercent
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -45,7 +46,20 @@ internal fun SimklApiResponse.toSimklScrobbleResult(
         ?.coerceIn(0.0, 100.0)
         ?: event.progressPercent.coerceIn(0.0, 100.0)
     val outcome = when {
-        isSoftSuccess && status == 409 -> SimklScrobbleOutcome.SCROBBLE
+        // A 409 means Simkl already holds a scrobble for this playback. It
+        // proves a duplicate STOP, not a completed view: only a stop that
+        // itself reached the watched threshold may reconcile as SCROBBLE.
+        // Below it the local reconciliation must treat the view as a pause,
+        // like a normal low-progress STOP — otherwise any 409 (e.g. a stop
+        // re-sent after a seek restart) marks the item watched and deletes
+        // its resume point at any progress.
+        isSoftSuccess && status == 409 -> {
+            if (progress >= TrackingWatchedThresholdPercent) {
+                SimklScrobbleOutcome.SCROBBLE
+            } else {
+                requestedAction.fallbackOutcome(progress)
+            }
+        }
         else -> payload.stringValue("action")
             ?.toSimklScrobbleOutcome()
             ?: requestedAction.fallbackOutcome(progress)
@@ -129,7 +143,11 @@ private fun TrackingScrobbleAction.fallbackOutcome(progress: Double): SimklScrob
         TrackingScrobbleAction.START -> SimklScrobbleOutcome.START
         TrackingScrobbleAction.PAUSE -> SimklScrobbleOutcome.PAUSE
         TrackingScrobbleAction.STOP -> {
-            if (progress >= 80.0) SimklScrobbleOutcome.SCROBBLE else SimklScrobbleOutcome.PAUSE
+            if (progress >= TrackingWatchedThresholdPercent) {
+                SimklScrobbleOutcome.SCROBBLE
+            } else {
+                SimklScrobbleOutcome.PAUSE
+            }
         }
     }
 

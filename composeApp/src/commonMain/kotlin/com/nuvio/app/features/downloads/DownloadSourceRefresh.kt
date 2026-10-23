@@ -50,9 +50,13 @@ private fun StreamItem.isHttpDownloadCandidate(): Boolean =
 /**
  * Resolves a fresh HTTP source URL for [item] whose current
  * [DownloadItem.sourceUrl] is dead (HTTP 403/404/410). Re-runs the planner's
- * stream pick for the episode — the originally picked quality first, then
- * closest — excluding the dead URL, and applies the same debrid resolution
- * the enqueue path uses ([SeasonDownloads.resolvePlayable]).
+ * stream pick for the episode — targeting the item's ORIGINAL
+ * [DownloadItem.downloadQuality] tier first, then the closest tiers, with
+ * the English-audio preference applied WITHIN each tier — excluding the
+ * dead URL, and applies the same debrid resolution the enqueue path uses
+ * ([SeasonDownloads.resolvePlayable]). Known-oversize candidates are tried
+ * only as a last resort, least-oversize first, so a dead 480p link no
+ * longer silently resumes as a 1080p different encode.
  *
  * Returns the item with the fresh URL, or null when no working link could be
  * found. The new link may point at a different encode: callers may keep the
@@ -67,8 +71,8 @@ internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem
     // started in the background (JobScheduler/WorkManager) without the UI.
     runCatching { AddonRepository.initialize() }
     runCatching { PlayerSettingsRepository.ensureLoaded() }
-    // Dub over sub, always: when re-resolving a dead link, English-audio
-    // releases outrank everything else, regardless of quality tier.
+    // Dub over sub, always — but within the item's quality constraint:
+    // English-audio releases outrank others only inside a tier (see below).
     val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
         PlayerSettingsRepository.uiState.value.preferredAudioLanguage,
     )
@@ -91,25 +95,32 @@ internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem
         }
     if (usable.isEmpty()) return null
     val qualities = EpisodeDownloadPlanner.distinctQualities(usable.map { it.second })
-    // English-audio releases first (all qualities, closest-first), then the rest —
-    // a 480p dub outranks a 1080p sub-only release when the user prefers English.
-    val partitions = if (preferEnglishAudio) {
-        val (english, rest) = usable.partition { (_, stream) -> AdaptiveStreamPicker.hasEnglishAudio(stream) }
-        listOf(english, rest).filter { it.isNotEmpty() }
-    } else {
-        listOf(usable)
+
+    // Tries one candidate: resolve it and, when it yields a fresh URL,
+    // return the refreshed item. [qualityLabel] is stored as the item's
+    // downloadQuality — the tier the stream was picked at.
+    suspend fun tryPick(group: AddonStreams, stream: StreamItem, qualityLabel: String?): DownloadItem? {
+        val resolved = SeasonDownloads.resolvePlayable(stream, item.seasonNumber ?: 0, item.episodeNumber)
+            ?: return null
+        val freshUrl = resolved.playableDirectUrl?.trim()
+            ?.takeIf { it.isSupportedDownloadUrl() && it != deadUrl }
+            ?: return null
+        return item.withFreshSource(group, resolved, freshUrl, qualityLabel)
     }
-    for (partition in partitions) {
-        for (quality in orderQualitiesByCloseness(qualities, targetQuality)) {
-            for ((group, stream) in partition) {
-                if (stream.streamResolution() != quality) continue
-                val resolved = SeasonDownloads.resolvePlayable(stream, item.seasonNumber ?: 0, item.episodeNumber)
-                    ?: continue
-                val freshUrl = resolved.playableDirectUrl?.trim()
-                    ?.takeIf { it.isSupportedDownloadUrl() && it != deadUrl }
-                    ?: continue
-                return item.withFreshSource(group, resolved, freshUrl, quality)
+
+    // Quality-major: the item's original tier first, then the closest
+    // tiers; within a tier, English-audio candidates first (when preferred),
+    // then the rest in addon order. Known-oversize candidates are skipped
+    // here and retried as a last resort below.
+    val oversizeCandidates = mutableListOf<Pair<AddonStreams, StreamItem>>()
+    for (quality in orderQualitiesByCloseness(qualities, targetQuality)) {
+        val atTier = usable.filter { (_, stream) -> stream.streamResolution() == quality }
+        for ((group, stream) in orderByEnglishPreference(atTier, preferEnglishAudio)) {
+            if (AdaptiveStreamPicker.isKnownOversize(stream, quality)) {
+                oversizeCandidates += group to stream
+                continue
             }
+            tryPick(group, stream, quality)?.let { return it }
         }
     }
     // Last resort, mirroring EpisodeDownloadPlanner.pickBestStreamAtQuality's
@@ -118,24 +129,127 @@ internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem
     // a candidate with streamResolution() == null — e.g. an English dub whose
     // metadata carries no resolution token — was never tried and the retry
     // kept reusing the dead URL. When no parseable quality yielded a stream,
-    // try the unparseable candidates in the same partition order (English
-    // first when the user prefers English audio), preserving addon order
-    // within a partition as the loop above does. The picked stream's quality
-    // is unknown, so the item keeps its requested downloadQuality — the same
-    // fallback SeasonDownloads applies when it stores
+    // try the unparseable candidates with English first (when preferred),
+    // preserving addon order. The picked stream's quality is unknown, so the
+    // item keeps its requested downloadQuality — the same fallback
+    // SeasonDownloads applies when it stores
     // `streamResolution() ?: template.streamResolution()`.
-    for (partition in partitions) {
-        for ((group, stream) in partition) {
-            if (stream.streamResolution() != null) continue
-            val resolved = SeasonDownloads.resolvePlayable(stream, item.seasonNumber ?: 0, item.episodeNumber)
-                ?: continue
-            val freshUrl = resolved.playableDirectUrl?.trim()
-                ?.takeIf { it.isSupportedDownloadUrl() && it != deadUrl }
-                ?: continue
-            return item.withFreshSource(group, resolved, freshUrl, item.downloadQuality)
+    for ((group, stream) in orderByEnglishPreference(usable, preferEnglishAudio)) {
+        if (stream.streamResolution() != null) continue
+        if (AdaptiveStreamPicker.isKnownOversize(stream, targetQuality)) {
+            oversizeCandidates += group to stream
+            continue
         }
+        tryPick(group, stream, item.downloadQuality)?.let { return it }
+    }
+    // Final last resort: every sane candidate failed — retry the
+    // known-oversize ones, least-oversize first, rather than giving up.
+    for ((group, stream) in oversizeCandidates.sortedBy { (_, stream) ->
+        AdaptiveStreamPicker.oversizeExcessBytes(stream, stream.streamResolution() ?: targetQuality)
+    }) {
+        tryPick(group, stream, stream.streamResolution() ?: item.downloadQuality)?.let { return it }
     }
     return null
+}
+
+/**
+ * English-audio candidates first when [preferEnglishAudio] (the dub
+ * preference, applied within a quality tier), preserving the original order
+ * inside each group.
+ */
+private fun orderByEnglishPreference(
+    candidates: List<Pair<AddonStreams, StreamItem>>,
+    preferEnglishAudio: Boolean,
+): List<Pair<AddonStreams, StreamItem>> {
+    if (!preferEnglishAudio) return candidates
+    val (english, rest) = candidates.partition { (_, stream) -> AdaptiveStreamPicker.hasEnglishAudio(stream) }
+    return english + rest
+}
+
+/**
+ * Re-picks a DIFFERENT torrent for [item] whose current torrent stalled (no
+ * swarm progress within the stall window), excluding the stalled torrent
+ * itself ([excludeInfoHash]). Candidates are ranked like the enqueue paths
+ * rank them: English-audio first when preferred, then the item's original
+ * [DownloadItem.downloadQuality] tier (closest tiers after), known-oversize
+ * candidates last, then best-seeded.
+ *
+ * Returns the item re-pointed at the new torrent (magnet URL, info hash,
+ * file index, trackers, filename hint), or null when no other torrent is
+ * offered. The new torrent's bytes differ from the stalled one's, so
+ * callers must discard the partial file and restart from zero.
+ *
+ * Note: unlike the season matcher, this re-pick does not re-apply the
+ * conflicting-episode-marker filter — candidates come from the item's own
+ * episode listing (its videoId), so they are that episode's streams by
+ * construction.
+ */
+internal suspend fun refreshTorrentDownloadSource(
+    item: DownloadItem,
+    excludeInfoHash: String?,
+): DownloadItem? {
+    if (item.sourceKind != DownloadSourceKind.Torrent) return null
+    // Idempotent, like refreshHttpDownloadSource: safe from background starts.
+    runCatching { AddonRepository.initialize() }
+    runCatching { PlayerSettingsRepository.ensureLoaded() }
+    val preferEnglishAudio = AdaptiveStreamPicker.shouldPreferEnglishAudio(
+        PlayerSettingsRepository.uiState.value.preferredAudioLanguage,
+    )
+    val candidates = try {
+        EpisodeDownloadPlanner.fetchAddonStreams(
+            contentType = item.contentType,
+            videoId = item.videoId,
+            preferredAddonId = item.providerAddonId,
+        )
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (error: Exception) {
+        return null
+    }
+    val excluded = excludeInfoHash?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+    val usable = candidates.flatMap { group ->
+        group.streams.mapNotNull { stream ->
+            val source = stream.torrentDownloadSource() ?: return@mapNotNull null
+            if (excluded != null && source.infoHash.lowercase() == excluded) return@mapNotNull null
+            Triple(group, stream, source)
+        }
+    }
+    if (usable.isEmpty()) return null
+    val tierOrder = orderQualitiesByCloseness(
+        EpisodeDownloadPlanner.distinctQualities(usable.map { it.second }),
+        item.downloadQuality,
+    )
+    val (group, stream, source) = usable.minWithOrNull(
+        compareBy<Triple<AddonStreams, StreamItem, TorrentDownloadSource>> { (_, candidate, _) ->
+            if (preferEnglishAudio && !AdaptiveStreamPicker.hasEnglishAudio(candidate)) 1 else 0
+        }
+            .thenBy { (_, candidate, _) ->
+                candidate.streamResolution()
+                    ?.let { tierOrder.indexOf(it) }
+                    ?.takeIf { it >= 0 }
+                    ?: Int.MAX_VALUE
+            }
+            .thenBy { (_, candidate, _) ->
+                if (AdaptiveStreamPicker.isKnownOversize(candidate, item.downloadQuality)) 1 else 0
+            }
+            .thenByDescending { (_, candidate, _) -> AdaptiveStreamPicker.parseSeeders(candidate) ?: -1 },
+    ) ?: return null
+    return item.copy(
+        sourceUrl = source.magnetUri,
+        torrentInfoHash = source.infoHash,
+        torrentFileIdx = source.fileIdx,
+        torrentTrackers = source.trackers,
+        torrentFilenameHint = source.filenameHint,
+        sourceHeaders = sanitizeRequestHeaders(stream.behaviorHints.proxyHeaders?.request),
+        sourceResponseHeaders = sanitizeResponseHeaders(stream.behaviorHints.proxyHeaders?.response),
+        providerName = group.addonName,
+        providerAddonId = group.addonId,
+        streamTitle = stream.streamLabel,
+        streamSubtitle = stream.streamSubtitle,
+        sourceSubtitles = stream.externalSubtitles,
+        downloadQuality = stream.streamResolution() ?: item.downloadQuality,
+        sourceResolvedAtEpochMs = DownloadsClock.nowEpochMs(),
+    )
 }
 
 /**

@@ -136,6 +136,24 @@ object ProfileSettingsSync {
         MediaServerSync.clearAccountState()
     }
 
+    /**
+     * Drops [profileId]'s pending-push marker — from memory and from the
+     * persisted payload — when the profile is deleted. The marker map is
+     * account-scoped, but its entries are keyed by profile index inside the
+     * single payload, so the per-profile storage sweep cannot reach them:
+     * left behind, the marker would fire against the next profile created at
+     * the recycled index and discard its first settings pull as a stranded
+     * push.
+     */
+    fun removeProfile(profileId: Int) {
+        // Load first so a not-yet-restored marker is the one being cleared
+        // (and its persisted copy with it), mirroring pushProfileSettingsToRemote:
+        // clearing only the in-memory map would leave the persisted marker
+        // to be restored on the next launch.
+        ensurePendingPushGenerationsLoaded()
+        clearPendingPush(profileId)
+    }
+
     private fun markPendingPush(profileId: Int, generation: Int) {
         synchronized(pendingPushLock) {
             pendingPushGenerations[profileId] = generation
