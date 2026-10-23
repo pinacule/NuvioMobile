@@ -12,6 +12,8 @@ import com.nuvio.app.features.details.MetaVideo
 import com.nuvio.app.features.player.skip.NextEpisodeThresholdMode
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
 import com.nuvio.app.features.player.skip.SkipInterval
+import com.nuvio.app.features.streams.BingeGroupCacheRepository
+import com.nuvio.app.features.streams.BingeGroupCacheStorage
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
@@ -51,6 +53,7 @@ class PlayerAutoPlayTest {
         playerVisible.value = false
         compose.waitForIdle()
         scope.cancel()
+        BingeGroupCacheRepository.remove("autoplay-test")
         WatchProgressRepository.clearLocalState()
         DeviceEnvironment.testWifiOverride = null
         RuntimeEnvironment.getApplication()
@@ -164,6 +167,67 @@ class PlayerAutoPlayTest {
             assertSame(job, runtime.nextEpisodeAutoPlayJob)
             assertTrue(job?.isActive == true)
         }
+    }
+
+    @Test
+    fun savedBingeGroupIsUsedWhenInMemoryGroupIsNull() {
+        BingeGroupCacheStorage.initialize(RuntimeEnvironment.getApplication())
+        BingeGroupCacheRepository.save("autoplay-test", "saved-group")
+        val settings = PlayerSettingsUiState(
+            streamAutoPlayPreferBingeGroup = true,
+            streamAutoPlayReuseBingeGroup = true,
+        )
+        assertEquals(
+            "saved-group",
+            resolveNextEpisodeBingeGroup(
+                currentStreamBingeGroup = null,
+                settings = settings,
+                parentMetaId = "autoplay-test",
+            ),
+        )
+        // An in-memory group from the current stream always wins over the cache.
+        assertEquals(
+            "live-group",
+            resolveNextEpisodeBingeGroup(
+                currentStreamBingeGroup = "live-group",
+                settings = settings,
+                parentMetaId = "autoplay-test",
+            ),
+        )
+        // A series with nothing saved resolves to no group.
+        assertNull(
+            resolveNextEpisodeBingeGroup(
+                currentStreamBingeGroup = null,
+                settings = settings,
+                parentMetaId = "autoplay-test-unsaved",
+            ),
+        )
+    }
+
+    @Test
+    fun savedBingeGroupIsIgnoredWhenPreferOrReuseIsOff() {
+        BingeGroupCacheStorage.initialize(RuntimeEnvironment.getApplication())
+        BingeGroupCacheRepository.save("autoplay-test", "saved-group")
+        assertNull(
+            resolveNextEpisodeBingeGroup(
+                currentStreamBingeGroup = null,
+                settings = PlayerSettingsUiState(
+                    streamAutoPlayPreferBingeGroup = true,
+                    streamAutoPlayReuseBingeGroup = false,
+                ),
+                parentMetaId = "autoplay-test",
+            ),
+        )
+        assertNull(
+            resolveNextEpisodeBingeGroup(
+                currentStreamBingeGroup = null,
+                settings = PlayerSettingsUiState(
+                    streamAutoPlayPreferBingeGroup = false,
+                    streamAutoPlayReuseBingeGroup = true,
+                ),
+                parentMetaId = "autoplay-test",
+            ),
+        )
     }
 
     @Test

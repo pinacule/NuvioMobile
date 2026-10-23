@@ -165,6 +165,7 @@ object SeasonDownloads {
         template: StreamItem,
         templateVideoId: String,
     ): SeasonDownloadResult {
+        if (!checkP2pAllowed(template)) return SeasonDownloadResult.P2pDisabled
         DownloadsRepository.ensureLoaded()
         runCatching { PlayerSettingsRepository.ensureLoaded() }
         // Dub over sub, always: when matching other episodes to the template,
@@ -185,7 +186,13 @@ object SeasonDownloads {
                             template
                         } else {
                             val candidates = fetchEpisodeStreams(addon, contentType, video.id, template)
-                            pickMatchingEpisodeStream(template, candidates, preferEnglishAudio)
+                            pickMatchingEpisodeStream(
+                                template,
+                                candidates,
+                                preferEnglishAudio,
+                                targetSeason = video.season,
+                                targetEpisode = video.episode,
+                            )
                         }
                         video to stream?.let { resolvePlayable(it, video.season ?: 0, video.episode) }
                     }
@@ -300,17 +307,45 @@ object SeasonDownloads {
  * otherwise a stream of the same kind and resolution whose release name is closest.
  * When no stream exists at the template's resolution, the closest available quality
  * is used instead of giving up (see [matchingResolutionPool]).
- * When [preferEnglishAudio], an English-audio release of the same kind wins across
- * resolutions before that same-resolution matching runs (dub over sub, always).
+ * When [preferEnglishAudio], an English-audio release wins across
+ * resolutions (and across stream kinds) before that same-resolution matching runs (dub over sub, always) — and
+ * before the season-pack hash shortcut too, unless the pack itself is the dub: a
+ * non-English pack must not swallow episodes that have their own English release.
+ * When the target's [targetSeason]/[targetEpisode] are known, candidates whose
+ * name/title/filename carries an explicit season/episode marker for a DIFFERENT episode
+ * are dropped before any ranking (the dub branch ranks by seeders ahead of
+ * name similarity, so a mislabelled S02E02 dub could otherwise beat the correct
+ * S02E01 release). Candidates with no explicit marker stay eligible, as does
+ * the template-hash match itself; without target coordinates (a movie) the
+ * check is skipped.
  */
 internal fun pickMatchingEpisodeStream(
     template: StreamItem,
     candidates: List<StreamItem>,
     preferEnglishAudio: Boolean = false,
+    targetSeason: Int? = null,
+    targetEpisode: Int? = null,
 ): StreamItem? {
     val templateHash = template.p2pInfoHash?.lowercase()
-    if (templateHash != null) {
-        candidates.firstOrNull { it.p2pInfoHash?.lowercase() == templateHash }?.let { return it }
+    val eligible = if (targetSeason != null && targetEpisode != null) {
+        candidates.filter { candidate ->
+            val isHashMatch = templateHash != null &&
+                candidate.p2pInfoHash?.lowercase() == templateHash
+            isHashMatch || !candidate.hasConflictingEpisodeMarker(targetSeason, targetEpisode)
+        }
+    } else {
+        candidates
+    }
+    val hashMatch = templateHash?.let { hash ->
+        eligible.firstOrNull { it.p2pInfoHash?.lowercase() == hash }
+    }
+    if (hashMatch != null) {
+        // The pack shortcut is safe for the dub rule only when the preference is
+        // off, the pack itself carries English audio, or no candidate does.
+        val dubDefeated = preferEnglishAudio &&
+            !AdaptiveStreamPicker.hasEnglishAudio(hashMatch) &&
+            eligible.any { AdaptiveStreamPicker.hasEnglishAudio(it) }
+        if (!dubDefeated) return hashMatch
     }
     val templateResolution = template.streamResolution()
     if (preferEnglishAudio) {
@@ -319,10 +354,12 @@ internal fun pickMatchingEpisodeStream(
         // resolution wins first, then best-seeded, then the closest release
         // name; ties keep the addon's own ordering (maxWithOrNull keeps the
         // first of equal scores). The candidate set stays the template addon's
-        // streams, same kind as the template — only the ranking widens.
+        // streams, but — like EpisodeDownloadPlanner.pickBestStreamAtQuality —
+        // it is NOT restricted to the template's kind: a dub that exists only
+        // as a direct HTTP/debrid stream still counts. Only the non-English
+        // matching below keeps the same-kind restriction.
         val englishTokens = template.releaseTokens()
-        candidates
-            .filter { it.isTorrentStream == template.isTorrentStream }
+        eligible
             .filter { AdaptiveStreamPicker.hasEnglishAudio(it) }
             .maxWithOrNull(
                 compareBy<StreamItem> { if (it.streamResolution() == templateResolution) 1 else 0 }
@@ -330,14 +367,29 @@ internal fun pickMatchingEpisodeStream(
                     .thenBy { jaccard(englishTokens, it.releaseTokens()) },
             )
             ?.let { return it }
+        // No dub in the English pool (e.g. only a different-kind one): the pack
+        // shortcut still applies, ahead of the same-resolution matching below.
+        hashMatch?.let { return it }
     }
-    val sameKind = candidates.filter { it.isTorrentStream == template.isTorrentStream }
+    val sameKind = eligible.filter { it.isTorrentStream == template.isTorrentStream }
     val pool = matchingResolutionPool(sameKind, templateResolution)
     if (pool.isEmpty()) return null
     // Dub over sub: prefer English-audio releases at the template's quality.
+    // The English narrowing is not kind-restricted either (see the block
+    // above): English releases of any kind, narrowed to the closest
+    // resolution, form the fallback English pool. In practice the block
+    // above has already returned any English candidate, so this only keeps
+    // the two pools consistent.
     val rankedPool = if (preferEnglishAudio) {
         val english = pool.filter { AdaptiveStreamPicker.hasEnglishAudio(it) }
-        if (english.isNotEmpty()) english else pool
+        if (english.isNotEmpty()) {
+            english
+        } else {
+            matchingResolutionPool(
+                eligible.filter { AdaptiveStreamPicker.hasEnglishAudio(it) },
+                templateResolution,
+            ).ifEmpty { pool }
+        }
     } else {
         pool
     }
@@ -384,6 +436,100 @@ private fun closestQualityLabel(available: List<String>, target: String): String
     )
 
 private val episodeMarker = Regex("\\bs\\d{1,2}\\s*e\\d{1,3}\\b|\\b\\d{1,2}x\\d{1,3}\\b|\\be(p(isode)?)?\\s*\\d{1,3}\\b")
+
+// Explicit season/episode markers with capturable numbers: the SxxExx and NxN
+// shapes from [episodeMarker] (the bare "E05" shape carries no season, so it
+// cannot prove a mismatch on its own and is not used here).
+private val seasonEpisodeMarker = Regex("\\bs(\\d{1,2})\\s*e(\\d{1,3})\\b", RegexOption.IGNORE_CASE)
+private val crossEpisodeMarker = Regex("\\b(\\d{1,2})x(\\d{1,3})\\b")
+
+// NxN pairs that are standard aspect ratios, not season/episode markers:
+// "…1080p.WEB.16x9.…" names a 16:9 picture, not season 16 episode 9. The set
+// is deliberately an explicit list of well-known ratios — 3:2, 4:3, 5:4,
+// 9:16 (vertical), 16:9, 16:10, 17:9 (DCI), 21:9 and 32:9 — rather than a
+// numeric range heuristic: a long-running show can genuinely reach a season
+// in the teens or beyond, so only these exact pairs are exempted, and only
+// from the NxN shape (an SxxExx marker is never an aspect ratio). Exempting a
+// pair can at worst keep a candidate the name really meant as that episode
+// (a miss); keeping the exemption list small and exact bounds that cost,
+// while a false drop would empty the pool and mark the episode missing.
+private val aspectRatioPairs = setOf(
+    3 to 2, 4 to 3, 5 to 4, 9 to 16, 16 to 9, 16 to 10, 17 to 9, 21 to 9, 32 to 9,
+)
+
+// Episode-range markers: a full marker, a dash, and an endpoint that repeats
+// the season ("S02E01-S02E02", "2x01-2x02"), repeats only the episode with its
+// shape letter ("S02E01-E02"), or is a bare number ("2x01-02", "S02E01-02").
+// Only this marker-dash-endpoint shape extends coverage — a bare endpoint
+// anywhere else proves nothing — and the endpoint group must end on a word
+// boundary, so a dash into a resolution ("S02E01-1080p") is not a range.
+private val seasonEpisodeRangeMarker = Regex(
+    "\\bs(\\d{1,2})\\s*e(\\d{1,3})\\s*-\\s*(?:s(\\d{1,2})\\s*e|e)?(\\d{1,3})\\b",
+    RegexOption.IGNORE_CASE,
+)
+private val crossEpisodeRangeMarker = Regex(
+    "\\b(\\d{1,2})x(\\d{1,3})\\s*-\\s*(?:(\\d{1,2})x)?(\\d{1,3})\\b",
+)
+
+/**
+ * True when this stream's name/title/filename carries explicit season/episode
+ * markers and NONE of them names [targetSeason]/[targetEpisode] — i.e. the
+ * release is provably for a different episode. No marker at all, or any marker
+ * matching the target (a name can carry several, e.g. a range), keeps the
+ * stream eligible: false drops are worse than misses. The description is
+ * deliberately not scanned — prose mentions other episodes too easily.
+ * Two marker-like shapes are handled before judging: known aspect-ratio
+ * pairs ([aspectRatioPairs]) are not episode claims and are ignored, and a
+ * range ("S02E01-E03", "2x01-02") covers every episode from its start to
+ * its endpoint, not just the two numbers written out.
+ */
+private fun StreamItem.hasConflictingEpisodeMarker(targetSeason: Int, targetEpisode: Int): Boolean {
+    val text = listOfNotNull(name, title, behaviorHints.filename).joinToString(" ")
+    val seasonMarkers = seasonEpisodeMarker.findAll(text).mapNotNull { match ->
+        val s = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
+        val e = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+        s to e
+    }
+    val crossMarkers = crossEpisodeMarker.findAll(text).mapNotNull { match ->
+        val s = match.groupValues[1].toIntOrNull() ?: return@mapNotNull null
+        val e = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+        s to e
+    }.filter { it !in aspectRatioPairs }
+    val parsed = (seasonMarkers + crossMarkers).toList()
+
+    // Ranges as (season, first episode, last episode). A range only counts
+    // when its endpoint stays in the start's season and does not run
+    // backwards; the endpoints are already in [parsed] for the fully
+    // repeated forms, so a range adds exactly the interior episodes and the
+    // shorthand endpoints ("-E02", "-02") that [seasonEpisodeMarker] and
+    // [crossEpisodeMarker] cannot capture on their own.
+    val ranges = mutableListOf<Triple<Int, Int, Int>>()
+    seasonEpisodeRangeMarker.findAll(text).forEach { match ->
+        val startSeason = match.groupValues[1].toIntOrNull() ?: return@forEach
+        val startEpisode = match.groupValues[2].toIntOrNull() ?: return@forEach
+        val endSeason = match.groupValues[3].toIntOrNull() ?: startSeason
+        val endEpisode = match.groupValues[4].toIntOrNull() ?: return@forEach
+        if (endSeason == startSeason && endEpisode >= startEpisode) {
+            ranges += Triple(startSeason, startEpisode, endEpisode)
+        }
+    }
+    crossEpisodeRangeMarker.findAll(text).forEach { match ->
+        val startSeason = match.groupValues[1].toIntOrNull() ?: return@forEach
+        val startEpisode = match.groupValues[2].toIntOrNull() ?: return@forEach
+        if ((startSeason to startEpisode) in aspectRatioPairs) return@forEach
+        val endSeason = match.groupValues[3].toIntOrNull() ?: startSeason
+        val endEpisode = match.groupValues[4].toIntOrNull() ?: return@forEach
+        if (endSeason == startSeason && endEpisode >= startEpisode) {
+            ranges += Triple(startSeason, startEpisode, endEpisode)
+        }
+    }
+
+    val coversTarget = parsed.any { it.first == targetSeason && it.second == targetEpisode } ||
+        ranges.any { (season, first, last) ->
+            season == targetSeason && targetEpisode in first..last
+        }
+    return (parsed.isNotEmpty() || ranges.isNotEmpty()) && !coversTarget
+}
 
 /** Release-name words without episode numbers or bare numbers (sizes, seeders). */
 private fun StreamItem.releaseTokens(): Set<String> =

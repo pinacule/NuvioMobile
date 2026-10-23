@@ -10,6 +10,7 @@ import okhttp3.OkHttpClient
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.HttpsURLConnection
 
 internal object PlayerPlaybackNetworking {
@@ -58,10 +59,22 @@ internal object PlayerPlaybackNetworking {
         val requestHeaders = sanitizeHeaders(defaultHeaders)
         val baseClient = if (useLongReadTimeout) loopbackPlaybackHttpClient else playbackHttpClient
         val client = requestHeaders.headerValue("Authorization")?.let { authorization ->
+            // This factory has no single original stream URL: its call sites
+            // (PlatformPlaybackDataSourceFactory) receive only headers, and the
+            // factory serves the video, a separate audio URL and subtitles.
+            // Pin the token to the host of the first request this factory
+            // instance makes. OkHttp strips Authorization on cross-host
+            // redirects and network interceptors re-run per hop, so without
+            // the host check a redirect to any other host would receive the
+            // user's debrid token.
+            val pinnedHost = AtomicReference<String?>(null)
             baseClient.newBuilder()
                 .addNetworkInterceptor { chain ->
                     val request = chain.request()
-                    if (request.header("Authorization") == null) {
+                    pinnedHost.compareAndSet(null, request.url.host)
+                    if (request.header("Authorization") == null &&
+                        shouldAttachAuthorization(pinnedHost.get(), request.url.host)
+                    ) {
                         chain.proceed(
                             request.newBuilder()
                                 .header("Authorization", authorization)
@@ -146,3 +159,13 @@ internal object PlayerPlaybackNetworking {
     private fun Map<String, String>.headerValue(name: String): String? =
         entries.firstOrNull { (key, _) -> key.equals(name, ignoreCase = true) }?.value
 }
+
+/**
+ * Whether a credential stripped by OkHttp may be re-attached to a request for
+ * [requestHost]. Host equality only (case-insensitive), matching the codebase's
+ * own host comparisons (e.g. isLoopbackPlaybackSource): subdomains and parent
+ * domains do not match, and scheme/port are not part of the decision, so a
+ * same-host redirect that changes port still counts as the same host.
+ */
+internal fun shouldAttachAuthorization(pinnedHost: String?, requestHost: String): Boolean =
+    !pinnedHost.isNullOrBlank() && pinnedHost.equals(requestHost, ignoreCase = true)

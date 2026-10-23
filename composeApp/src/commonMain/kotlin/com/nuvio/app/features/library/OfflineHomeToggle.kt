@@ -27,14 +27,13 @@ import com.nuvio.app.features.home.OfflineHomeRepository
  * filter row (next to the "All types" / sort chips). Reflects the *effective*
  * offline-home mode — including when connectivity turned it on automatically —
  * and flips the session override: this is how the user enters the mode
- * manually on Wi-Fi and clicks out of it on mobile data. [onToggled] runs
- * after the flip so the host can navigate to the Home tab, where the new
- * mode is what the user sees.
+ * manually on Wi-Fi and clicks out of it on mobile data. Purely a mode
+ * toggle — it never navigates: the Library filters in place while the mode
+ * is active, and the Home tab shows the downloads-only homepage.
  */
 @Composable
 internal fun OfflineHomeToggle(
     modifier: Modifier = Modifier,
-    onToggled: (() -> Unit)? = null,
 ) {
     LaunchedEffect(Unit) {
         OfflineHomeRepository.ensureStarted()
@@ -60,7 +59,6 @@ internal fun OfflineHomeToggle(
             .background(background)
             .clickable {
                 OfflineHomeRepository.toggle()
-                onToggled?.invoke()
             }
             .padding(horizontal = NuvioTokens.Space.s12, vertical = tokens.components.chipVerticalPadding),
         horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),

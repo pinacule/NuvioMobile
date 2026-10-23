@@ -25,8 +25,12 @@ private fun SimklSyncSnapshot.withPausedScrobble(
     committedAt: String,
 ): SimklSyncSnapshot {
     val existingEntry = entries.matchingEntry(result)
+    // Episode-aware identity (playbackKey, SimklPlaybackMerge.kt): another episode of the same
+    // show is a different playback, so pausing this episode must not merge from — or replace —
+    // the locally held resume row of a different episode.
+    val targetKey = simklPlaybackKey(result.media, result.episode)
     val existingSession = playback.firstOrNull { session ->
-        session.media?.matchesTarget(result.media) == true
+        session.matchesPlaybackKey(targetKey, result.media)
     }
     val media = result.media
         .mergeMissing(existingEntry?.media)
@@ -44,9 +48,10 @@ private fun SimklSyncSnapshot.withPausedScrobble(
         anime = media.takeIf { mediaType == SimklMediaType.ANIME && !isAnimeMovie },
         movie = media.takeIf { mediaType == SimklMediaType.MOVIES || isAnimeMovie },
     )
+    val sessionKey = session.playbackKey() ?: targetKey
     return copy(
         playback = playback.filterNot { candidate ->
-            candidate.media?.matchesTarget(result.media) == true
+            candidate.matchesPlaybackKey(sessionKey, result.media)
         } + session,
     )
 }
@@ -73,13 +78,31 @@ private fun SimklSyncSnapshot.withCompletedScrobble(
     } else {
         updatedEntries += updated
     }
+    // Completing one episode ends only that episode's playback; the resume rows of the show's
+    // other episodes stay, so match on the episode-aware key, not the media alone.
+    val targetKey = simklPlaybackKey(result.media, result.episode)
     return copy(
         entries = updatedEntries,
         playback = playback.filterNot { session ->
-            session.media?.matchesTarget(result.media) == true
+            session.matchesPlaybackKey(targetKey, result.media)
         },
     )
 }
+
+/**
+ * True when this row is the playback [key] describes. When no key can be built at all (the media
+ * carries neither an id nor a title) episodes cannot be told apart either, so fall back to the
+ * previous media-only match rather than leaving a stale row behind.
+ */
+private fun SimklPlaybackSession.matchesPlaybackKey(
+    key: String?,
+    targetMedia: SimklMedia,
+): Boolean =
+    if (key != null) {
+        playbackKey() == key
+    } else {
+        media?.matchesTarget(targetMedia) == true
+    }
 
 private fun SimklLibraryEntry.withWatchedMovie(
     result: SimklScrobbleResult,

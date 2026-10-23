@@ -81,6 +81,7 @@ import com.nuvio.app.features.cloud.CloudLibraryItemType
 import com.nuvio.app.features.cloud.CloudLibraryRepository
 import com.nuvio.app.features.cloud.CloudLibraryUiState
 import com.nuvio.app.features.debrid.DebridSettingsRepository
+import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
@@ -109,6 +110,7 @@ import com.nuvio.app.core.poster.withCustomPosterUrls
 import com.nuvio.app.features.home.HomeContinueWatchingMaxRecentProgressItems
 import com.nuvio.app.features.home.OfflineHomeRepository
 import com.nuvio.app.features.home.buildHomeContinueWatchingItems
+import com.nuvio.app.features.home.filterContinueWatchingForOfflineHome
 import com.nuvio.app.features.home.filterEntriesForContinueWatchingWindow
 import com.nuvio.app.features.home.toContinueWatchingItem
 import com.nuvio.app.features.home.components.HomeContinueWatchingSection
@@ -132,7 +134,6 @@ fun LibraryScreen(
     onPreviewClick: ((MetaPreview) -> Unit)? = null,
     onPreviewLongClick: ((MetaPreview) -> Unit)? = null,
     onDownloadsClick: (() -> Unit)? = null,
-    onOfflineHomeToggleClick: (() -> Unit)? = null,
     onContinueWatchingClick: ((ContinueWatchingItem) -> Unit)? = null,
     onContinueWatchingLongPress: ((ContinueWatchingItem) -> Unit)? = null,
     continueWatchingDisintegrationRequest: DisintegrationRequest<String>? = null,
@@ -232,6 +233,37 @@ fun LibraryScreen(
         LibraryDisplaySettingsRepository.ensureLoaded()
         LibraryDisplaySettingsRepository.uiState
     }.collectAsStateWithLifecycle()
+    val offlineHomeState by OfflineHomeRepository.uiState.collectAsStateWithLifecycle()
+    val isOfflineHomeActive = offlineHomeState.isActive
+    val downloadsUiState by remember {
+        DownloadsRepository.ensureLoaded()
+        DownloadsRepository.uiState
+    }.collectAsStateWithLifecycle()
+    // Only downloads verified on disk count — the same source the offline
+    // homepage consumes.
+    val offlinePlayableDownloads = remember(downloadsUiState.items) {
+        DownloadsRepository.playableLocalDownloads()
+    }
+    // While offline-home mode is active the Library filters in place to what
+    // is downloaded; inactive mode passes the current data through untouched.
+    val displayedSections = remember(uiState.sections, isOfflineHomeActive, offlinePlayableDownloads) {
+        if (isOfflineHomeActive) {
+            filterLibrarySectionsForOfflineHome(uiState.sections, offlinePlayableDownloads)
+        } else {
+            uiState.sections
+        }
+    }
+    val displayedContinueWatchingItems = remember(
+        libraryContinueWatchingItems,
+        isOfflineHomeActive,
+        offlinePlayableDownloads,
+    ) {
+        if (isOfflineHomeActive) {
+            filterContinueWatchingForOfflineHome(libraryContinueWatchingItems, offlinePlayableDownloads)
+        } else {
+            libraryContinueWatchingItems
+        }
+    }
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
     var observedOfflineState by remember { mutableStateOf(false) }
     val serversUiState by remember {
@@ -263,9 +295,9 @@ fun LibraryScreen(
         sourceMode = uiState.sourceMode,
     )
     val orderListKeys = if (sourceMode != LibraryViewMode.Saved) emptyList() else {
-        if (displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) uiState.sections.map { it.type }
-        else listOfNotNull(uiState.sections.firstOrNull { it.type == selectedLibrarySectionKey }?.type
-            ?: uiState.sections.firstOrNull()?.type)
+        if (displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) displayedSections.map { it.type }
+        else listOfNotNull(displayedSections.firstOrNull { it.type == selectedLibrarySectionKey }?.type
+            ?: displayedSections.firstOrNull()?.type)
     }
     val providerOrders = rememberLibraryProviderOrders(uiState.sourceMode, orderListKeys, effectiveSortOption)
     val visibleSortOption = if (providerOrders.failed) LibrarySortOption.DEFAULT else effectiveSortOption
@@ -275,10 +307,10 @@ fun LibraryScreen(
             .groupBy { it.parentMetaId }
             .mapValues { (_, entries) -> entries.maxOf { it.lastUpdatedEpochMs } }
     }
-    val sortedSections = remember(uiState.sections, displaySettings, uiState.sourceMode, sourceMode, providerOrders, lastWatchedEpochMsById) {
+    val sortedSections = remember(displayedSections, displaySettings, uiState.sourceMode, sourceMode, providerOrders, lastWatchedEpochMsById) {
         if (sourceMode == LibraryViewMode.Saved && displaySettings.layoutMode == LibraryLayoutMode.HORIZONTAL) {
             sortLibrarySections(
-                sections = uiState.sections,
+                sections = displayedSections,
                 selected = visibleSortOption,
                 sourceMode = uiState.sourceMode,
                 providerOrders = providerOrders.ranks,
@@ -289,7 +321,7 @@ fun LibraryScreen(
         }
     }
     val verticalProjection = remember(
-        uiState.sections,
+        displayedSections,
         uiState.sourceMode,
         selectedLibrarySectionKey,
         selectedLibraryType,
@@ -300,7 +332,7 @@ fun LibraryScreen(
     ) {
         if (sourceMode == LibraryViewMode.Saved && displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
             buildLibraryVerticalProjection(
-                sections = uiState.sections,
+                sections = displayedSections,
                 sourceMode = uiState.sourceMode,
                 selectedSectionKey = selectedLibrarySectionKey,
                 selectedType = selectedLibraryType,
@@ -511,10 +543,10 @@ fun LibraryScreen(
             } else {
                 // Continue Watching is driven by watch progress, not by saved titles,
                 // so it renders above everything even when the library is empty.
-                if (continueWatchingPreferences.isVisible && libraryContinueWatchingItems.isNotEmpty()) {
+                if (continueWatchingPreferences.isVisible && displayedContinueWatchingItems.isNotEmpty()) {
                     item(key = "library_continue_watching", contentType = "continue_watching") {
                         HomeContinueWatchingSection(
-                            items = libraryContinueWatchingItems,
+                            items = displayedContinueWatchingItems,
                             dataSourceKey = effectiveWatchProgressSource,
                             style = continueWatchingPreferences.style,
                             useEpisodeThumbnails = continueWatchingPreferences.useEpisodeThumbnails,
@@ -528,6 +560,23 @@ fun LibraryScreen(
                 }
                 when {
                     !uiState.isLoaded || (uiState.isLoading && uiState.sections.isEmpty()) -> {
+                        // Offline mode on + a library stuck loading must not
+                        // trap the user: keep the controls (and the toggle)
+                        // reachable above the skeletons.
+                        if (isOfflineHomeActive) {
+                            librarySavedControlsItem(
+                                layoutMode = displaySettings.layoutMode,
+                                sourceMode = uiState.sourceMode,
+                                sortOption = effectiveSortOption,
+                                verticalProjection = verticalProjection,
+                                onSectionSelected = { sectionKey ->
+                                    selectedLibrarySectionKey = sectionKey
+                                    selectedLibraryType = null
+                                },
+                                onTypeSelected = { type -> selectedLibraryType = type },
+                                onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
+                            )
+                        }
                         if (displaySettings.layoutMode == LibraryLayoutMode.VERTICAL) {
                             libraryVerticalSkeletonItems(gridColumns)
                         } else {
@@ -540,6 +589,24 @@ fun LibraryScreen(
                     }
 
                     !uiState.errorMessage.isNullOrBlank() && uiState.sections.isEmpty() -> {
+                        // A failed load with offline mode on still has to
+                        // offer the way out — this branch wins over the
+                        // offline-empty branch below, so emit the controls
+                        // (and the toggle) here too.
+                        if (isOfflineHomeActive) {
+                            librarySavedControlsItem(
+                                layoutMode = displaySettings.layoutMode,
+                                sourceMode = uiState.sourceMode,
+                                sortOption = effectiveSortOption,
+                                verticalProjection = verticalProjection,
+                                onSectionSelected = { sectionKey ->
+                                    selectedLibrarySectionKey = sectionKey
+                                    selectedLibraryType = null
+                                },
+                                onTypeSelected = { type -> selectedLibraryType = type },
+                                onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
+                            )
+                        }
                         item {
                             if (networkStatusUiState.isOfflineLike) {
                                 NuvioNetworkOfflineCard(
@@ -564,7 +631,50 @@ fun LibraryScreen(
                         }
                     }
 
+                    isOfflineHomeActive && displayedSections.isEmpty() -> {
+                        // Offline mode with nothing downloaded: keep the
+                        // controls (and the toggle) reachable above the empty
+                        // state so the mode can be switched back off here.
+                        librarySavedControlsItem(
+                            layoutMode = displaySettings.layoutMode,
+                            sourceMode = uiState.sourceMode,
+                            sortOption = effectiveSortOption,
+                            verticalProjection = verticalProjection,
+                            onSectionSelected = { sectionKey ->
+                                selectedLibrarySectionKey = sectionKey
+                                selectedLibraryType = null
+                            },
+                            onTypeSelected = { type -> selectedLibraryType = type },
+                            onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
+                        )
+                        item {
+                            HomeEmptyStateCard(
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                                title = "No downloads yet",
+                                message = "Movies and episodes you download will appear here, ready to watch offline.",
+                            )
+                        }
+                    }
+
                     uiState.sections.isEmpty() -> {
+                        // Unreachable with the mode on today (the
+                        // offline-empty branch above pre-empts it), but the
+                        // same guard keeps the no-trap invariant local to
+                        // this branch instead of depending on branch order.
+                        if (isOfflineHomeActive) {
+                            librarySavedControlsItem(
+                                layoutMode = displaySettings.layoutMode,
+                                sourceMode = uiState.sourceMode,
+                                sortOption = effectiveSortOption,
+                                verticalProjection = verticalProjection,
+                                onSectionSelected = { sectionKey ->
+                                    selectedLibrarySectionKey = sectionKey
+                                    selectedLibraryType = null
+                                },
+                                onTypeSelected = { type -> selectedLibraryType = type },
+                                onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
+                            )
+                        }
                         item {
                             HomeEmptyStateCard(
                                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -585,28 +695,18 @@ fun LibraryScreen(
                     }
 
                     else -> {
-                        item(
-                            key = "library-saved-controls:${uiState.sourceMode}:" +
-                                "${displaySettings.layoutMode}:$effectiveSortOption",
-                        ) {
-                            LibrarySavedControls(
-                                layoutMode = displaySettings.layoutMode,
-                                sourceMode = uiState.sourceMode,
-                                sortOption = effectiveSortOption,
-                                verticalProjection = verticalProjection,
-                                onSectionSelected = { sectionKey ->
-                                    selectedLibrarySectionKey = sectionKey
-                                    selectedLibraryType = null
-                                },
-                                onTypeSelected = { type -> selectedLibraryType = type },
-                                onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
-                                modifier = libraryContentTransitionModifier()
-                                    .padding(horizontal = 16.dp),
-                                trailingContent = {
-                                    OfflineHomeToggle(onToggled = onOfflineHomeToggleClick)
-                                },
-                            )
-                        }
+                        librarySavedControlsItem(
+                            layoutMode = displaySettings.layoutMode,
+                            sourceMode = uiState.sourceMode,
+                            sortOption = effectiveSortOption,
+                            verticalProjection = verticalProjection,
+                            onSectionSelected = { sectionKey ->
+                                selectedLibrarySectionKey = sectionKey
+                                selectedLibraryType = null
+                            },
+                            onTypeSelected = { type -> selectedLibraryType = type },
+                            onSortSelected = LibraryDisplaySettingsRepository::setSortOption,
+                        )
                         when (displaySettings.layoutMode) {
                             LibraryLayoutMode.HORIZONTAL -> librarySections(
                                 displaySections = librarySectionsDisplay,
@@ -633,6 +733,44 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * The saved-library controls row (type filter, sort, Offline toggle) as a
+ * lazy-list item. Emitted by the content branch and by the offline-mode
+ * empty branch, and — whenever offline mode is active — also by the
+ * loading, error, and empty branches, so the toggle stays reachable — and
+ * the mode switchable — in every Library state. Without that, a library
+ * that is empty, failing, or stuck loading would trap the user in offline
+ * mode with no visible way out.
+ */
+private fun LazyListScope.librarySavedControlsItem(
+    layoutMode: LibraryLayoutMode,
+    sourceMode: LibrarySourceMode,
+    sortOption: LibrarySortOption,
+    verticalProjection: LibraryVerticalProjection,
+    onSectionSelected: (String) -> Unit,
+    onTypeSelected: (String?) -> Unit,
+    onSortSelected: (LibrarySortOption) -> Unit,
+) {
+    item(
+        key = "library-saved-controls:$sourceMode:$layoutMode:$sortOption",
+    ) {
+        LibrarySavedControls(
+            layoutMode = layoutMode,
+            sourceMode = sourceMode,
+            sortOption = sortOption,
+            verticalProjection = verticalProjection,
+            onSectionSelected = onSectionSelected,
+            onTypeSelected = onTypeSelected,
+            onSortSelected = onSortSelected,
+            modifier = libraryContentTransitionModifier()
+                .padding(horizontal = 16.dp),
+            trailingContent = {
+                OfflineHomeToggle()
+            },
+        )
     }
 }
 

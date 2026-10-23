@@ -147,10 +147,14 @@ object SimklAuthRepository : TrackingAuthProvider {
         return when (val callback = parseSimklAuthCallback(url, SimklConfig.REDIRECT_URI)) {
             SimklAuthCallback.NotSimkl -> false
             SimklAuthCallback.Invalid -> {
-                clearPendingAuthorization()
-                persistMetadata()
-                publish(error = SimklAuthError.INVALID_CALLBACK)
-                true
+                // Defensive: a malformed callback must never clear the
+                // pending authorization or surface an error. The parser
+                // already maps incomplete callbacks to NotSimkl, so this
+                // branch is unreachable from parsing today; keep it a
+                // no-op so no future producer can revive the destructive
+                // behaviour.
+                log.w { "Ignoring malformed Simkl auth callback" }
+                false
             }
             is SimklAuthCallback.AuthorizationCode -> {
                 scope.launch { completeAuthorization(callback) }
@@ -206,7 +210,6 @@ object SimklAuthRepository : TrackingAuthProvider {
 
     private suspend fun completeAuthorization(callback: SimklAuthCallback.AuthorizationCode) =
         authorizationMutex.withLock {
-            publish(isLoading = true, error = null)
             val expectedState = storedState.pendingAuthorizationState
             val verifier = SimklAuthStorage.loadCodeVerifier()
             val isExpired = isSimklAuthorizationExpired(
@@ -220,11 +223,17 @@ object SimklAuthRepository : TrackingAuthProvider {
                 return@withLock
             }
             if (!constantTimeEquals(callback.state, expectedState)) {
-                clearPendingAuthorization()
-                persistMetadata()
-                publish(isLoading = false, error = SimklAuthError.INVALID_CALLBACK_STATE)
+                // A callback with a non-matching state cannot be the
+                // legitimate one (the state is random and unguessable),
+                // so it is most likely a stray or forged deep link.
+                // Clearing the pending authorization here would only
+                // destroy the in-progress sign-in; leave the pending
+                // state and the UI untouched and let the legitimate
+                // callback complete (or the 5-minute expiry clean up).
+                log.w { "Ignoring Simkl auth callback with mismatched state" }
                 return@withLock
             }
+            publish(isLoading = true, error = null)
 
             val request = SimklTokenRequest(
                 code = callback.code,

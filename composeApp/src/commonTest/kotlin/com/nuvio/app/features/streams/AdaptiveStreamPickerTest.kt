@@ -20,6 +20,26 @@ class AdaptiveStreamPickerTest {
         addonId = "torrentio",
     )
 
+    private fun streamWithParsed(
+        name: String,
+        languages: List<String> = emptyList(),
+        audio: List<String> = emptyList(),
+    ) = StreamItem(
+        name = name,
+        addonName = "Torrentio",
+        addonId = "torrentio",
+        clientResolve = StreamClientResolve(
+            stream = StreamClientResolveStream(
+                raw = StreamClientResolveRaw(
+                    parsed = StreamClientResolveParsed(
+                        languages = languages,
+                        audio = audio,
+                    ),
+                ),
+            ),
+        ),
+    )
+
     // targetQuality
 
     @Test
@@ -396,6 +416,29 @@ class AdaptiveStreamPickerTest {
     }
 
     @Test
+    fun hasEnglishAudio_frenchFusedTokensVetoMultiReleases() {
+        // French scene releases name their audio with fused tokens
+        // (VFF / VFQ / TrueFrench) that the french|fra|fre veto
+        // never matched, so a MULTi French release was flagged English.
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("[Judas] Re:Zero S02E01 MULTi VFF 1080p")))
+        // The veto lands wherever the French token sits, including the
+        // positions where the standalone MULTi tag itself is in tag
+        // position (directly before the resolution / trailing).
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 MULTi 1080p VFF")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 VFQ MULTi 1080p")))
+        assertFalse(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 TrueFrench MULTi 1080p")))
+        // VOSTFR is NOT a French-audio claim: it means original
+        // (unspecified-language) audio with French SUBTITLES, so it must
+        // not veto neutral English evidence — these are English-original
+        // releases carrying French subtitles.
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Movie 2024 Dual Audio VOSTFR 1080p")))
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Movie VOSTFR MULTi 1080p")))
+        // A genuine MULTi release that names English still counts.
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 MULTi ENG 1080p")))
+        assertTrue(AdaptiveStreamPicker.hasEnglishAudio(stream("Show S01E01 MULTi English Dub 1080p")))
+    }
+
+    @Test
     fun hasEnglishAudio_standaloneDualFollowedByYearOrChannelsIsTagPosition() {
         // A channel layout or a year sits where a resolution tag would:
         // both are tag position for a standalone dual/multi token.
@@ -426,6 +469,73 @@ class AdaptiveStreamPickerTest {
             behaviorHints = StreamBehaviorHints(filename = "Re_Zero_01_Dual_Audio_1080p.mkv"),
         )
         assertTrue(AdaptiveStreamPicker.hasEnglishAudio(dualAudio))
+    }
+
+    // hasEnglishAudio — structured parsed metadata (clientResolve.stream.raw.parsed)
+
+    @Test
+    fun hasEnglishAudio_parsedLanguagesNamingEnglishCountsWithoutTitleTags() {
+        // Clean title, no dub/multi tag anywhere: the parsed language
+        // listing alone is positive evidence when it names English.
+        assertTrue(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                streamWithParsed("Show S01E01 1080p", languages = listOf("ja", "en")),
+            ),
+        )
+        assertTrue(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                streamWithParsed("Show S01E01 1080p", languages = listOf("English")),
+            ),
+        )
+        // English named only in the parsed audio list counts too.
+        assertTrue(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                streamWithParsed("Show S01E01 1080p", audio = listOf("English")),
+            ),
+        )
+    }
+
+    @Test
+    fun hasEnglishAudio_parsedLanguagesWithoutEnglishVetoTitleTags() {
+        // A parsed listing that names only non-English languages vetoes
+        // the release regardless of its title tags: the dub is Spanish.
+        assertFalse(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                streamWithParsed("Show S01E01 [DUB] 1080p", languages = listOf("es")),
+            ),
+        )
+        assertFalse(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                streamWithParsed("Show S01E01 English Dub 1080p", languages = listOf("ja")),
+            ),
+        )
+        assertFalse(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                streamWithParsed("Show S01E01 1080p", languages = listOf("ja")),
+            ),
+        )
+    }
+
+    @Test
+    fun hasEnglishAudio_absentOrNeutralParsedMetadataKeepsTextBehaviour() {
+        // No parsed languages named (empty listing, or only the neutral
+        // "multi" marker): the text checks decide exactly as before, so a
+        // bare [DUB] still counts and a clean title still does not.
+        assertTrue(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                streamWithParsed("Show S01E01 [DUB] 1080p", languages = emptyList()),
+            ),
+        )
+        assertTrue(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                streamWithParsed("Show S01E01 [DUB] 1080p", languages = listOf("multi")),
+            ),
+        )
+        assertFalse(
+            AdaptiveStreamPicker.hasEnglishAudio(
+                streamWithParsed("Show S01E01 1080p", languages = emptyList()),
+            ),
+        )
     }
 
     // hasEnglishAudio — subtitle strip span (audit M-S3)
@@ -687,11 +797,15 @@ class AdaptiveStreamPickerTest {
     }
 
     @Test
-    fun pickBestSeeded_oversizeOnlyDubFallsBackToSaneSub() {
-        // The only English dub is a 30 GB remux: not auto-pick eligible
-        // under the hard ceiling, so the pick falls back to the sane
-        // non-English stream (the English recursion applies the same
-        // ceiling discipline and yields nothing).
+    fun pickBestSeeded_oversizeOnlyDubStillWinsOverSaneSub() {
+        // The only English dub is a 30 GB remux, far over the 1080p sane
+        // ceiling, and the Japanese stream is sane. The user's rule — "if
+        // dub is there they play it always if not then sub" — overrides the
+        // ceiling for the English pool: the oversize dub still wins instead
+        // of falling through to the sane sub. (This replaces the former
+        // pickBestSeeded_oversizeOnlyDubFallsBackToSaneSub contract; the
+        // hard ceiling still applies to the non-English pool — see
+        // pickBestSeeded_oversizeOnlyPoolReturnsNull.)
         val streams = listOf(
             stream("EN.Dual.Audio.1080p", "\uD83D\uDC64 100 \uD83D\uDCBE 30 GB"),
             stream("JP.1080p", "\uD83D\uDC64 50 \uD83D\uDCBE 2.0 GB"),
@@ -699,7 +813,63 @@ class AdaptiveStreamPickerTest {
         val picked = AdaptiveStreamPicker.pickBestSeeded(
             streams, "1080p", preferEnglishAudio = true,
         )
-        assertEquals("JP.1080p", picked?.name)
+        assertEquals("EN.Dual.Audio.1080p", picked?.name)
+    }
+
+    @Test
+    fun pickBestSeeded_saneDubBeatsOversizeDub() {
+        // The oversize fallback fires only when NO sane dub exists at any
+        // quality: a sane 720p dub beats an oversize 1080p dub (and both
+        // beat the sane Japanese stream).
+        val streams = listOf(
+            stream("EN.Dual.Audio.1080p", "\uD83D\uDC64 900 \uD83D\uDCBE 30 GB"),
+            stream("EN.Dual.Audio.720p", "\uD83D\uDC64 10 \uD83D\uDCBE 1.5 GB"),
+            stream("JP.1080p", "\uD83D\uDC64 500 \uD83D\uDCBE 2.0 GB"),
+        )
+        val picked = AdaptiveStreamPicker.pickBestSeeded(
+            streams, "1080p", preferEnglishAudio = true,
+        )
+        assertEquals("EN.Dual.Audio.720p", picked?.name)
+    }
+
+    @Test
+    fun pickBestSeeded_allDubsOversizePicksLeastOversizeThenBestSeeded() {
+        // Fixtures must be genuinely English-classified: a bare "EN."
+        // prefix is never positive evidence on its own, so each dub name
+        // carries a "Dual.Audio" tag (the pattern the other oversize
+        // fixtures in this class use). The 1080p sane ceiling is
+        // 5,000 MiB = 5,242,880,000 bytes.
+        //
+        // Least-excess half: both dubs are oversize (30 GB excess
+        // 26,969,374,720 bytes; 10 GB excess 5,494,538,240 bytes), so the
+        // least-oversize dub wins even though the bigger remux is far
+        // better seeded and the Japanese stream is sane.
+        val leastExcess = listOf(
+            stream("EN.Dual.Audio.Remux.1080p", "\uD83D\uDC64 900 \uD83D\uDCBE 30 GB"),
+            stream("EN.Dual.Audio.Encode.1080p", "\uD83D\uDC64 10 \uD83D\uDCBE 10 GB"),
+            stream("JP.1080p", "\uD83D\uDC64 500 \uD83D\uDCBE 2.0 GB"),
+        )
+        assertEquals(
+            "EN.Dual.Audio.Encode.1080p",
+            AdaptiveStreamPicker.pickBestSeeded(
+                leastExcess, "1080p", preferEnglishAudio = true,
+            )?.name,
+        )
+        // Seeder tie-break half: both dubs are the same size (20 GB,
+        // excess 16,231,956,480 bytes each), so the excess ties and the
+        // better-seeded dub must win — the low-seeded one is listed first,
+        // so addon order alone would pick the wrong stream.
+        val equalExcess = listOf(
+            stream("EN.Dual.Audio.LowSeed.1080p", "\uD83D\uDC64 100 \uD83D\uDCBE 20 GB"),
+            stream("EN.Dual.Audio.HighSeed.1080p", "\uD83D\uDC64 800 \uD83D\uDCBE 20 GB"),
+            stream("JP.1080p", "\uD83D\uDC64 500 \uD83D\uDCBE 2.0 GB"),
+        )
+        assertEquals(
+            "EN.Dual.Audio.HighSeed.1080p",
+            AdaptiveStreamPicker.pickBestSeeded(
+                equalExcess, "1080p", preferEnglishAudio = true,
+            )?.name,
+        )
     }
 
     @Test

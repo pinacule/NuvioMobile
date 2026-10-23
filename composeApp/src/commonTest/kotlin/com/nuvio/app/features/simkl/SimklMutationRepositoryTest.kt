@@ -255,6 +255,31 @@ class SimklMutationRepositoryTest {
     }
 
     @Test
+    fun `transient simkl failures are queueable and other 4xx are not`() {
+        fun apiError(status: Int?) = SimklApiException(
+            status = status,
+            errorCode = null,
+            message = "Simkl request failed",
+        )
+
+        // No HTTP response (transport failure) and transient HTTP failures
+        // must reach the scrobble outbox instead of being dropped.
+        assertTrue(isSimklQueueableFailure(apiError(null)))
+        assertTrue(isSimklQueueableFailure(apiError(408)))
+        assertTrue(isSimklQueueableFailure(apiError(429)))
+        assertTrue(isSimklQueueableFailure(apiError(500)))
+        assertTrue(isSimklQueueableFailure(apiError(503)))
+        assertTrue(isSimklQueueableFailure(apiError(599)))
+
+        // Permanent failures must not be queued.
+        assertFalse(isSimklQueueableFailure(apiError(400)))
+        assertFalse(isSimklQueueableFailure(apiError(401)))
+        assertFalse(isSimklQueueableFailure(apiError(404)))
+        assertFalse(isSimklQueueableFailure(apiError(200)))
+        assertFalse(isSimklQueueableFailure(IllegalStateException("offline")))
+    }
+
+    @Test
     fun `service leaves failed scrobble retry to the next player event`() = runBlocking {
         val engine = RecordingEngine(response(status = 503), response(status = 200))
         val service = SimklMutationService(

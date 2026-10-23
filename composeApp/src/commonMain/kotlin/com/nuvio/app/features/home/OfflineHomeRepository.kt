@@ -61,8 +61,10 @@ internal fun classifyOfflineHomeTransport(
 ): OfflineHomeTransport = when {
     isWifi -> OfflineHomeTransport.Wifi
     isCellular -> OfflineHomeTransport.Cellular
-    condition == NetworkCondition.NoInternet ||
-        condition == NetworkCondition.ServersUnreachable -> OfflineHomeTransport.Offline
+    // Only NoInternet with no radio means Offline. ServersUnreachable means
+    // the internet probe succeeded and only the backend failed — the device
+    // is not offline, so it falls through to Unknown.
+    condition == NetworkCondition.NoInternet -> OfflineHomeTransport.Offline
     else -> OfflineHomeTransport.Unknown
 }
 
@@ -78,6 +80,45 @@ internal fun nextOfflineHomeOverride(
 ): Boolean? = if (nextTransport != previousTransport) null else currentOverride
 
 /**
+ * Confirmation state for transport samples. A single instantaneous sample
+ * is unreliable: during handover gaps Android momentarily reports no
+ * transport, sampling as Offline/Unknown for one round, and committing
+ * that would clear the user's manual override (via
+ * [nextOfflineHomeOverride]) and flip the homepage unasked.
+ *
+ * Rules: the very first sample (no confirmed class yet) commits
+ * immediately; after that, a new class commits only when the SAME class
+ * is seen in two consecutive samples; a sample equal to the confirmed
+ * class clears any pending change; an Unknown sample never commits and
+ * breaks any pending run (it is indeterminate, not a class change).
+ */
+internal data class ConfirmedTransportState(
+    val confirmed: OfflineHomeTransport? = null,
+    val pendingClass: OfflineHomeTransport? = null,
+    val pendingCount: Int = 0,
+)
+
+internal fun confirmedTransport(
+    state: ConfirmedTransportState,
+    sample: OfflineHomeTransport,
+): ConfirmedTransportState = when {
+    state.confirmed == null -> ConfirmedTransportState(confirmed = sample)
+    sample == state.confirmed ->
+        state.copy(pendingClass = null, pendingCount = 0)
+    sample == OfflineHomeTransport.Unknown ->
+        state.copy(pendingClass = null, pendingCount = 0)
+    sample == state.pendingClass -> {
+        val count = state.pendingCount + 1
+        if (count >= 2) {
+            ConfirmedTransportState(confirmed = sample)
+        } else {
+            state.copy(pendingCount = count)
+        }
+    }
+    else -> state.copy(pendingClass = sample, pendingCount = 1)
+}
+
+/**
  * Session-only state for the offline homepage mode.
  *
  * Effective mode = manual override (set by the Library toggle) ?: connectivity
@@ -88,7 +129,14 @@ internal fun nextOfflineHomeOverride(
 object OfflineHomeRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private var transport: OfflineHomeTransport = sampleTransport()
+    // The startup sample commits immediately (empty state); later class
+    // changes need confirmation — see ConfirmedTransportState.
+    private var transportConfirmation: ConfirmedTransportState =
+        confirmedTransport(ConfirmedTransportState(), sampleTransport())
+
+    private val transport: OfflineHomeTransport
+        get() = transportConfirmation.confirmed ?: OfflineHomeTransport.Unknown
+
     private var manualOverride: Boolean? = null
 
     private val _uiState = MutableStateFlow(currentState())
@@ -108,11 +156,15 @@ object OfflineHomeRepository {
         refresh()
     }
 
-    /** Re-samples the transport; a class change clears the manual override. */
+    /**
+     * Re-samples the transport through the confirmation helper; only a
+     * *confirmed* class change clears the manual override (a transient
+     * single-sample flap keeps both the class and the override).
+     */
     fun refresh() {
-        val nextTransport = sampleTransport()
-        manualOverride = nextOfflineHomeOverride(manualOverride, transport, nextTransport)
-        transport = nextTransport
+        val previousTransport = transport
+        transportConfirmation = confirmedTransport(transportConfirmation, sampleTransport())
+        manualOverride = nextOfflineHomeOverride(manualOverride, previousTransport, transport)
         _uiState.value = currentState()
     }
 
@@ -145,9 +197,13 @@ internal fun filterContinueWatchingForOfflineHome(
     items: List<ContinueWatchingItem>,
     downloads: List<DownloadItem>,
 ): List<ContinueWatchingItem> {
-    val playable = downloads.filter { it.isPlayable }
-    if (playable.isEmpty()) return emptyList()
-    val downloadedEpisodes = playable.mapNotNullTo(mutableSetOf()) { download ->
+    // Callers pass DownloadsRepository.playableLocalDownloads() (disk-
+    // verified). Do NOT re-filter with DownloadItem.isPlayable here: that
+    // weaker check requires a non-blank stored localFileUri, so a download
+    // verified on disk via the file-name fallback (blank stored URI) would
+    // wrongly vanish from offline CW/tiles.
+    if (downloads.isEmpty()) return emptyList()
+    val downloadedEpisodes = downloads.mapNotNullTo(mutableSetOf()) { download ->
         val season = download.seasonNumber
         val episode = download.episodeNumber
         if (season == null || episode == null) {
@@ -158,8 +214,11 @@ internal fun filterContinueWatchingForOfflineHome(
     }
     // Movie downloads only: an episode download must never validate a
     // content-level match for its show.
-    val downloadedMovieContentIds = playable
-        .filter { download -> download.seasonNumber == null && download.episodeNumber == null }
+    val downloadedMovieContentIds = downloads
+        .filter { download ->
+            download.seasonNumber == null && download.episodeNumber == null &&
+                download.parentMetaType.equals("movie", ignoreCase = true)
+        }
         .mapTo(mutableSetOf()) { download -> download.parentMetaId.trim() }
 
     return items.filter { item ->
@@ -212,25 +271,26 @@ internal fun buildOfflineHomeDownloadTiles(
     downloads: List<DownloadItem>,
     offlineContinueWatchingItems: List<ContinueWatchingItem>,
 ): List<OfflineHomeDownloadTile> {
-    val playable = downloads.filter { it.isPlayable }
-    if (playable.isEmpty()) return emptyList()
+    // See filterContinueWatchingForOfflineHome: inputs are already disk-
+    // verified by the caller; no isPlayable re-filter here.
+    if (downloads.isEmpty()) return emptyList()
 
     // One entry per logical video: re-downloads of the same episode collapse
     // to the most recently updated copy.
-    val deduped = playable
+    val deduped = downloads
         .groupBy { it.logicalContentKey }
         .values
         .map { copies -> copies.maxByOrNull { it.updatedAtEpochMs } ?: copies.first() }
 
     val continueWatchingByContentId = offlineContinueWatchingItems
-        .groupBy { it.parentMetaId.trim() }
+        .groupBy { it.parentMetaId.trim() to it.parentMetaType }
         .mapValues { (_, items) -> items.first() }
 
     return deduped
         .groupBy { it.parentMetaId.trim() to it.parentMetaType }
         .map { (contentKey, contentDownloads) ->
             val (parentMetaId, parentMetaType) = contentKey
-            val continueWatchingItem = continueWatchingByContentId[parentMetaId]
+            val continueWatchingItem = continueWatchingByContentId[contentKey]
             val representative = when {
                 continueWatchingItem == null -> contentDownloads.sortedForSeriesDownloads().first()
                 continueWatchingItem.seasonNumber != null && continueWatchingItem.episodeNumber != null ->

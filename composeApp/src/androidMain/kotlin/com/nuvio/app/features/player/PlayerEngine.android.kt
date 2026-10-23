@@ -452,6 +452,10 @@ private fun ExoPlayerSurface(
                 backBufferDurationMs = playerSettings.backBufferDurationMs,
                 targetBufferSizeMb = playerSettings.targetBufferSizeMb,
             ),
+            // The settings object's capped maxBufferMs only reaches the player when custom
+            // buffer settings are enabled; the default load-control path ignores that field,
+            // so the data-saver cap has to be passed in explicitly.
+            maxBufferCapMs = if (dataSaverActive) DATA_SAVER_MAX_BUFFER_MS else null,
         )
 
         val playerBuilder = ExoPlayer.Builder(context)

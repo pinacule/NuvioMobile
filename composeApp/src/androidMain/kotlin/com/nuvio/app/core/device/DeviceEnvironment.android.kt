@@ -33,6 +33,11 @@ actual object DeviceEnvironment {
         return when {
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ->
                 NetworkCapabilities.TRANSPORT_WIFI
+            // Ethernet is a wifi-like (unmetered, local-network) transport:
+            // report it as Wi-Fi so consumers such as the offline-home
+            // classifier don't fall through to probe-dependent Unknown/Offline.
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ->
+                NetworkCapabilities.TRANSPORT_WIFI
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ->
                 NetworkCapabilities.TRANSPORT_CELLULAR
             else -> null

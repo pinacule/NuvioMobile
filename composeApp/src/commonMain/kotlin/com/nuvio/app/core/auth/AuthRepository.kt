@@ -178,12 +178,26 @@ object AuthRepository {
 
     suspend fun prepareForServerSwitch(): Result<Unit> {
         _error.value = null
+        // A server switch deliberately keeps local data, so the full wipe used
+        // by sign-out would be a regression — but the previous account's
+        // profile-settings pending-push markers must not survive it: profile
+        // ids are small ints, so the next account on the new server would
+        // inherit them and its first pull would push this account's local
+        // settings blob over its own remote blob. Clear them first, before
+        // the session clear, so even a failed or cancelled session clear
+        // cannot leave them behind; this runs before switchServer saves the
+        // new server and reinitialises, so no pull under the new server can
+        // observe the old account's markers.
+        val markerClear = runCatching { LocalAccountDataCleaner.clearProfileSettingsAccountState() }
         val anonymousClear = runCatching { AuthStorage.clearAnonymousUserId() }
         validatedRemoteUserId = null
         val sessionClear = runCatching { SupabaseProvider.client.auth.clearSession() }
         _state.value = AuthState.Unauthenticated
-        val failure = anonymousClear.exceptionOrNull() ?: sessionClear.exceptionOrNull()
+        val failure = markerClear.exceptionOrNull()
+            ?: anonymousClear.exceptionOrNull()
+            ?: sessionClear.exceptionOrNull()
         val cancellation = sessionClear.exceptionOrNull() as? CancellationException
+            ?: markerClear.exceptionOrNull() as? CancellationException
         if (cancellation != null) throw cancellation
         return if (failure == null) Result.success(Unit) else Result.failure(failure)
     }

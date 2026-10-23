@@ -207,11 +207,27 @@ object SimklMutationRepository : TrackingListWriter, TrackingHistoryWriter, Trac
     }
 
     override fun isConnectivityFailure(error: Throwable): Boolean =
-        super.isConnectivityFailure(error) ||
-            // Simkl wraps transport failures as status=null (no HTTP response).
-            (error is SimklApiException && error.status == null)
+        super.isConnectivityFailure(error) || isSimklQueueableFailure(error)
 
     private fun isActiveProfile(profileId: Int): Boolean = ProfileRepository.activeProfileId == profileId
+}
+
+/**
+ * Whether a Simkl failure is transient enough that the scrobble outbox should
+ * persist and replay it instead of dropping it.
+ *
+ * Simkl wraps transport failures as status=null (no HTTP response). Scrobbles
+ * use [SimklRetryPolicy.NEVER], so a transient HTTP failure (408, 429, or 5xx)
+ * gets no in-call retry either — without queueing, a rate-limited or
+ * server-errored pause/stop scrobble, and its resume point / watched mark,
+ * would be lost forever. Other 4xx failures are permanent (auth, validation,
+ * not found) and must not be queued.
+ */
+internal fun isSimklQueueableFailure(error: Throwable): Boolean {
+    if (error !is SimklApiException) return false
+    // status == null is a wrapped transport failure (no HTTP response).
+    val status = error.status ?: return true
+    return status == 408 || status == 429 || status in 500..599
 }
 
 internal fun buildSimklListMutationBody(

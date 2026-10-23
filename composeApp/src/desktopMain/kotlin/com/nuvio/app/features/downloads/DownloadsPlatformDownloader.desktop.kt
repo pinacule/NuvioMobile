@@ -76,15 +76,96 @@ internal actual object DownloadsPlatformDownloader {
                 val destFile = File(dir, safeName)
                 val partFile = File(dir, "$safeName.part")
 
-                DownloadSubtitles.prepare(request.item, destFile.toURI().toString())
+                // Mirror AndroidDownloadScheduler.refreshAgedHttpSource: a link that
+                // aged while the download waited/paused is re-resolved before the
+                // transfer starts. The partial stays, guarded by the size check
+                // below; when nothing fresh resolves the current link is kept.
+                var activeItem = request.item
+                var activeRequest = request
+                if (activeItem.hasAgedHttpSource(DownloadsClock.nowEpochMs())) {
+                    val fresh = try {
+                        reResolveHttpDownloadSource(activeItem)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (fresh != null) {
+                        activeItem = fresh.copy(
+                            status = activeItem.status,
+                            downloadedBytes = activeItem.downloadedBytes,
+                            totalBytes = activeItem.totalBytes,
+                            errorMessage = null,
+                        )
+                        DownloadsRepository.refreshItemSource(activeItem)
+                        activeRequest = DownloadPlatformRequest(activeItem)
+                    }
+                }
+
+                DownloadSubtitles.prepare(activeItem, destFile.toURI().toString())
 
                 var resumeFrom = partFile.takeIf { it.isFile }?.length()?.coerceAtLeast(0L) ?: 0L
-                var response = fetch(request, resumeFrom.takeIf { it > 0L })
-                if (resumeFrom > 0L && response.status != HttpStatusCode.PartialContent) {
-                    // Server ignored the Range request: restart from scratch.
-                    partFile.delete()
-                    resumeFrom = 0L
-                    response = fetch(request, null)
+                var sourceSwapAttempted = false
+                var response = fetch(activeRequest, resumeFrom.takeIf { it > 0L })
+                while (true) {
+                    // Mirror AndroidDownloadScheduler.executeOnce: a stale link
+                    // (403/404/410) gets ONE swap to a freshly resolved URL and an
+                    // immediate retry with it, never a verbatim retry of the dead
+                    // URL. Checked before the Range handling so the partial is
+                    // not dropped for a link that is about to be replaced; the
+                    // resumed response is size-checked below.
+                    if (response.status.value in STALE_HTTP_STATUS_CODES && !sourceSwapAttempted) {
+                        sourceSwapAttempted = true
+                        val refreshed = try {
+                            refreshHttpDownloadSource(activeItem)
+                        } catch (cancellation: CancellationException) {
+                            throw cancellation
+                        } catch (_: Exception) {
+                            null
+                        }
+                        if (refreshed != null && refreshed.sourceUrl != activeItem.sourceUrl) {
+                            activeItem = refreshed.copy(
+                                status = DownloadStatus.Downloading,
+                                downloadedBytes = activeItem.downloadedBytes,
+                                totalBytes = activeItem.totalBytes,
+                                errorMessage = null,
+                            )
+                            DownloadsRepository.refreshItemSource(activeItem)
+                            activeRequest = DownloadPlatformRequest(activeItem)
+                            response = fetch(activeRequest, resumeFrom.takeIf { it > 0L })
+                            continue
+                        }
+                    }
+                    // Mirror Android's isResumeSizeMismatch (androidMain, so the
+                    // condition is inlined): a 206 whose Content-Range total
+                    // differs from the size the partial was written for belongs
+                    // to a different encode — restart from zero instead of
+                    // Range-appending onto the old partial.
+                    if (resumeFrom > 0L && response.status == HttpStatusCode.PartialContent) {
+                        val expectedTotalBytes = activeItem.totalBytes
+                        val resumedTotalBytes = parseContentRangeTotal(response.headers[HttpHeaders.ContentRange])
+                        if (
+                            expectedTotalBytes != null && expectedTotalBytes > 0L &&
+                            resumedTotalBytes != null && resumedTotalBytes != expectedTotalBytes
+                        ) {
+                            partFile.delete()
+                            resumeFrom = 0L
+                            response = fetch(activeRequest, null)
+                            continue
+                        }
+                    }
+                    if (resumeFrom > 0L && response.status.isSuccess() && response.status != HttpStatusCode.PartialContent) {
+                        // Server ignored the Range request: restart from scratch.
+                        // Gated on success so a non-2xx response (e.g. a 403 the
+                        // stale-link branch above could not replace) falls
+                        // through to the isSuccess() failure check below with
+                        // the partial intact, instead of deleting it here.
+                        partFile.delete()
+                        resumeFrom = 0L
+                        response = fetch(activeRequest, null)
+                        continue
+                    }
+                    break
                 }
                 if (!response.status.isSuccess()) {
                     onFailure("Download failed: HTTP ${response.status.value}")
@@ -120,6 +201,11 @@ internal actual object DownloadsPlatformDownloader {
     actual fun removePartialFile(destinationFileName: String): Boolean {
         val safeName = File(destinationFileName).name
         if (safeName.isBlank()) return false
+        // Mirror iOS/Android: removing a partial also removes its subtitle
+        // sidecar, keyed by the destination file's URI (same construction
+        // DownloadSubtitles.prepare uses for this platform).
+        val destFile = File(downloadsDir(), safeName)
+        DownloadSubtitleStorage(destFile.toURI().toString()).remove()
         val partFile = File(downloadsDir(), "$safeName.part")
         return !partFile.exists() || runCatching { partFile.delete() }.getOrDefault(false)
     }
@@ -161,6 +247,17 @@ internal actual object DownloadsPlatformDownloader {
                 header(HttpHeaders.Range, "bytes=$rangeStart-")
             }
         }
+
+    /** Total size from a `Content-Range: bytes start-end/total` header; null when absent or `*`. */
+    private fun parseContentRangeTotal(headerValue: String?): Long? {
+        val value = headerValue?.trim().orEmpty()
+        if (value.isBlank()) return null
+        val slashIndex = value.lastIndexOf('/')
+        if (slashIndex == -1 || slashIndex == value.lastIndex) return null
+        val totalPart = value.substring(slashIndex + 1).trim()
+        if (totalPart == "*") return null
+        return totalPart.toLongOrNull()?.takeIf { it > 0L }
+    }
 
     private suspend fun streamToFile(
         response: HttpResponse,

@@ -89,6 +89,20 @@ class OfflineHomeTest {
     }
 
     @Test
+    fun `no radio and servers unreachable is unknown not offline`() {
+        // ServersUnreachable means the internet probe succeeded and only the
+        // backend failed — that is not Offline.
+        assertEquals(
+            OfflineHomeTransport.Unknown,
+            classifyOfflineHomeTransport(
+                isWifi = false,
+                isCellular = false,
+                condition = NetworkCondition.ServersUnreachable,
+            ),
+        )
+    }
+
+    @Test
     fun `no radio and a healthy probe is unknown`() {
         assertEquals(
             OfflineHomeTransport.Unknown,
@@ -126,6 +140,71 @@ class OfflineHomeTest {
 
     // endregion
 
+    // region transport confirmation
+
+    @Test
+    fun `confirmation commits the startup sample immediately`() {
+        val state = confirmedTransport(ConfirmedTransportState(), OfflineHomeTransport.Cellular)
+
+        assertEquals(OfflineHomeTransport.Cellular, state.confirmed)
+        assertNull(state.pendingClass)
+    }
+
+    @Test
+    fun `confirmation single-sample flap keeps class and override`() {
+        var state = ConfirmedTransportState(confirmed = OfflineHomeTransport.Wifi)
+
+        state = confirmedTransport(state, OfflineHomeTransport.Offline)
+
+        assertEquals(OfflineHomeTransport.Wifi, state.confirmed)
+        // Feeding the confirmed (unchanged) class through the unchanged
+        // override rule keeps the user's manual override.
+        assertEquals(
+            true,
+            nextOfflineHomeOverride(true, OfflineHomeTransport.Wifi, state.confirmed!!),
+        )
+        // Returning to the confirmed class clears the pending flap.
+        state = confirmedTransport(state, OfflineHomeTransport.Wifi)
+        assertNull(state.pendingClass)
+        assertEquals(OfflineHomeTransport.Wifi, state.confirmed)
+    }
+
+    @Test
+    fun `confirmation commits after two consecutive samples of the new class`() {
+        var state = ConfirmedTransportState(confirmed = OfflineHomeTransport.Wifi)
+
+        state = confirmedTransport(state, OfflineHomeTransport.Cellular)
+        assertEquals(OfflineHomeTransport.Wifi, state.confirmed)
+        state = confirmedTransport(state, OfflineHomeTransport.Cellular)
+
+        assertEquals(OfflineHomeTransport.Cellular, state.confirmed)
+        assertNull(state.pendingClass)
+        // A confirmed change is what clears the override.
+        assertNull(
+            nextOfflineHomeOverride(true, OfflineHomeTransport.Wifi, state.confirmed!!),
+        )
+    }
+
+    @Test
+    fun `confirmation unknown blips never commit and break a pending run`() {
+        var state = ConfirmedTransportState(confirmed = OfflineHomeTransport.Wifi)
+
+        state = confirmedTransport(state, OfflineHomeTransport.Unknown)
+        state = confirmedTransport(state, OfflineHomeTransport.Unknown)
+        assertEquals(OfflineHomeTransport.Wifi, state.confirmed)
+
+        // An Unknown between two samples of a new class breaks consecutiveness:
+        // the second Cellular sample starts a fresh pending run, not a commit.
+        state = confirmedTransport(state, OfflineHomeTransport.Cellular)
+        state = confirmedTransport(state, OfflineHomeTransport.Unknown)
+        state = confirmedTransport(state, OfflineHomeTransport.Cellular)
+        assertEquals(OfflineHomeTransport.Wifi, state.confirmed)
+        state = confirmedTransport(state, OfflineHomeTransport.Cellular)
+        assertEquals(OfflineHomeTransport.Cellular, state.confirmed)
+    }
+
+    // endregion
+
     // region downloads-only Continue Watching
 
     @Test
@@ -157,12 +236,19 @@ class OfflineHomeTest {
     }
 
     @Test
-    fun `cw filter ignores downloads that are not playable yet`() {
-        val stillDownloading = episodeDownload(showId = "show-a", season = 1, episode = 3)
-            .copy(status = DownloadStatus.Downloading, localFileUri = null)
+    fun `cw filter keeps disk-verified download whose stored uri is blank`() {
+        // The caller passes playableLocalDownloads() (disk-verified). A file
+        // can resolve by name fallback with a blank stored URI; the old
+        // isPlayable re-filter (Completed + non-blank stored URI) dropped it.
+        // The filter now trusts the caller's verified list.
+        val verifiedByFallback = episodeDownload(showId = "show-a", season = 1, episode = 3)
+            .copy(localFileUri = null)
         val item = episodeCwItem(showId = "show-a", season = 1, episode = 3)
 
-        assertTrue(filterContinueWatchingForOfflineHome(listOf(item), listOf(stillDownloading)).isEmpty())
+        assertEquals(
+            listOf(item),
+            filterContinueWatchingForOfflineHome(listOf(item), listOf(verifiedByFallback)),
+        )
         assertTrue(filterContinueWatchingForOfflineHome(listOf(item), emptyList()).isEmpty())
     }
 
@@ -211,6 +297,22 @@ class OfflineHomeTest {
     }
 
     @Test
+    fun `cw filter excludes movie item when coordinate-less download is series typed`() {
+        // A coordinate-less download typed as series (not movie) sharing the
+        // movie's id must not validate the movie CW entry.
+        val downloads = listOf(
+            movieDownload(movieId = "movie-a").copy(parentMetaType = "series", contentType = "series"),
+        )
+
+        val filtered = filterContinueWatchingForOfflineHome(
+            items = listOf(movieCwItem(movieId = "movie-a")),
+            downloads = downloads,
+        )
+
+        assertTrue(filtered.isEmpty())
+    }
+
+    @Test
     fun `cw filter preserves resume position of kept items`() {
         val downloads = listOf(episodeDownload(showId = "show-a", season = 2, episode = 5))
         val item = episodeCwItem(showId = "show-a", season = 2, episode = 5)
@@ -245,6 +347,31 @@ class OfflineHomeTest {
     }
 
     @Test
+    fun `tiles match continue watching by id and type not id alone`() {
+        // A movie and a series share the same parent id. The movie CW entry
+        // is listed first; keying CW by id alone would give the series tile
+        // the movie entry (no coordinates) and lose its S1E2 target.
+        val downloads = listOf(
+            episodeDownload(showId = "shared", season = 1, episode = 1, updatedAt = 10L),
+            episodeDownload(showId = "shared", season = 1, episode = 2, updatedAt = 20L),
+            movieDownload(movieId = "shared", updatedAt = 30L),
+        )
+        val cw = listOf(
+            movieCwItem(movieId = "shared"),
+            episodeCwItem(showId = "shared", season = 1, episode = 2),
+        )
+
+        val tiles = buildOfflineHomeDownloadTiles(downloads, cw)
+
+        assertEquals(2, tiles.size)
+        val showTile = tiles.first { it.parentMetaType == "series" }
+        assertEquals(2, showTile.download.episodeNumber)
+        val movieTile = tiles.first { it.parentMetaType == "movie" }
+        assertEquals("shared", movieTile.download.parentMetaId)
+        assertFalse(movieTile.download.isEpisode)
+    }
+
+    @Test
     fun `tiles fall back to the first episode in season order without cw`() {
         val downloads = listOf(
             episodeDownload(showId = "show-a", season = 1, episode = 2, updatedAt = 20L),
@@ -271,17 +398,28 @@ class OfflineHomeTest {
     }
 
     @Test
-    fun `tiles are ordered by most recent download activity and skip unplayable`() {
+    fun `tiles are ordered by most recent download activity`() {
+        // Unplayable filtering is the caller's job (playableLocalDownloads);
+        // this builder no longer re-filters with isPlayable.
         val downloads = listOf(
             movieDownload(movieId = "movie-old", updatedAt = 10L),
             movieDownload(movieId = "movie-new", updatedAt = 90L),
-            movieDownload(movieId = "movie-failed", updatedAt = 99L)
-                .copy(status = DownloadStatus.Failed, localFileUri = null),
         )
 
         val tiles = buildOfflineHomeDownloadTiles(downloads, emptyList())
 
         assertEquals(listOf("movie-new", "movie-old"), tiles.map { it.parentMetaId })
+    }
+
+    @Test
+    fun `tiles keep disk-verified download whose stored uri is blank`() {
+        val downloads = listOf(
+            movieDownload(movieId = "movie-a").copy(localFileUri = null),
+        )
+
+        val tiles = buildOfflineHomeDownloadTiles(downloads, emptyList())
+
+        assertEquals(listOf("movie-a"), tiles.map { it.parentMetaId })
     }
 
     @Test

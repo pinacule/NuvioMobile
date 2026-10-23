@@ -152,3 +152,57 @@ internal fun decideProfileSettingsPullExitAction(
             }
     }
 }
+
+// --- Pending-push marker persistence ---
+//
+// ProfileSettingsSync's pending-push markers used to live only in memory, so
+// a process death between a mid-pull local change and its compensating push
+// lost the marker: on the next launch the pull saw equal signatures and its
+// whole-blob apply overwrote the never-pushed local change. The markers are
+// now persisted on every mutation and restored before the first pull.
+
+/**
+ * Encodes pending-push markers (profileId -> account generation) as
+ * `profileId:generation` pairs joined by commas, sorted by profileId so the
+ * persisted form is deterministic.
+ */
+internal fun encodePendingPushGenerations(generations: Map<Int, Int>): String =
+    generations.entries
+        .sortedBy { it.key }
+        .joinToString(separator = ",") { (profileId, generation) -> "$profileId:$generation" }
+
+/**
+ * Decodes a payload written by [encodePendingPushGenerations]. Malformed
+ * entries are skipped rather than failing the whole restore: a single bad
+ * entry must not strand the other profiles' markers.
+ */
+internal fun decodePendingPushGenerations(payload: String?): Map<Int, Int> {
+    if (payload.isNullOrBlank()) return emptyMap()
+    return payload.split(",").mapNotNull { entry ->
+        val parts = entry.split(":")
+        if (parts.size != 2) return@mapNotNull null
+        val profileId = parts[0].trim().toIntOrNull() ?: return@mapNotNull null
+        val generation = parts[1].trim().toIntOrNull() ?: return@mapNotNull null
+        profileId to generation
+    }.toMap()
+}
+
+/**
+ * Restores persisted pending-push markers for a new process.
+ *
+ * The persisted generation belongs to the previous process's account
+ * session, whose generation counter restarted from the new process's
+ * initial value; taken literally it would never match the new session's
+ * generation and the restored marker would never fire. The markers were
+ * recorded under the account that was active when the process died — the
+ * same account whose session is restored on launch (an in-app account
+ * switch clears the markers via clearAccountState) — so every restored
+ * marker is rebased onto [currentGeneration], making it indistinguishable
+ * from a stranded marker recorded in this session: the pre-fetch stranded
+ * push in the pull treats it exactly the same.
+ */
+internal fun restorePendingPushGenerations(
+    payload: String?,
+    currentGeneration: Int,
+): Map<Int, Int> =
+    decodePendingPushGenerations(payload).mapValues { currentGeneration }

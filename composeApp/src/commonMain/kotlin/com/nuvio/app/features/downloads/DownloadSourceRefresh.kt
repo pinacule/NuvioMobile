@@ -112,6 +112,29 @@ internal suspend fun refreshHttpDownloadSource(item: DownloadItem): DownloadItem
             }
         }
     }
+    // Last resort, mirroring EpisodeDownloadPlanner.pickBestStreamAtQuality's
+    // all-unparseable fallback: the quality loop above can only ever match a
+    // stream whose resolution parses (distinctQualities drops the rest), so
+    // a candidate with streamResolution() == null — e.g. an English dub whose
+    // metadata carries no resolution token — was never tried and the retry
+    // kept reusing the dead URL. When no parseable quality yielded a stream,
+    // try the unparseable candidates in the same partition order (English
+    // first when the user prefers English audio), preserving addon order
+    // within a partition as the loop above does. The picked stream's quality
+    // is unknown, so the item keeps its requested downloadQuality — the same
+    // fallback SeasonDownloads applies when it stores
+    // `streamResolution() ?: template.streamResolution()`.
+    for (partition in partitions) {
+        for ((group, stream) in partition) {
+            if (stream.streamResolution() != null) continue
+            val resolved = SeasonDownloads.resolvePlayable(stream, item.seasonNumber ?: 0, item.episodeNumber)
+                ?: continue
+            val freshUrl = resolved.playableDirectUrl?.trim()
+                ?.takeIf { it.isSupportedDownloadUrl() && it != deadUrl }
+                ?: continue
+            return item.withFreshSource(group, resolved, freshUrl, item.downloadQuality)
+        }
+    }
     return null
 }
 

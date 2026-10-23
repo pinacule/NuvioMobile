@@ -170,6 +170,42 @@ class SimklAnimeWatchedResolutionTest {
         assertFalse(isWatchedByAnimeVideoId(snapshot, "mal:42423:5", episode = 5))
     }
 
+    @Test
+    fun `season-carrying anime videoId does not confuse episodes across seasons`() {
+        val entry = animeEntry(simklId = 80001, imdb = "tt2560140", mal = 123, seasons = listOf(
+            SimklSeason(1, listOf(
+                SimklEpisode(3, "2023-11-14T23:20:00Z", SimklEpisodeMapping(1, 3)),
+            )),
+            SimklSeason(2, listOf(
+                SimklEpisode(3, null, SimklEpisodeMapping(2, 3)),
+                SimklEpisode(4, "2023-12-01T20:30:00Z", SimklEpisodeMapping(2, 4)),
+            )),
+        ))
+        val snapshot = SimklSyncSnapshot(entries = listOf(entry))
+
+        // S1E3 is watched; the same native episode number in season 2 is not.
+        assertTrue(isWatchedByAnimeVideoId(snapshot, "mal:123:1:3", episode = 3))
+        assertFalse(isWatchedByAnimeVideoId(snapshot, "mal:123:2:3", episode = 3))
+        assertTrue(isWatchedByAnimeVideoId(snapshot, "mal:123:2:4", episode = 4))
+    }
+
+    @Test
+    fun `anime videoId without episode segment matches by tvdb episode not native number`() {
+        // Native episode 1 of this entry is TVDB S1E15 (split season, second half).
+        val entry = animeEntry(simklId = 80002, imdb = "tt2250192", mal = 11759, seasons = listOf(
+            SimklSeason(1, listOf(
+                SimklEpisode(1, "2023-11-15T01:00:00Z", SimklEpisodeMapping(1, 15)),
+                SimklEpisode(2, null, SimklEpisodeMapping(1, 16)),
+            )),
+        ))
+        val snapshot = SimklSyncSnapshot(entries = listOf(entry))
+
+        // The caller's episode is TVDB numbering: 15 is watched, 1 is a different episode.
+        assertTrue(isWatchedByAnimeVideoId(snapshot, "mal:11759", episode = 15))
+        assertFalse(isWatchedByAnimeVideoId(snapshot, "mal:11759", episode = 1))
+        assertFalse(isWatchedByAnimeVideoId(snapshot, "mal:11759", episode = 16))
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Scenario 5: Split season — one TVDB season, two MAL entries.
     // ──────────────────────────────────────────────────────────────────────────

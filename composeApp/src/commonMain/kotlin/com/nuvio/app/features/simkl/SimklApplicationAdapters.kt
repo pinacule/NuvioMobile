@@ -3,6 +3,7 @@ package com.nuvio.app.features.simkl
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.tracking.TrackingHistoryItem
+import com.nuvio.app.features.tracking.TrackingMediaKind
 import com.nuvio.app.features.tracking.TrackingProviderId
 import com.nuvio.app.features.tracking.TrackingProgressProvider
 import com.nuvio.app.features.tracking.TrackingProgressSnapshot
@@ -63,14 +64,26 @@ object SimklWatchedSyncAdapter : TrackingWatchedProvider {
     override fun observeExtraWatchedKeys(profileId: Int): kotlinx.coroutines.flow.Flow<Set<String>> =
         SimklSyncRepository.state
             .map { state ->
-                SimklAnimeWatchedFallback.clearOptimisticRemovals()
+                SimklAnimeWatchedFallback.clearOptimisticRemovals(state.snapshot)
                 state.snapshot.animeAlternateWatchedKeys() + state.snapshot.movieAlternateWatchedKeys()
             }
             .distinctUntilChanged()
 
     override suspend fun push(profileId: Int, items: Collection<WatchedItem>) {
         if (profileId != ProfileRepository.activeProfileId || items.isEmpty()) return
-        val pushableItems = simklHistoryPushItems(items)
+        val basePushableItems = simklHistoryPushItems(items)
+        // Season-less anime marks are dropped by the guard because a film cannot be told
+        // from a series locally; rescue the ones the snapshot proves are films.
+        val animeMovieCandidates = items.filter { item ->
+            item.season == null && item.episode == null && item.type.trim().lowercase() == "anime"
+        }
+        val pushableItems = if (animeMovieCandidates.isEmpty()) {
+            basePushableItems
+        } else {
+            SimklSyncRepository.ensureLoaded()
+            val snapshot = SimklSyncRepository.state.value.snapshot
+            basePushableItems + simklAnimeMoviePushItems(animeMovieCandidates, snapshot)
+        }
         if (pushableItems.isEmpty()) {
             log.i { "Skipped ${items.size} Simkl history items: nothing but whole-series marks" }
             return
@@ -100,13 +113,13 @@ object SimklWatchedSyncAdapter : TrackingWatchedProvider {
 
     override suspend fun delete(profileId: Int, items: Collection<WatchedItem>) {
         if (profileId != ProfileRepository.activeProfileId || items.isEmpty()) return
-        val episodeItems = items.filter { item -> item.season != null && item.episode != null }
-        if (episodeItems.isEmpty()) return
-        // Optimistically mark video IDs as removed so fallback won't show them as watched
-        episodeItems.forEach { item -> item.videoId?.let(SimklAnimeWatchedFallback::markOptimisticallyRemoved) }
         SimklSyncRepository.ensureLoaded()
         val snapshot = SimklSyncRepository.state.value.snapshot
-        val media = episodeItems.map { item ->
+        val removalItems = simklHistoryRemovalItems(items, snapshot)
+        if (removalItems.isEmpty()) return
+        // Optimistically mark video IDs as removed so fallback won't show them as watched
+        removalItems.forEach { item -> item.videoId?.let(SimklAnimeWatchedFallback::markOptimisticallyRemoved) }
+        val media = removalItems.map { item ->
             snapshot.mediaReference(
                 contentId = item.id,
                 contentType = item.type,
@@ -146,10 +159,61 @@ data class SimklProgressUiState(
  * touch anything else. A mark whose type is `anime` is dropped too: the app cannot tell an anime film
  * from an anime series without more metadata, and Trakt's adapter drops both for the same reason. That
  * is the accepted trade, because a mark the user made by hand staying out of the history is cheaper
- * than a single call stamping a whole series.
+ * than a single call stamping a whole series. The one exception is made in `push()` itself, not here:
+ * a season-less anime mark whose snapshot entry is a film (animeType == "movie") is rescued by
+ * [simklAnimeMoviePushItems], because there the kind is no longer a guess.
  */
 internal fun simklHistoryPushItems(items: Collection<WatchedItem>): List<WatchedItem> =
     items.filterNot(WatchedItem::isWholeSeriesMark)
+
+/**
+ * What may travel to Simkl as a history removal.
+ *
+ * Episode items always may. A season-less item may only when it is a film: the mutation layer
+ * removes a movie entry outright (`withoutHistory` drops the whole entry for kind == MOVIE),
+ * while a season-less series mark names no episode and must not become a show-level removal —
+ * a whole-series unmark still reports its episodes one by one, exactly as on the push path.
+ * Film-ness is resolved through the snapshot, so an anime film (type `anime`, snapshot entry
+ * with animeType == "movie") counts as a movie, and a season-less item whose snapshot entry
+ * is a show does not, whatever its local type claims.
+ */
+internal fun simklHistoryRemovalItems(
+    items: Collection<WatchedItem>,
+    snapshot: SimklSyncSnapshot,
+): List<WatchedItem> = items.filter { item ->
+    when {
+        item.season != null && item.episode != null -> true
+        item.season != null || item.episode != null -> false
+        else -> item.isMovieKindIn(snapshot)
+    }
+}
+
+/**
+ * Season-less `anime` marks the snapshot proves are films (entry with animeType == "movie").
+ * These are the one exception to the push guard's blanket anime drop: with the kind resolved
+ * to MOVIE the mark can only ever name the film itself, never a whole series.
+ */
+internal fun simklAnimeMoviePushItems(
+    items: Collection<WatchedItem>,
+    snapshot: SimklSyncSnapshot,
+): List<WatchedItem> = items.filter { item ->
+    item.season == null && item.episode == null &&
+        item.type.trim().lowercase() == "anime" &&
+        item.isMovieKindIn(snapshot)
+}
+
+private fun WatchedItem.isMovieKindIn(snapshot: SimklSyncSnapshot): Boolean {
+    val reference = snapshot.mediaReference(
+        contentId = id,
+        contentType = type,
+        title = name,
+        releaseInfo = releaseInfo,
+        season = season,
+        episode = episode,
+        videoId = videoId,
+    )
+    return snapshot.enrichMediaReference(reference).kind == TrackingMediaKind.MOVIE
+}
 
 private fun WatchedItem.isWholeSeriesMark(): Boolean =
     season == null && episode == null && type.trim().lowercase() !in MOVIE_LIKE_WATCHED_TYPES

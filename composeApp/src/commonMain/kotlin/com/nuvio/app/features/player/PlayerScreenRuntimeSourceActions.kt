@@ -524,7 +524,11 @@ internal fun PlayerScreenRuntime.playNextEpisode() {
         parentMetaType = parentMetaType,
         contentType = contentType,
         settings = playerSettingsUiState,
-        currentStreamBingeGroup = currentStreamBingeGroup,
+        currentStreamBingeGroup = resolveNextEpisodeBingeGroup(
+            currentStreamBingeGroup = currentStreamBingeGroup,
+            settings = playerSettingsUiState,
+            parentMetaId = parentMetaId,
+        ),
         onDownloadedEpisodeSelected = { item, episode ->
             if (isCurrentRequest()) switchToDownloadedEpisode(item, episode)
         },
@@ -614,6 +618,12 @@ private fun PlayerScreenRuntime.resetEpisodePanelAndNextEpisodeState() {
     showEpisodesPanel = false
     episodeStreamsPanelState = EpisodeStreamsPanelState()
     cancelNextEpisodeAutoPlay()
+    // Re-arm the one-shot next-episode source preload for the new episode:
+    // without this, the flag stays set from the previous episode and the
+    // next episode's near-end preload never fires after a direct switch,
+    // so Skip Next starts its stream search cold.
+    nextEpisodePreloadTriggered = false
+    cancelNextEpisodePreload()
     PlayerStreamsRepository.clearEpisodeStreams()
 }
 

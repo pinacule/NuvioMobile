@@ -83,7 +83,6 @@ import com.nuvio.app.core.ui.isLiquidGlassNativeTabBarSupported
 import com.nuvio.app.core.ui.localizedContinueWatchingSubtitle
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.platformExitApp
-import com.nuvio.app.features.addons.AddAddonResult
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.addons.isWaitingForFirstEnabledManifest
@@ -744,23 +743,19 @@ internal fun MainAppContent(
                     }
 
                     is AppDeepLink.AddonInstall -> {
+                        // Never install straight from a deep link: any website or app can
+                        // fire one at the exported LinkActivity / MainActivity. Stage the
+                        // URL instead and let the user confirm on the Addons screen, where
+                        // the existing URL field + Install button flow decides whether
+                        // the addon actually gets installed.
+                        AddonRepository.stagePendingInstallUrl(deepLink.manifestUrl)
                         activateTab(AppScreenTab.Settings)
                         navController.navigate(AddonsSettingsRoute(addonsSettingsTitle)) {
                             launchSingleTop = true
                         }
-                        NuvioToastController.show(getString(Res.string.addons_modal_checking_title))
-                        AddonRepository.initialize()
-                        when (val result = AddonRepository.addAddon(deepLink.manifestUrl)) {
-                            is AddAddonResult.Success -> {
-                                NuvioToastController.show(
-                                    getString(Res.string.addons_modal_success_message, result.manifest.name),
-                                )
-                            }
-
-                            is AddAddonResult.Error -> {
-                                NuvioToastController.show(result.message)
-                            }
-                        }
+                        NuvioToastController.show(
+                            "Addon link received — review the URL and tap Install Addon to add it.",
+                        )
                         AppDeepLinkRepository.markConsumed(deepLink)
                     }
 
@@ -1534,7 +1529,6 @@ internal fun MainAppContent(
                                     }
                                 },
                                 onDownloadsClick = { navController.navigate(DownloadsRoute(downloadsTitle)) },
-                                onOfflineHomeToggleClick = { activateTab(AppScreenTab.Home) },
                                 onContinueWatchingClick = onContinueWatchingClick,
                                 onContinueWatchingLongPress = onContinueWatchingLongPress,
                                 onDownloadedItemClick = ::openDownloadedItem,

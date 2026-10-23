@@ -7,6 +7,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.nuvio.app.core.ui.NuvioToastController
+import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.features.party.PartyMedia
 import com.nuvio.app.features.player.ExternalPlayerIntentResult
 import com.nuvio.app.features.player.ExternalPlayerPlatform
@@ -41,6 +42,18 @@ internal fun PlayerDestination(
     LaunchedEffect(launch.videoId) {
         launch.videoId?.let { ResumePromptRepository.markPlayerEntered(it) }
     }
+    // System back must match the player's UI back button (PlayerScreen's
+    // onBack below): both exit via onExitToLibrary — pop to the tab root,
+    // activate the Library tab, evict the watched-eligible preload cache —
+    // instead of letting NavDisplay pop to the previous route (streams /
+    // details) with no eviction. This handler is composed BEFORE
+    // PlayerScreen, so the back handlers inside PlayerOverlayScaffold /
+    // PlayerSidePanel (composed later within PlayerScreen, enabled only
+    // while visible) still win the press while an overlay or panel is open:
+    // the same registration-order precedence those handlers already rely on
+    // against NavDisplay's own back handling. When none is visible this
+    // handler is the one that fires.
+    PlatformBackHandler(enabled = true, onBack = onExitToLibrary)
     PlayerScreen(
         profileId = launch.profileId,
         title = launch.title,

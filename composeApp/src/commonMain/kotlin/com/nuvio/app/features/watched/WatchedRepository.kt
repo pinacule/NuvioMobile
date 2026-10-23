@@ -75,6 +75,16 @@ internal fun shouldAcknowledgeNuvioWatchedPush(
     outcome: WatchedPushOutcome,
 ): Boolean = source.providerId == null && outcome.nuvioSyncSucceeded
 
+internal data class WatchedDeleteOutcome(
+    val nuvioSyncSucceeded: Boolean = false,
+    val succeededTrackerProviderIds: Set<TrackingProviderId> = emptySet(),
+)
+
+internal fun shouldAcknowledgeNuvioWatchedDelete(
+    source: WatchProgressSource,
+    outcome: WatchedDeleteOutcome,
+): Boolean = source.providerId == null && outcome.nuvioSyncSucceeded
+
 internal fun replaceWatchedItemsForSource(
     source: WatchProgressSource,
     nuvioItems: MutableMap<String, WatchedItem>,
@@ -192,11 +202,13 @@ object WatchedRepository {
         profileGeneration += 1L
         activeSource = WatchProgressSource.NUVIO_SYNC
         sourceGeneration += 1L
-        itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+        itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, pendingDeleteNuvioKeys, pendingDeleteProviderKeys ->
             nuvioItems.clear()
             providerItems.clear()
             dirtyNuvioKeys.clear()
             dirtyProviderKeys.clear()
+            pendingDeleteNuvioKeys.clear()
+            pendingDeleteProviderKeys.clear()
         }
         nuvioFullyWatchedSeriesKeys = emptySet()
         providerFullyWatchedSeriesKeys.clear()
@@ -219,11 +231,13 @@ object WatchedRepository {
         activeSource = WatchProgressSource.NUVIO_SYNC
         sourceGeneration += 1L
         hasLoaded = true
-        itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+        itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, pendingDeleteNuvioKeys, pendingDeleteProviderKeys ->
             nuvioItems.clear()
             providerItems.clear()
             dirtyNuvioKeys.clear()
             dirtyProviderKeys.clear()
+            pendingDeleteNuvioKeys.clear()
+            pendingDeleteProviderKeys.clear()
         }
         nuvioFullyWatchedSeriesKeys = emptySet()
         providerFullyWatchedSeriesKeys.clear()
@@ -253,9 +267,12 @@ object WatchedRepository {
             val restoredProviderPayloads = storedPayload.providerPayloads.mapNotNull { (storageId, providerPayload) ->
                 TrackingProviderId.fromStorage(storageId)?.let { providerId -> providerId to providerPayload }
             }.toMap()
-            itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+            itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, pendingDeleteNuvioKeys, pendingDeleteProviderKeys ->
                 nuvioItems.putAll(restoredItems)
                 dirtyNuvioKeys += storedPayload.dirtyWatchedKeys.filter { key -> key in restoredItems }
+                // Tombstones are restored unfiltered, unlike dirty keys: the
+                // item they guard is absent locally by design.
+                pendingDeleteNuvioKeys += storedPayload.pendingDeleteWatchedKeys
                 restoredProviderPayloads.forEach { (providerId, providerPayload) ->
                     val providerItemsByKey = (providerPayload.items + expandProviderWatchedItems(providerPayload.itemGroups))
                         .map(WatchedItem::normalizedMarkedAt)
@@ -263,6 +280,8 @@ object WatchedRepository {
                     providerItems[providerId] = providerItemsByKey.toMutableMap()
                     dirtyProviderKeys[providerId] = providerPayload.dirtyWatchedKeys
                         .filterTo(mutableSetOf()) { key -> key in providerItemsByKey }
+                    pendingDeleteProviderKeys[providerId] =
+                        providerPayload.pendingDeleteWatchedKeys.toMutableSet()
                 }
             }
             nuvioFullyWatchedSeriesKeys = storedPayload.fullyWatchedSeriesKeys
@@ -484,17 +503,21 @@ object WatchedRepository {
             }
             return false
         }
-        itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+        val tombstonedServerItems = itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, pendingDeleteNuvioKeys, pendingDeleteProviderKeys ->
             val items = source.providerId
                 ?.let { providerId -> providerItems[providerId]?.values.orEmpty() }
                 ?: nuvioItems.values
             val dirtyKeys = source.providerId
                 ?.let { providerId -> dirtyProviderKeys.getOrPut(providerId, ::mutableSetOf) }
                 ?: dirtyNuvioKeys
+            val pendingDeleteKeys = source.providerId
+                ?.let { providerId -> pendingDeleteProviderKeys.getOrPut(providerId, ::mutableSetOf) }
+                ?: pendingDeleteNuvioKeys
             val merged = mergeWatchedSnapshot(
                 serverItems = serverItems,
                 localItems = items.toList(),
                 dirtyKeys = dirtyKeys,
+                pendingDeleteKeys = pendingDeleteKeys,
                 acknowledgeDirtyByPresence = source.providerId != null,
             )
             replaceWatchedItemsForSource(
@@ -505,6 +528,15 @@ object WatchedRepository {
             )
             dirtyKeys.clear()
             dirtyKeys += merged.dirtyKeys
+            pendingDeleteKeys.clear()
+            pendingDeleteKeys += merged.pendingDeleteKeys
+            // Server items the merge dropped solely because a tombstone is
+            // still pending: the delete never landed, so it is retried below
+            // with the full server copies.
+            serverItems.filter { serverItem ->
+                watchedItemKey(serverItem.type, serverItem.id, serverItem.season, serverItem.episode) in
+                    merged.pendingDeleteKeys
+            }
         }
         fullyWatchedSeriesKeys?.let { keys ->
             setFullyWatchedSeriesKeysForSource(source, keys)
@@ -523,7 +555,38 @@ object WatchedRepository {
         }
         publish()
         persist()
+        if (tombstonedServerItems.isNotEmpty() && isActiveOperation(operation)) {
+            retryPendingDeletesForSource(
+                profileId = profileId,
+                operationGeneration = operation.profileGeneration,
+                items = tombstonedServerItems,
+                source = source,
+            )
+        }
         return true
+    }
+
+    private suspend fun retryPendingDeletesForSource(
+        profileId: Int,
+        operationGeneration: Long,
+        items: Collection<WatchedItem>,
+        source: WatchProgressSource,
+    ) {
+        val outcome = deleteFromTargetsForSource(
+            profileId = profileId,
+            items = items,
+            source = source,
+        )
+        if (shouldAcknowledgeNuvioWatchedDelete(source = source, outcome = outcome)) {
+            recordSuccessfulDelete(
+                profileId = profileId,
+                operationGeneration = operationGeneration,
+                items = items,
+            )
+        }
+        // Provider tombstones are not acknowledged here: provider delete
+        // calls can swallow failures internally, so they are cleared by
+        // absence at the next snapshot merge instead (mergeWatchedSnapshot).
     }
 
     private suspend fun pullSupabaseDeltaFromServer(
@@ -573,7 +636,7 @@ object WatchedRepository {
             if (!isActiveOperation(operation)) return false
             if (events.isEmpty()) break
 
-            itemsStore.update { nuvioItems, _, dirtyNuvioKeys, _ ->
+            itemsStore.update { nuvioItems, _, dirtyNuvioKeys, _, _, _ ->
                 applyWatchedDeltaEvents(
                     targetItems = nuvioItems,
                     dirtyKeys = dirtyNuvioKeys,
@@ -702,7 +765,7 @@ object WatchedRepository {
     }
 
     private fun itemsForSourceSnapshot(source: WatchProgressSource): List<WatchedItem> =
-        itemsStore.read { nuvioItems, providerItems, _, _ ->
+        itemsStore.read { nuvioItems, providerItems, _, _, _, _ ->
             val items = source.providerId
                 ?.let { providerId -> providerItems[providerId]?.values.orEmpty() }
                 ?: nuvioItems.values
@@ -729,7 +792,7 @@ object WatchedRepository {
         source.providerId?.let(loadedProviders::contains) ?: nuvioHasLoaded
 
     private fun itemCountForSource(source: WatchProgressSource): Int =
-        itemsStore.read { nuvioItems, providerItems, _, _ ->
+        itemsStore.read { nuvioItems, providerItems, _, _, _, _ ->
             source.providerId
                 ?.let { providerId -> providerItems[providerId]?.size ?: 0 }
                 ?: nuvioItems.size
@@ -789,17 +852,23 @@ object WatchedRepository {
         val timestampedItems = items.map { watchedItem ->
             watchedItem.copy(markedAtEpochMs = markedAt)
         }
-        itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+        itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, pendingDeleteNuvioKeys, pendingDeleteProviderKeys ->
             val targetItems = source.providerId
                 ?.let { providerId -> providerItems.getOrPut(providerId, ::mutableMapOf) }
                 ?: nuvioItems
             val dirtyKeys = source.providerId
                 ?.let { providerId -> dirtyProviderKeys.getOrPut(providerId, ::mutableSetOf) }
                 ?: dirtyNuvioKeys
+            val pendingDeleteKeys = source.providerId
+                ?.let { providerId -> pendingDeleteProviderKeys.getOrPut(providerId, ::mutableSetOf) }
+                ?: pendingDeleteNuvioKeys
             timestampedItems.forEach { watchedItem ->
                 val key = watchedItemKey(watchedItem.type, watchedItem.id, watchedItem.season, watchedItem.episode)
                 targetItems[key] = watchedItem
                 dirtyKeys += key
+                // Re-marking cancels a pending unmark, mirroring how
+                // unmarking removes the key from dirtyKeys.
+                pendingDeleteKeys -= key
             }
         }
         publish()
@@ -845,14 +914,18 @@ object WatchedRepository {
         ensureLoaded()
         if (items.isEmpty()) return
         val source = activeSource
-        val (removedItems, removedExtraKeys) = itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+        val (removedItems, removedExtraKeys, pendingDeletesChanged) = itemsStore.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, pendingDeleteNuvioKeys, pendingDeleteProviderKeys ->
             val targetItems = source.providerId
                 ?.let { providerId -> providerItems.getOrPut(providerId, ::mutableMapOf) }
                 ?: nuvioItems
             val dirtyKeys = source.providerId
                 ?.let { providerId -> dirtyProviderKeys.getOrPut(providerId, ::mutableSetOf) }
                 ?: dirtyNuvioKeys
+            val pendingDeleteKeys = source.providerId
+                ?.let { providerId -> pendingDeleteProviderKeys.getOrPut(providerId, ::mutableSetOf) }
+                ?: pendingDeleteNuvioKeys
             var extraKeysChanged = false
+            var pendingDeletesChanged = false
             val removed = items.mapNotNull { watchedItem ->
                 val keys = watchedItemKeys(
                     type = watchedItem.type,
@@ -870,22 +943,42 @@ object WatchedRepository {
                         }
                     }
                 }
+                if (matchingKey == null && source.providerId != null) {
+                    // Provider sources still push a delete below for items
+                    // that exist only remotely, so tombstone that delete too.
+                    val key = watchedItemKey(
+                        type = watchedItem.type,
+                        id = watchedItem.id,
+                        season = watchedItem.season,
+                        episode = watchedItem.episode,
+                    )
+                    if (pendingDeleteKeys.add(key)) {
+                        pendingDeletesChanged = true
+                    }
+                }
                 matchingKey?.let(targetItems::remove)?.let { storeItem ->
                     if (watchedItem.videoId != null && storeItem.videoId == null) {
                         storeItem.copy(videoId = watchedItem.videoId)
                     } else {
                         storeItem
                     }
-                }?.also { dirtyKeys.remove(matchingKey) }
+                }?.also {
+                    dirtyKeys.remove(matchingKey)
+                    // Tombstone the unmark at the same moment the local item
+                    // is removed, mirroring how marks add to dirtyKeys.
+                    if (pendingDeleteKeys.add(matchingKey)) {
+                        pendingDeletesChanged = true
+                    }
+                }
             }
-            removed to extraKeysChanged
+            Triple(removed, extraKeysChanged, pendingDeletesChanged)
         }
         if (removedItems.isNotEmpty()) {
             publish()
             persist()
             if (syncRemote) pushDeleteToServer(items = removedItems, source = source)
         } else if (source.providerId != null) {
-            if (removedExtraKeys) {
+            if (removedExtraKeys || pendingDeletesChanged) {
                 publish()
                 persist()
             }
@@ -902,7 +995,7 @@ object WatchedRepository {
         ensureLoaded()
         val source = activeSource
         val keys = watchedItemKeys(type = type, id = id, season = season, episode = episode)
-        val stored = itemsStore.read { nuvioItems, providerItems, _, _ ->
+        val stored = itemsStore.read { nuvioItems, providerItems, _, _, _, _ ->
             source.providerId?.let { providerId ->
                 providerItems[providerId]?.let { itemsByKey -> keys.any(itemsByKey::containsKey) } == true
             } ?: keys.any(nuvioItems::containsKey)
@@ -1079,15 +1172,23 @@ object WatchedRepository {
         source: WatchProgressSource,
     ) {
         val profileId = currentProfileId
+        val operationGeneration = profileGeneration
         ServerWatched.mirror(items, played = false)
         accountScopeSnapshot().launch {
             runCatching {
                 if (items.isEmpty()) return@runCatching
-                deleteFromTargetsForSource(
+                val outcome = deleteFromTargetsForSource(
                     profileId = profileId,
                     items = items,
                     source = source,
                 )
+                if (shouldAcknowledgeNuvioWatchedDelete(source = source, outcome = outcome)) {
+                    recordSuccessfulDelete(
+                        profileId = profileId,
+                        operationGeneration = operationGeneration,
+                        items = items,
+                    )
+                }
             }.onFailure { e ->
                 log.e(e) { "Failed to push watched item delete" }
             }
@@ -1095,7 +1196,7 @@ object WatchedRepository {
     }
 
     private fun publish() {
-        val (nuvioItems, providerItems) = itemsStore.read { storedNuvioItems, storedProviderItems, _, _ ->
+        val (nuvioItems, providerItems) = itemsStore.read { storedNuvioItems, storedProviderItems, _, _, _, _ ->
             storedNuvioItems.values.toList() to storedProviderItems.mapValues { (_, itemsByKey) ->
                 itemsByKey.values.toList()
             }
@@ -1174,17 +1275,21 @@ object WatchedRepository {
                             },
                         ) ?: return@collectLatest
                         providerExtraWatchedKeys[providerId] = extraKeys
-                        itemsStore.update { _, providerItems, _, dirtyProviderKeys ->
+                        itemsStore.update { _, providerItems, _, dirtyProviderKeys, _, pendingDeleteProviderKeys ->
                             val dirtyKeys = dirtyProviderKeys.getOrPut(providerId, ::mutableSetOf)
+                            val pendingDeleteKeys = pendingDeleteProviderKeys.getOrPut(providerId, ::mutableSetOf)
                             val merged = mergeWatchedSnapshot(
                                 serverItems = freshItems,
                                 localItems = providerItems[providerId]?.values.orEmpty().toList(),
                                 dirtyKeys = dirtyKeys,
+                                pendingDeleteKeys = pendingDeleteKeys,
                                 acknowledgeDirtyByPresence = true,
                             )
                             providerItems[providerId] = merged.items.toMutableMap()
                             dirtyKeys.clear()
                             dirtyKeys += merged.dirtyKeys
+                            pendingDeleteKeys.clear()
+                            pendingDeleteKeys += merged.pendingDeleteKeys
                         }
                         loadedProviders += providerId
                         providersLoadedFromRemote += providerId
@@ -1201,10 +1306,11 @@ object WatchedRepository {
     }
 
     private fun persist() {
-        val storedPayload = itemsStore.read { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+        val storedPayload = itemsStore.read { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, pendingDeleteNuvioKeys, pendingDeleteProviderKeys ->
             val providerIds = buildSet {
                 addAll(providerItems.keys)
                 addAll(dirtyProviderKeys.keys)
+                addAll(pendingDeleteProviderKeys.keys)
                 addAll(providerFullyWatchedSeriesKeys.keys)
                 addAll(providerExtraWatchedKeys.keys)
                 addAll(loadedProviders)
@@ -1219,6 +1325,7 @@ object WatchedRepository {
                 deltaCursorEventId = deltaCursorEventId,
                 deltaInitialized = deltaInitialized,
                 dirtyWatchedKeys = dirtyNuvioKeys.toSet(),
+                pendingDeleteWatchedKeys = pendingDeleteNuvioKeys.toSet(),
                 providerPayloads = providerIds.associate { providerId ->
                     val items = providerItems[providerId]
                         .orEmpty()
@@ -1231,6 +1338,7 @@ object WatchedRepository {
                             providerExtraWatchedKeys[providerId].orEmpty(),
                         ),
                         dirtyWatchedKeys = dirtyProviderKeys[providerId].orEmpty(),
+                        pendingDeleteWatchedKeys = pendingDeleteProviderKeys[providerId].orEmpty(),
                     )
                 },
             )
@@ -1252,7 +1360,7 @@ object WatchedRepository {
             .map { item -> normalizeWatchedMarkedAtEpochMs(item.markedAtEpochMs) }
             .maxOrNull()
             ?: return
-        val changed = itemsStore.update { nuvioItems, _, dirtyNuvioKeys, _ ->
+        val changed = itemsStore.update { nuvioItems, _, dirtyNuvioKeys, _, _, _ ->
             val acknowledgedDirtyKeys = acknowledgeSuccessfulWatchedPush(
                 currentItems = nuvioItems,
                 dirtyKeys = dirtyNuvioKeys,
@@ -1268,6 +1376,29 @@ object WatchedRepository {
                 dirtyNuvioKeys.clear()
                 dirtyNuvioKeys += acknowledgedDirtyKeys
                 lastSuccessfulPushEpochMs = updatedLastSuccessfulPushEpochMs
+                true
+            }
+        }
+        if (changed) persist()
+    }
+
+    private fun recordSuccessfulDelete(
+        profileId: Int,
+        operationGeneration: Long,
+        items: Collection<WatchedItem>,
+    ) {
+        if (profileId != currentProfileId || operationGeneration != profileGeneration) return
+        val changed = itemsStore.update { nuvioItems, _, _, _, pendingDeleteNuvioKeys, _ ->
+            val acknowledgedPendingDeleteKeys = acknowledgeSuccessfulWatchedDelete(
+                currentItems = nuvioItems,
+                pendingDeleteKeys = pendingDeleteNuvioKeys,
+                deletedItems = items,
+            )
+            if (acknowledgedPendingDeleteKeys == pendingDeleteNuvioKeys) {
+                false
+            } else {
+                pendingDeleteNuvioKeys.clear()
+                pendingDeleteNuvioKeys += acknowledgedPendingDeleteKeys
                 true
             }
         }
@@ -1318,13 +1449,16 @@ object WatchedRepository {
         profileId: Int,
         items: Collection<WatchedItem>,
         source: WatchProgressSource,
-    ) {
+    ): WatchedDeleteOutcome {
         val (serverItems, items) = items.partition(ServerWatched::isServerItem)
         ServerWatched.apply(serverItems, played = false)
-        if (items.isEmpty()) return
+        if (items.isEmpty()) return WatchedDeleteOutcome(nuvioSyncSucceeded = true)
+        var nuvioSyncSucceeded = false
+        val succeededTrackerProviderIds = linkedSetOf<TrackingProviderId>()
         if (source.providerId == null) {
             try {
                 syncAdapter.delete(profileId = profileId, items = items)
+                nuvioSyncSucceeded = true
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
@@ -1335,12 +1469,17 @@ object WatchedRepository {
         TrackingProviderRegistry.connectedWatchedProviders().forEach { provider ->
             try {
                 provider.delete(profileId = profileId, items = items)
+                succeededTrackerProviderIds += provider.providerId
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
                 log.e(error) { "Failed to delete watched items from ${provider.providerId.storageId}" }
             }
         }
+        return WatchedDeleteOutcome(
+            nuvioSyncSucceeded = nuvioSyncSucceeded,
+            succeededTrackerProviderIds = succeededTrackerProviderIds,
+        )
     }
 
     private fun accountScopeSnapshot(): CoroutineScope =
@@ -1356,12 +1495,14 @@ object WatchedRepository {
 internal data class WatchedSnapshotMerge(
     val items: Map<String, WatchedItem>,
     val dirtyKeys: Set<String>,
+    val pendingDeleteKeys: Set<String> = emptySet(),
 )
 
 internal fun mergeWatchedSnapshot(
     serverItems: Collection<WatchedItem>,
     localItems: Collection<WatchedItem>,
     dirtyKeys: Set<String>,
+    pendingDeleteKeys: Set<String> = emptySet(),
     acknowledgeDirtyByPresence: Boolean = false,
 ): WatchedSnapshotMerge {
     val remoteByKey = serverItems
@@ -1371,6 +1512,14 @@ internal fun mergeWatchedSnapshot(
     val localByKey = localItems
         .map(WatchedItem::normalizedMarkedAt)
         .associateBy { watchedItemKey(it.type, it.id, it.season, it.episode) }
+    // Tombstones survive only while the server still returns the item and
+    // it has not been re-marked locally; a tombstoned server item is dropped
+    // so a snapshot pull can never resurrect a pending unmark.
+    val remainingPendingDeleteKeys = pendingDeleteKeys
+        .filterTo(mutableSetOf()) { key -> key in remoteByKey && key !in localByKey }
+    remainingPendingDeleteKeys.forEach { key ->
+        remoteByKey.remove(key)
+    }
     val remainingDirtyKeys = dirtyKeys
         .filterTo(mutableSetOf()) { key -> key in localByKey }
 
@@ -1389,7 +1538,31 @@ internal fun mergeWatchedSnapshot(
     return WatchedSnapshotMerge(
         items = remoteByKey,
         dirtyKeys = remainingDirtyKeys,
+        pendingDeleteKeys = remainingPendingDeleteKeys,
     )
+}
+
+internal fun acknowledgeSuccessfulWatchedDelete(
+    currentItems: Map<String, WatchedItem>,
+    pendingDeleteKeys: Set<String>,
+    deletedItems: Collection<WatchedItem>,
+): Set<String> {
+    val remainingPendingDeleteKeys = pendingDeleteKeys.toMutableSet()
+    deletedItems.forEach { deletedItem ->
+        val key = watchedItemKey(
+            type = deletedItem.type,
+            id = deletedItem.id,
+            season = deletedItem.season,
+            episode = deletedItem.episode,
+        )
+        // Mirror of acknowledgeSuccessfulWatchedPush: only acknowledge when
+        // the local state still matches what was deleted (item still absent,
+        // i.e. it was not re-marked while the delete was in flight).
+        if (key !in currentItems) {
+            remainingPendingDeleteKeys -= key
+        }
+    }
+    return remainingPendingDeleteKeys
 }
 
 internal fun acknowledgeSuccessfulWatchedPush(

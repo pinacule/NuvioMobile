@@ -53,6 +53,113 @@ class SimklScrobbleReconciliationTest {
     }
 
     @Test
+    fun `pause for one episode preserves the held playback of another episode of the same show`() {
+        val media = showMedia(simklId = 2090L, imdb = "tt1520211")
+        val heldEpisode3 = SimklPlaybackSession(
+            id = 3L,
+            progress = 30.0,
+            pausedAt = "2023-11-14T21:00:00Z",
+            type = "episode",
+            episode = SimklPlaybackEpisode(season = 1, number = 3),
+            show = media,
+        )
+        val staleEpisode5 = SimklPlaybackSession(
+            id = 5L,
+            progress = 10.0,
+            pausedAt = "2023-11-14T21:00:00Z",
+            type = "episode",
+            episode = SimklPlaybackEpisode(season = 1, number = 5),
+            show = media,
+        )
+        val snapshot = SimklSyncSnapshot(
+            isInitialized = true,
+            watermark = "v1",
+            entries = listOf(
+                SimklLibraryEntry(
+                    mediaType = SimklMediaType.SHOWS,
+                    status = SimklListStatus.WATCHING,
+                    show = media,
+                ),
+            ),
+            playback = listOf(heldEpisode3, staleEpisode5),
+        )
+
+        val updated = snapshot.applyScrobbleResult(
+            result = SimklScrobbleResult(
+                outcome = SimklScrobbleOutcome.PAUSE,
+                playbackId = 9L,
+                progress = 60.0,
+                mediaType = SimklMediaType.SHOWS,
+                media = media,
+                episode = SimklPlaybackEpisode(season = 1, number = 5),
+            ),
+            committedAtEpochMs = 1_700_000_000_000L,
+        )
+
+        assertEquals(2, updated.playback.size)
+        assertEquals(heldEpisode3, updated.playback.single { it.episode?.number == 3 })
+        val paused = updated.playback.single { it.episode?.number == 5 }
+        assertEquals(9L, paused.id)
+        assertEquals(60.0, paused.progress)
+    }
+
+    @Test
+    fun `completed stop removes only the completed episode playback`() {
+        val media = showMedia(simklId = 2090L, imdb = "tt1520211")
+        val heldEpisode3 = SimklPlaybackSession(
+            id = 3L,
+            progress = 30.0,
+            pausedAt = "2023-11-14T21:00:00Z",
+            type = "episode",
+            episode = SimklPlaybackEpisode(season = 1, number = 3),
+            show = media,
+        )
+        val snapshot = SimklSyncSnapshot(
+            isInitialized = true,
+            watermark = "v1",
+            entries = listOf(
+                SimklLibraryEntry(
+                    mediaType = SimklMediaType.SHOWS,
+                    status = SimklListStatus.WATCHING,
+                    show = media,
+                    seasons = listOf(
+                        SimklSeason(
+                            number = 1,
+                            episodes = listOf(SimklEpisode(number = 5)),
+                        ),
+                    ),
+                ),
+            ),
+            playback = listOf(
+                heldEpisode3,
+                SimklPlaybackSession(
+                    id = 5L,
+                    progress = 70.0,
+                    pausedAt = "2023-11-14T21:00:00Z",
+                    type = "episode",
+                    episode = SimklPlaybackEpisode(season = 1, number = 5),
+                    show = media,
+                ),
+            ),
+        )
+
+        val updated = snapshot.applyScrobbleResult(
+            result = SimklScrobbleResult(
+                outcome = SimklScrobbleOutcome.SCROBBLE,
+                playbackId = 9L,
+                progress = 90.0,
+                mediaType = SimklMediaType.SHOWS,
+                media = media,
+                episode = SimklPlaybackEpisode(season = 1, number = 5),
+            ),
+            committedAtEpochMs = 1_700_000_000_000L,
+        )
+
+        assertEquals(listOf(heldEpisode3), updated.playback)
+        assertEquals(1, updated.entries.single().watchedEpisodesCount)
+    }
+
+    @Test
     fun `completed stop records the exact episode and removes its playback`() {
         val media = showMedia(simklId = 2090L, imdb = "tt1520211")
         val snapshot = SimklSyncSnapshot(

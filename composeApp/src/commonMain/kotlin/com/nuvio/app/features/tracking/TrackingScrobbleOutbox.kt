@@ -17,9 +17,11 @@ import kotlinx.serialization.json.Json
  * of the providers retry). The coordinator hands such failures to
  * [enqueue]; [flush] replays them once connectivity is available again.
  *
- * Coalescing: only the latest event per (profile, provider, media) is kept —
- * a later pause supersedes earlier pauses/starts for the same episode, and a
- * stop supersedes everything before it.
+ * Coalescing: only the latest event per (profile, provider, media, episode)
+ * is kept — a later pause supersedes earlier pauses/starts for the same
+ * episode, and a stop supersedes everything before it for that episode.
+ * Different episodes of the same show never coalesce: [TrackingMediaReference.stableKey]
+ * identifies the show/movie only, so the episode is part of the key.
  *
  * Flush mapping per provider:
  * - progress >= 80% and a history writer is registered: one batched
@@ -61,10 +63,8 @@ object TrackingScrobbleOutbox {
             queuedAtEpochMs = TrackingScrobbleOutboxClock.nowEpochMs(),
         )
         storageMutex.withLock {
-            val records = loadRecords().toMutableList()
-            // Latest event per (profile, provider, media) wins.
-            records.removeAll { it.coalesceKey == record.coalesceKey }
-            records.add(record)
+            // Latest event per (profile, provider, media, episode) wins.
+            val records = coalesceQueuedScrobbles(loadRecords(), record).toMutableList()
             while (records.size > MAX_QUEUED_RECORDS) {
                 records.removeAt(0)
             }
@@ -237,11 +237,31 @@ internal data class QueuedScrobble(
     val progressPercent: Double,
     val queuedAtEpochMs: Long,
 ) {
-    /** Key for coalescing: latest event per (profile, provider, media) wins. */
+    /**
+     * Key for coalescing: latest event per (profile, provider, media, episode)
+     * wins. [TrackingMediaReference.stableKey] deliberately carries no episode
+     * coordinates (Simkl history building groups a show's episodes by it), so
+     * the episode is appended here instead of changing that key: episodes are
+     * `s<season>e<number>`, and a reference without an episode (a movie, or a
+     * whole-show event) is `movie`.
+     */
     val coalesceKey: String
-        get() = "$profileId|$providerId|${media.stableKey}"
+        get() = "$profileId|$providerId|${media.stableKey}|" +
+            (media.episode?.let { episode -> "s${episode.season}e${episode.number}" } ?: "movie")
 
     /** Stable identity used to remove exactly the records a flush delivered. */
     val identity: String
         get() = "$coalesceKey|$queuedAtEpochMs"
 }
+
+/**
+ * The enqueue coalescing rule: any already-queued record with the same
+ * [QueuedScrobble.coalesceKey] as [record] is dropped, then [record] is
+ * appended (so the newest event for an episode is also the last one).
+ * Extracted so the rule can be unit-tested without platform storage.
+ */
+internal fun coalesceQueuedScrobbles(
+    records: List<QueuedScrobble>,
+    record: QueuedScrobble,
+): List<QueuedScrobble> =
+    records.filterNot { it.coalesceKey == record.coalesceKey } + record

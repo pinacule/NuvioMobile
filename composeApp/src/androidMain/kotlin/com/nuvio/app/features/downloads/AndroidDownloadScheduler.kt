@@ -76,6 +76,10 @@ internal class AndroidDownloadScheduler(val context: Context) {
             }
         } catch (error: Exception) {
             fail(transfer, error)
+            // No worker/job will ever run for a rejected schedule, so this is
+            // the only chance to alert: match the WorkManager listener above.
+            // fail() never throws, so this always executes.
+            notifyCurrent(item.fileName)
         }
         return store.get(item.fileName) ?: transfer
     }
@@ -386,11 +390,19 @@ internal class AndroidDownloadScheduler(val context: Context) {
     } == true
 
     fun fail(transfer: AndroidDownloadTransfer, error: Exception) {
-        updateActive(transfer) {
-            it.copy(
-                item = it.item.copy(status = DownloadStatus.Failed, errorMessage = humanDownloadError(error)),
-                failureDetail = error.message,
-            )
+        // Recording the failure must never throw: when the disk is full the
+        // store write fails for the same reason the download did, and an
+        // exception escaping here would wedge the item as "Downloading" for
+        // the session and skip the caller's failure notification /
+        // jobFinished. Persistence is best-effort; the in-memory state
+        // still moves to Failed (see AndroidDownloadStore.updateBestEffort).
+        runCatching {
+            updateActiveBestEffort(transfer) {
+                it.copy(
+                    item = it.item.copy(status = DownloadStatus.Failed, errorMessage = humanDownloadError(error)),
+                    failureDetail = error.message,
+                )
+            }
         }
     }
 
@@ -417,6 +429,16 @@ internal class AndroidDownloadScheduler(val context: Context) {
         transfer: AndroidDownloadTransfer,
         update: (AndroidDownloadTransfer) -> AndroidDownloadTransfer,
     ): AndroidDownloadTransfer? = store.update(transfer.item.fileName, transfer.generation) {
+        if (it.item.status == DownloadStatus.Downloading) {
+            update(it).let { changed -> changed.copy(item = changed.item.copy(updatedAtEpochMs = System.currentTimeMillis())) }
+        } else it
+    }
+
+    /** [updateActive] on the store's best-effort path; see [fail]. */
+    private fun updateActiveBestEffort(
+        transfer: AndroidDownloadTransfer,
+        update: (AndroidDownloadTransfer) -> AndroidDownloadTransfer,
+    ): AndroidDownloadTransfer? = store.updateBestEffort(transfer.item.fileName, transfer.generation) {
         if (it.item.status == DownloadStatus.Downloading) {
             update(it).let { changed -> changed.copy(item = changed.item.copy(updatedAtEpochMs = System.currentTimeMillis())) }
         } else it

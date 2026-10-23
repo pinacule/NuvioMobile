@@ -90,16 +90,20 @@ internal object NuvioExoPlayerPerformanceHelper {
     fun buildLoadControl(
         context: Context,
         bufferSettings: PlaybackBufferSettings = PlaybackBufferSettings(),
+        maxBufferCapMs: Int? = null,
     ): DefaultLoadControl {
         if (bufferSettings.enabled) {
             return buildCustomLoadControl(context, bufferSettings)
         }
         if (!enabled) {
+            val maxBufferMs = defaultMaxBufferMs(context, fallbackMs = 50_000, capMs = maxBufferCapMs)
             return DefaultLoadControl.Builder()
                 .setBackBuffer(PlaybackBufferSettings.DEFAULT_BACK_BUFFER_MS, true)
                 .setBufferDurationsMs(
-                    DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
-                    defaultMaxBufferMs(context, fallbackMs = 50_000),
+                    // Media3 requires minBufferMs <= maxBufferMs, so a cap below the
+                    // default min (50 s) must pull the min down with it.
+                    minOf(DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, maxBufferMs),
+                    maxBufferMs,
                     DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
                     DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
                 )
@@ -107,21 +111,26 @@ internal object NuvioExoPlayerPerformanceHelper {
         }
 
         val targetBufferMb = getSafeNativeMemoryLimitMb(context).coerceAtLeast(MIN_BUFFER_MB)
+        val maxBufferMs = defaultMaxBufferMs(context, fallbackMs = MAX_BUFFER_MS, capMs = maxBufferCapMs)
         return nativeLoadControl(
             targetBufferMb = targetBufferMb,
-            minBufferMs = MIN_BUFFER_MS,
-            maxBufferMs = defaultMaxBufferMs(context, fallbackMs = MAX_BUFFER_MS),
+            minBufferMs = minOf(MIN_BUFFER_MS, maxBufferMs),
+            maxBufferMs = maxBufferMs,
             bufferForPlaybackMs = BUFFER_FOR_PLAYBACK_MS,
             bufferForPlaybackAfterRebufferMs = BUFFER_FOR_PLAYBACK_MS,
             backBufferMs = PlaybackBufferSettings.DEFAULT_BACK_BUFFER_MS,
         )
     }
 
-    /** Default read-ahead when the user has not customized buffering: longer on high-RAM devices. */
-    private fun defaultMaxBufferMs(context: Context, fallbackMs: Int): Int {
+    /**
+     * Default read-ahead when the user has not customized buffering: longer on high-RAM devices.
+     * [capMs] (e.g. the data-saver cap) bounds the result without touching the uncapped values.
+     */
+    private fun defaultMaxBufferMs(context: Context, fallbackMs: Int, capMs: Int? = null): Int {
         val highRam = deviceRamBytes(context) >= HIGH_RAM_MIN_DEVICE_BYTES &&
             Runtime.getRuntime().maxMemory() >= HIGH_RAM_MIN_HEAP_BYTES
-        return if (highRam) maxOf(fallbackMs, HIGH_RAM_MAX_BUFFER_MS) else fallbackMs
+        val uncappedMs = if (highRam) maxOf(fallbackMs, HIGH_RAM_MAX_BUFFER_MS) else fallbackMs
+        return if (capMs != null) minOf(uncappedMs, capMs) else uncappedMs
     }
 
     private fun buildCustomLoadControl(

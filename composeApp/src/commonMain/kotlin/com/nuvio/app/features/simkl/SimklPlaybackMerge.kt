@@ -8,12 +8,17 @@ package com.nuvio.app.features.simkl
  * previous viewing of the same episode, and taking it sends the next resume back to a position the
  * user has already passed: this is how an episode stopped at 83 % resumed at 88 %.
  *
- * Only rows both sides know about are compared, and the account stays authoritative for everything
- * else: a playback it dropped is a playback that is over.
+ * The same lag can also leave a just-paused row out of the fetch entirely — most visibly the
+ * first viewing of an episode, which has no previous row for the fetch to carry. A held row
+ * missing from the fetch is therefore kept when it was paused after [lastSyncedAtEpochMs] (the
+ * snapshot's last successful sync: it cannot have been published and dropped since), and dropped
+ * when it is older than that. For those older rows the account stays authoritative: a playback
+ * it dropped is a playback that is over.
  */
 internal fun mergeFetchedPlayback(
     fetched: List<SimklPlaybackSession>,
     held: List<SimklPlaybackSession>,
+    lastSyncedAtEpochMs: Long? = null,
 ): List<SimklPlaybackSession> {
     if (held.isEmpty()) return fetched
     val fetchedByKey = fetched.mapNotNull { session ->
@@ -21,8 +26,13 @@ internal fun mergeFetchedPlayback(
     }.toMap()
     val kept = held.filter { local ->
         val key = local.playbackKey() ?: return@filter false
-        val incoming = fetchedByKey[key] ?: return@filter false
-        (local.playedAtEpochMs() ?: 0L) > (incoming.playedAtEpochMs() ?: 0L)
+        val incoming = fetchedByKey[key]
+        if (incoming != null) {
+            (local.playedAtEpochMs() ?: 0L) > (incoming.playedAtEpochMs() ?: 0L)
+        } else {
+            val lastSyncedAt = lastSyncedAtEpochMs ?: return@filter false
+            (local.playedAtEpochMs() ?: 0L) > lastSyncedAt
+        }
     }
     if (kept.isEmpty()) return fetched
     val keptKeys = kept.mapNotNullTo(mutableSetOf()) { session -> session.playbackKey() }
@@ -33,12 +43,22 @@ internal fun mergeFetchedPlayback(
  * What a playback row describes: the show or movie, plus the episode when there is one. Two rows of
  * the same show are two playbacks, so the episode has to be part of the identity.
  */
-private fun SimklPlaybackSession.playbackKey(): String? {
-    val media = media ?: return null
-    val contentId = media.ids.simklIdValue()
-        ?: media.ids.idValue("imdb")
-        ?: media.ids.idValue("tvdb")
-        ?: media.title
+internal fun SimklPlaybackSession.playbackKey(): String? = simklPlaybackKey(media, episode)
+
+/**
+ * The [playbackKey] for a playback described only by its media and episode, for callers that hold
+ * a scrobble target rather than a session row. A movie has no episode, so both coordinates fall
+ * back to -1 and its key is the media alone, exactly as for a movie session row.
+ */
+internal fun simklPlaybackKey(
+    media: SimklMedia?,
+    episode: SimklPlaybackEpisode?,
+): String? {
+    val resolvedMedia = media ?: return null
+    val contentId = resolvedMedia.ids.simklIdValue()
+        ?: resolvedMedia.ids.idValue("imdb")
+        ?: resolvedMedia.ids.idValue("tvdb")
+        ?: resolvedMedia.title
         ?: return null
     val season = episode?.tvdbSeason ?: episode?.season ?: -1
     val number = episode?.tvdbNumber ?: episode?.number ?: -1

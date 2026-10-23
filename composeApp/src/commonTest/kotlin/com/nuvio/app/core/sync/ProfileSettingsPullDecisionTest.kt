@@ -258,6 +258,66 @@ class ProfileSettingsPullDecisionTest {
         )
     }
 
+    // --- Pending-push marker persistence (process-death restore) ---
+
+    @Test
+    fun `pending push generations round trip through encode and decode`() {
+        val generations = mapOf(3 to 0, 1 to 2, 12 to 7)
+
+        assertEquals(
+            generations,
+            decodePendingPushGenerations(encodePendingPushGenerations(generations)),
+        )
+        // Encoding is deterministic (sorted by profileId).
+        assertEquals("1:2,3:0,12:7", encodePendingPushGenerations(generations))
+        assertEquals("", encodePendingPushGenerations(emptyMap()))
+    }
+
+    @Test
+    fun `decode tolerates empty and malformed payloads`() {
+        assertEquals(emptyMap(), decodePendingPushGenerations(null))
+        assertEquals(emptyMap(), decodePendingPushGenerations(""))
+        assertEquals(emptyMap(), decodePendingPushGenerations("   "))
+        // Malformed entries are skipped; valid ones survive.
+        assertEquals(
+            mapOf(4 to 1),
+            decodePendingPushGenerations("junk,4:1,5:x,:2,6:1:2"),
+        )
+    }
+
+    @Test
+    fun `restored pending marker matches the current generation so the pre-fetch push fires`() {
+        // A marker persisted by a previous process (generation 5 there) is
+        // restored into a new process whose account generation is 0. The
+        // pull's pre-fetch stranded-push check is
+        // `pendingPushGenerations[profileId] == pullGeneration`, so the
+        // restored marker must carry the current generation to be treated
+        // exactly like a marker recorded in this session.
+        val restored = restorePendingPushGenerations(
+            payload = encodePendingPushGenerations(mapOf(7 to 5)),
+            currentGeneration = 0,
+        )
+
+        assertEquals(mapOf(7 to 0), restored)
+        assertEquals(0, restored[7])
+    }
+
+    @Test
+    fun `restore keeps markers for every profile and drops malformed entries`() {
+        val restored = restorePendingPushGenerations(
+            payload = "2:9,bad,5:9",
+            currentGeneration = 3,
+        )
+
+        assertEquals(mapOf(2 to 3, 5 to 3), restored)
+    }
+
+    @Test
+    fun `restore of an empty payload yields no pending markers`() {
+        assertEquals(emptyMap(), restorePendingPushGenerations(null, currentGeneration = 0))
+        assertEquals(emptyMap(), restorePendingPushGenerations("", currentGeneration = 0))
+    }
+
     private fun exitAction(
         exit: ProfileSettingsPullExit,
         preFetch: String?,

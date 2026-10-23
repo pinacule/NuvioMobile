@@ -91,9 +91,18 @@ object ProfileSettingsSync {
      * apply can overwrite the change — and cleared by any successful push of
      * that profile's whole blob. The generation guard keeps markers recorded
      * under a previous account from firing after an account switch.
+     *
+     * The map is persisted on every mutation (see
+     * [ProfileSettingsPendingPushStorage]) and restored during initialisation:
+     * without that, a process death between a mid-pull local change and its
+     * compensating push lost the marker, and the next launch's pull applied
+     * the remote blob over the never-pushed local change.
      */
     private val pendingPushLock = SynchronizedObject()
     private val pendingPushGenerations = mutableMapOf<Int, Int>()
+
+    /** Guarded by [pendingPushLock]. */
+    private var pendingPushGenerationsLoaded: Boolean = false
 
     @Volatile
     private var accountSyncGeneration: Int = 0
@@ -102,6 +111,7 @@ object ProfileSettingsSync {
 
     fun startObserving() {
         if (observeJob?.isActive == true) return
+        ensurePendingPushGenerationsLoaded()
         ensureRepositoriesLoaded()
         ProviderCredentialSync.startObserving()
         MediaServerSync.startObserving()
@@ -113,20 +123,84 @@ object ProfileSettingsSync {
         observeJob = null
         skipNextPushSignature = null
         accountSyncGeneration++
-        synchronized(pendingPushLock) { pendingPushGenerations.clear() }
+        synchronized(pendingPushLock) {
+            pendingPushGenerations.clear()
+            // The account's markers must not survive into the next account,
+            // in this process or after a restart. Mark the (empty) state as
+            // loaded too, so a failed persist cannot resurrect stale markers
+            // later in this session.
+            pendingPushGenerationsLoaded = true
+            persistPendingPushGenerationsLocked()
+        }
         ProviderCredentialSync.clearAccountState()
         MediaServerSync.clearAccountState()
     }
 
     private fun markPendingPush(profileId: Int, generation: Int) {
-        synchronized(pendingPushLock) { pendingPushGenerations[profileId] = generation }
+        synchronized(pendingPushLock) {
+            pendingPushGenerations[profileId] = generation
+            persistPendingPushGenerationsLocked()
+        }
     }
 
     private fun hasPendingPush(profileId: Int, generation: Int): Boolean =
         synchronized(pendingPushLock) { pendingPushGenerations[profileId] == generation }
 
     private fun clearPendingPush(profileId: Int) {
-        synchronized(pendingPushLock) { pendingPushGenerations.remove(profileId) }
+        synchronized(pendingPushLock) {
+            // Only an actual removal is a mutation worth persisting. Callers
+            // invoke this after an acknowledged successful push, so the
+            // persisted marker is cleared only once the push has landed.
+            if (pendingPushGenerations.remove(profileId) != null) {
+                persistPendingPushGenerationsLocked()
+            }
+        }
+    }
+
+    /** Caller must hold [pendingPushLock]. */
+    private fun persistPendingPushGenerationsLocked() {
+        runCatching {
+            if (pendingPushGenerations.isEmpty()) {
+                ProfileSettingsPendingPushStorage.clearPayload()
+            } else {
+                ProfileSettingsPendingPushStorage.savePayload(
+                    encodePendingPushGenerations(pendingPushGenerations),
+                )
+            }
+        }.onFailure { error ->
+            log.e(error) { "persistPendingPushGenerations — FAILED; markers stay in memory only" }
+        }
+    }
+
+    /**
+     * Loads persisted pending-push markers once, before the first pull can
+     * apply a remote blob (called from startObserving, pull and the push
+     * entry point). Restored markers are rebased onto the current account
+     * generation (see restorePendingPushGenerations), so the pull's
+     * pre-fetch stranded push treats a restored marker exactly like one
+     * recorded in this session and pushes local state before fetching.
+     */
+    private fun ensurePendingPushGenerationsLoaded() {
+        synchronized(pendingPushLock) {
+            if (pendingPushGenerationsLoaded) return
+            pendingPushGenerationsLoaded = true
+            val restored = runCatching {
+                restorePendingPushGenerations(
+                    ProfileSettingsPendingPushStorage.loadPayload(),
+                    accountSyncGeneration,
+                )
+            }.onFailure { error ->
+                log.e(error) { "loadPendingPushGenerations — FAILED; continuing without restored markers" }
+            }.getOrDefault(emptyMap())
+            // Never overwrite a marker recorded in this session before the
+            // load ran; the load happens at every sync entry point, so this
+            // merge is only a belt-and-braces guard.
+            restored.forEach { (profileId, generation) ->
+                if (!pendingPushGenerations.containsKey(profileId)) {
+                    pendingPushGenerations[profileId] = generation
+                }
+            }
+        }
     }
 
     fun onProfileChanged() {
@@ -136,6 +210,10 @@ object ProfileSettingsSync {
     }
 
     suspend fun pull(profileId: Int): Boolean {
+        // Restored markers must be in the map before the pre-fetch stranded
+        // push below checks them, so no pull can apply a remote blob over a
+        // change whose marker survived a process death.
+        ensurePendingPushGenerationsLoaded()
         ensureRepositoriesLoaded()
         val pullGeneration = accountSyncGeneration
         var pushLocalAfterPull = false
@@ -144,8 +222,9 @@ object ProfileSettingsSync {
                 log.d { "pull(profileId=$profileId) — skipped because profile is no longer active" }
                 return@withLock false
             }
-            // A change stranded by an earlier interrupted pull of this profile is
-            // pushed before fetching: otherwise this pull's whole-blob apply
+            // A change stranded by an earlier interrupted pull of this profile —
+            // including a marker restored from storage after a process death —
+            // is pushed before fetching: otherwise this pull's whole-blob apply
             // could overwrite it before it ever reaches the server. Best-effort —
             // on failure the marker stays and the pull proceeds (its RPC will
             // most likely fail the same way and re-settle below).
@@ -310,6 +389,10 @@ object ProfileSettingsSync {
      * pushing whatever profile happens to be active.
      */
     suspend fun pushProfileSettingsToRemote(profileId: Int): Boolean {
+        // A successful push clears the profile's marker via clearPendingPush;
+        // load first so a restored marker is the one being cleared (and its
+        // persisted copy with it) instead of surviving to fire redundantly.
+        ensurePendingPushGenerationsLoaded()
         ensureRepositoriesLoaded()
         return syncMutex.withLock { pushProfileSettingsLocked(profileId) != null }
     }

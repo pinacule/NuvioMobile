@@ -45,7 +45,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.floatingNavigationGlowSupported
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.isIos
 import com.nuvio.app.supportsPosterNavigationMotion
 import nuvio.composeapp.generated.resources.*
@@ -114,6 +116,7 @@ internal fun settingsSearchEntries(
     val collectionsPage = stringResource(Res.string.collections_header)
     val tmdbPage = stringResource(Res.string.compose_settings_page_tmdb_enrichment)
     val mdbListPage = stringResource(Res.string.compose_settings_page_mdblist_ratings)
+    val debridPage = stringResource(Res.string.compose_settings_page_debrid)
 
     val entries = mutableListOf<SettingsSearchEntry>()
 
@@ -400,6 +403,17 @@ internal fun settingsSearchEntries(
         section = stringResource(Res.string.settings_appearance_section_display),
         icon = Icons.Rounded.Language,
     )
+    if (!isIos && floatingNavigationGlowSupported) {
+        addRow(
+            page = SettingsPage.Appearance,
+            key = "nav-bar-glow",
+            title = stringResource(Res.string.settings_nav_bar_glow),
+            description = stringResource(Res.string.settings_nav_bar_glow_description),
+            pageLabel = layoutPage,
+            section = stringResource(Res.string.settings_appearance_section_display),
+            icon = Icons.Rounded.Palette,
+        )
+    }
     addRow(
         page = SettingsPage.Advanced,
         key = "remember-last-profile",
@@ -509,6 +523,7 @@ internal fun settingsSearchEntries(
     val playbackSubtitleRendering = stringResource(Res.string.settings_playback_section_subtitle_rendering)
     val playbackSkipSegments = stringResource(Res.string.settings_playback_section_skip_segments)
     val playbackNextEpisode = stringResource(Res.string.settings_playback_section_next_episode)
+    val playbackP2p = stringResource(Res.string.settings_playback_section_p2p)
     addRow(
         page = SettingsPage.Streams,
         key = "stream-addon-logo",
@@ -573,9 +588,19 @@ internal fun settingsSearchEntries(
                 stringResource(Res.string.settings_playback_show_loading_overlay_description),
             ),
             PlaybackSearchRow(
+                "show-loading-status",
+                stringResource(Res.string.playback_show_loading_status),
+                stringResource(Res.string.playback_show_loading_status_sub),
+            ),
+            PlaybackSearchRow(
                 "pause-overlay",
                 stringResource(Res.string.settings_playback_pause_overlay),
                 stringResource(Res.string.settings_playback_pause_overlay_description),
+            ),
+            PlaybackSearchRow(
+                "parental-guide",
+                stringResource(Res.string.settings_playback_parental_guide),
+                stringResource(Res.string.settings_playback_parental_guide_description),
             ),
             PlaybackSearchRow(
                 "external-player",
@@ -611,6 +636,26 @@ internal fun settingsSearchEntries(
             PlaybackSearchRow("secondary-subtitles", stringResource(Res.string.settings_playback_secondary_subtitle_language)),
         ),
     )
+    if (!isIos) {
+        addPlaybackRows(
+            addRow = ::addRow,
+            pageLabel = playbackPage,
+            section = playbackSubtitleAudio,
+            icon = Icons.Rounded.PlayArrow,
+            rows = listOf(
+                PlaybackSearchRow(
+                    "subtitle-auto-sync",
+                    stringResource(Res.string.settings_playback_subtitle_auto_sync),
+                    stringResource(Res.string.settings_playback_subtitle_auto_sync_description),
+                ),
+                PlaybackSearchRow(
+                    "auto-sync-aggressive",
+                    stringResource(Res.string.settings_playback_auto_sync_mode_aggressive),
+                    stringResource(Res.string.settings_playback_auto_sync_mode_aggressive_description),
+                ),
+            ),
+        )
+    }
     addPlaybackRows(
         addRow = ::addRow,
         pageLabel = playbackPage,
@@ -662,6 +707,18 @@ internal fun settingsSearchEntries(
             rows = listOf(
                 PlaybackSearchRow("libass", stringResource(Res.string.settings_playback_enable_libass), stringResource(Res.string.settings_playback_enable_libass_description)),
                 PlaybackSearchRow("libass-render", stringResource(Res.string.settings_playback_render_type)),
+            ),
+        )
+    }
+    if (P2pSettingsRepository.isVisible) {
+        addPlaybackRows(
+            addRow = ::addRow,
+            pageLabel = playbackPage,
+            section = playbackP2p,
+            icon = Icons.Rounded.PlayArrow,
+            rows = listOf(
+                PlaybackSearchRow("p2p-streaming", stringResource(Res.string.settings_p2p_title), stringResource(Res.string.settings_p2p_subtitle)),
+                PlaybackSearchRow("p2p-hide-torrent-stats", stringResource(Res.string.settings_p2p_hide_stats_title), stringResource(Res.string.settings_p2p_hide_stats_subtitle)),
             ),
         )
     }
@@ -732,6 +789,7 @@ internal fun settingsSearchEntries(
         PlaybackSearchRow("poster-radius", stringResource(Res.string.settings_poster_card_radius)),
         PlaybackSearchRow("poster-landscape", stringResource(Res.string.settings_poster_landscape_mode)),
         PlaybackSearchRow("poster-hide-labels", stringResource(Res.string.settings_poster_hide_labels)),
+        PlaybackSearchRow("poster-clearlogo", stringResource(Res.string.settings_poster_always_show_landscape_clearlogo)),
     ).forEach { row ->
         addRow(
             page = SettingsPage.PosterCustomization,
@@ -861,6 +919,40 @@ internal fun settingsSearchEntries(
         key = "mdblist",
         title = mdbListPage,
         description = stringResource(Res.string.settings_integrations_mdblist_description),
+        icon = Icons.Rounded.Link,
+    )
+    addPage(
+        page = SettingsPage.Debrid,
+        key = "debrid",
+        title = debridPage,
+        description = stringResource(Res.string.settings_integrations_debrid_description),
+        icon = Icons.Rounded.Link,
+    )
+    addRow(
+        page = SettingsPage.Debrid,
+        key = "debrid-cloud-library",
+        title = stringResource(Res.string.settings_debrid_cloud_library),
+        description = stringResource(Res.string.settings_debrid_cloud_library_description),
+        pageLabel = debridPage,
+        section = stringResource(Res.string.settings_debrid_section_title),
+        icon = Icons.Rounded.Link,
+    )
+    addRow(
+        page = SettingsPage.Debrid,
+        key = "debrid-link-resolving",
+        title = stringResource(Res.string.settings_debrid_enable),
+        description = stringResource(Res.string.settings_debrid_enable_description),
+        pageLabel = debridPage,
+        section = stringResource(Res.string.settings_debrid_section_title),
+        icon = Icons.Rounded.Link,
+    )
+    addRow(
+        page = SettingsPage.Debrid,
+        key = "debrid-prepare-instant-playback",
+        title = stringResource(Res.string.settings_debrid_prepare_instant_playback),
+        description = stringResource(Res.string.settings_debrid_prepare_instant_playback_description),
+        pageLabel = debridPage,
+        section = stringResource(Res.string.settings_debrid_section_instant_playback),
         icon = Icons.Rounded.Link,
     )
     val tmdbModulesSection = stringResource(Res.string.settings_tmdb_section_modules)

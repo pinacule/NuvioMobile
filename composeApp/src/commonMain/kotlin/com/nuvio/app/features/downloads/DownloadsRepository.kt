@@ -68,13 +68,11 @@ object DownloadsRepository {
      * Finished downloads kept on disk while their replacement is in flight, keyed by the
      * replacement's download id. The old file is deleted only after the replacement succeeds;
      * on failure (or cancel) the stashed snapshot is restored so the episode stays playable.
+     * Write-through persisted by [persist] (see [DownloadsCodec]) so the stash survives
+     * process death; [loadFromDisk] settles any stash whose replacement already reached a
+     * terminal state while the process was gone (see [settlePersistedStashes]).
      */
     private val stashedReplacements = mutableMapOf<String, StashedReplacement>()
-
-    private data class StashedReplacement(
-        val item: DownloadItem,
-        val fileUri: String?,
-    )
 
     fun ensureLoaded() {
         if (hasLoaded) return
@@ -473,13 +471,15 @@ object DownloadsRepository {
         hasLoaded = true
         val payload = DownloadsStorage.loadPayload().orEmpty().trim()
         if (payload.isEmpty()) {
+            stashedReplacements.clear()
             _uiState.value = DownloadsUiState()
             notifyLiveStatusPlatform()
             return
         }
 
         var shouldPersistNormalized = false
-        val normalized = DownloadsCodec.decodeItems(payload)
+        val decoded = DownloadsCodec.decode(payload)
+        val restoredItems = decoded.items
             .map { item ->
                 val statusNormalized = DownloadsPlatformDownloader.restoreItem(item)
 
@@ -489,6 +489,22 @@ object DownloadsRepository {
                 }
                 localUriNormalized
             }
+
+        // The process may have died while a replacement was in flight: settle its
+        // persisted stash against the state the replacement was restored in. A
+        // still-active (or paused) replacement keeps its stash in memory, and the
+        // live callbacks below settle it exactly as before.
+        val settlement = settlePersistedStashes(restoredItems, decoded.stashedReplacements)
+        stashedReplacements.clear()
+        stashedReplacements.putAll(settlement.remainingStashes)
+        settlement.completedStashes.forEach { stash -> deleteStashedReplacementFile(stash) }
+        settlement.restoredReplacementFileNames.forEach { fileName ->
+            DownloadsPlatformDownloader.removePartialFile(fileName)
+        }
+        if (settlement.remainingStashes.size != decoded.stashedReplacements.size) {
+            shouldPersistNormalized = true
+        }
+        val normalized = settlement.items
 
         _uiState.value = DownloadsUiState(normalized)
         notifyLiveStatusPlatform()
@@ -580,10 +596,9 @@ object DownloadsRepository {
                 activeHandles.remove(item.id)
                 torrentPrepRetryBudgets.remove(item.id)
                 if (isSettleableDownload(item.id)) {
-                    // The replacement proved good: delete the superseded finished file.
-                    stashedReplacements.remove(item.id)?.fileUri?.let {
-                        DownloadsPlatformDownloader.removeFile(it)
-                    }
+                    // The replacement proved good: delete the superseded finished file,
+                    // including its subtitle sidecar / partial storage.
+                    stashedReplacements.remove(item.id)?.let { stash -> deleteStashedReplacementFile(stash) }
                 }
                 mutateItem(item.id) { current ->
                     if (current.status != DownloadStatus.Downloading) return@mutateItem current
@@ -694,9 +709,28 @@ object DownloadsRepository {
         }
     }
 
+    /**
+     * Deletes a settled stash's superseded finished file together with its
+     * `<file>.subtitles/` sidecar and any partial storage — the same cleanup the
+     * manual-delete path ([cancelDownload]) performs via removeFile +
+     * removePartialFile (the platform removePartialFile also drops the sidecar on
+     * Android/iOS; the explicit [DownloadSubtitleStorage] removal covers desktop,
+     * mirroring PreloadCache's deleteEntry).
+     */
+    private fun deleteStashedReplacementFile(stashed: StashedReplacement) {
+        stashed.fileUri?.let { fileUri ->
+            DownloadsPlatformDownloader.removeFile(fileUri)
+            runCatching { DownloadSubtitleStorage(fileUri).remove() }
+        }
+        DownloadsPlatformDownloader.removePartialFile(stashed.item.fileName)
+    }
+
     private fun persist() {
         DownloadsStorage.savePayload(
-            DownloadsCodec.encodeItems(_uiState.value.items),
+            DownloadsCodec.encodeItems(
+                items = _uiState.value.items,
+                stashedReplacements = stashedReplacements.toMap(),
+            ),
         )
     }
 
@@ -730,28 +764,108 @@ object DownloadsRepository {
             ) != null
 }
 
+/**
+ * A finished download kept on disk while its replacement is in flight: the
+ * superseded item snapshot plus the file it lives in. Persisted in
+ * [StoredDownloadsPayload] keyed by the replacement's download id, so the
+ * original survives process death until the replacement settles.
+ */
 @Serializable
-private data class StoredDownloadsPayload(
-    val items: List<DownloadItem> = emptyList(),
+internal data class StashedReplacement(
+    val item: DownloadItem,
+    val fileUri: String?,
 )
 
-private object DownloadsCodec {
+@Serializable
+internal data class StoredDownloadsPayload(
+    val items: List<DownloadItem> = emptyList(),
+    /** Stashes awaiting settlement, keyed by the replacement's download id. Absent in pre-fix payloads. */
+    val stashedReplacements: Map<String, StashedReplacement> = emptyMap(),
+)
+
+internal object DownloadsCodec {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
 
-    fun decodeItems(payload: String): List<DownloadItem> =
+    fun decode(payload: String): StoredDownloadsPayload =
         runCatching {
-            json.decodeFromString<StoredDownloadsPayload>(payload).items
-        }.getOrDefault(emptyList())
+            json.decodeFromString<StoredDownloadsPayload>(payload)
+        }.getOrDefault(StoredDownloadsPayload())
 
-    fun encodeItems(items: Collection<DownloadItem>): String =
+    fun decodeItems(payload: String): List<DownloadItem> = decode(payload).items
+
+    fun encodeItems(
+        items: Collection<DownloadItem>,
+        stashedReplacements: Map<String, StashedReplacement> = emptyMap(),
+    ): String =
         json.encodeToString(
             StoredDownloadsPayload(
                 items = items.toList(),
+                stashedReplacements = stashedReplacements,
             ),
         )
+}
+
+/** Outcome of settling persisted stashes against the items loaded from disk. */
+internal data class StashSettlement(
+    /** The item list to publish: settled replacements removed, restored stashes back in. */
+    val items: List<DownloadItem>,
+    /** Stashes whose replacement is still in flight (or paused): kept for the live callbacks. */
+    val remainingStashes: Map<String, StashedReplacement>,
+    /** Stashes whose replacement completed: their superseded files are safe to delete. */
+    val completedStashes: List<StashedReplacement>,
+    /** File names of failed replacements dropped in favour of their stash: their partials go too. */
+    val restoredReplacementFileNames: List<String>,
+)
+
+/**
+ * Settles [stashes] persisted alongside [items] against the state each
+ * replacement was loaded in, mirroring the in-process settlement in
+ * [DownloadsRepository]: a completed replacement retires its stash, a failed
+ * (or vanished, i.e. cancelled) replacement gives the stashed finished item
+ * back, and any other replacement keeps its stash for the live callbacks.
+ * Pure: the caller performs the file deletions and the persist.
+ */
+internal fun settlePersistedStashes(
+    items: List<DownloadItem>,
+    stashes: Map<String, StashedReplacement>,
+): StashSettlement {
+    if (stashes.isEmpty()) {
+        return StashSettlement(
+            items = items,
+            remainingStashes = emptyMap(),
+            completedStashes = emptyList(),
+            restoredReplacementFileNames = emptyList(),
+        )
+    }
+    val settled = items.toMutableList()
+    val remaining = mutableMapOf<String, StashedReplacement>()
+    val completed = mutableListOf<StashedReplacement>()
+    val restoredFileNames = mutableListOf<String>()
+    for ((replacementId, stash) in stashes) {
+        val replacement = settled.firstOrNull { it.id == replacementId }
+        when (replacement?.status) {
+            DownloadStatus.Completed -> completed += stash
+            DownloadStatus.Failed, null -> {
+                if (replacement != null) {
+                    settled.removeAll { it.id == replacementId }
+                    restoredFileNames += replacement.fileName
+                }
+                if (settled.none { it.id == stash.item.id }) {
+                    settled.add(0, stash.item)
+                }
+            }
+            else -> remaining[replacementId] = stash
+        }
+    }
+    return StashSettlement(
+        items = settled,
+        remainingStashes = remaining,
+        completedStashes = completed,
+        restoredReplacementFileNames = restoredFileNames,
+    )
 }
 
 internal fun sanitizeRequestHeaders(headers: Map<String, String>?): Map<String, String> =

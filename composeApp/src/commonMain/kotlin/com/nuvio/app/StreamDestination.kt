@@ -45,6 +45,7 @@ import com.nuvio.app.features.streams.StreamLaunchStore
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.StreamsRepository
 import com.nuvio.app.features.streams.StreamsScreen
+import com.nuvio.app.features.streams.isAdaptiveAutoPickPending
 import com.nuvio.app.features.streams.shouldShowAutoPlayLoading
 import com.nuvio.app.features.streams.shouldUseLandscapeAutoPlayLoading
 import com.nuvio.app.features.streams.StreamsUiState
@@ -433,9 +434,11 @@ internal fun StreamDestination(
     // current network/battery state instead of showing the sources list. Manual
     // selection ("Choose stream") and the configured auto-play modes keep the list.
     var adaptivePickDone by remember(route.launchId) { mutableStateOf(false) }
-    val adaptiveAutoPickPending = !launch.manualSelection &&
-        !adaptivePickDone &&
-        streamsUiState.requestToken == expectedStreamsRequestToken
+    val adaptiveAutoPickPending = streamsUiState.isAdaptiveAutoPickPending(
+        expectedRequestToken = expectedStreamsRequestToken,
+        manualSelection = launch.manualSelection,
+        adaptivePickDone = adaptivePickDone,
+    )
     val showLoadingScreen = autoPlayNavigationStarted || resolvingDebridStream || resolvingYouTubeStream || preparingServerStream || adaptiveAutoPickPending || streamsUiState.shouldShowAutoPlayLoading(
         expectedRequestToken = expectedStreamsRequestToken,
         settings = playerSettings,

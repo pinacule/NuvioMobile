@@ -55,6 +55,28 @@ object AddonRepository {
     private val _uiState = MutableStateFlow(AddonsUiState())
     val uiState: StateFlow<AddonsUiState> = _uiState.asStateFlow()
 
+    private val _pendingInstallUrl = MutableStateFlow<String?>(null)
+
+    /**
+     * Manifest URL staged by an external deep link (stremio:// or nuvio:// addon
+     * link). Staging never fetches, installs, persists, or syncs anything — the
+     * Addons screen pre-fills its URL field with this value and the addon is only
+     * installed when the user taps Install there.
+     */
+    val pendingInstallUrl: StateFlow<String?> = _pendingInstallUrl.asStateFlow()
+
+    fun stagePendingInstallUrl(url: String) {
+        val normalized = url.trim()
+        if (normalized.isBlank()) return
+        _pendingInstallUrl.value = normalized
+    }
+
+    fun consumePendingInstallUrl(): String? {
+        val staged = _pendingInstallUrl.value
+        _pendingInstallUrl.value = null
+        return staged
+    }
+
     private var initialized = false
     private var currentProfileId: Int = 1
     private val activeRefreshJobs = mutableMapOf<String, Job>()
@@ -100,6 +122,7 @@ object AddonRepository {
         seedJob?.cancel()
         currentProfileId = effectiveProfileId
         initialized = false
+        _pendingInstallUrl.value = null
         _uiState.value = AddonsUiState()
     }
 
@@ -110,6 +133,7 @@ object AddonRepository {
         pushJobsByProfile.clear()
         currentProfileId = 1
         initialized = false
+        _pendingInstallUrl.value = null
         _uiState.value = AddonsUiState()
     }
 

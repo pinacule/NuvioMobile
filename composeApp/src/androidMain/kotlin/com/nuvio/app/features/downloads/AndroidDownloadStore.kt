@@ -83,6 +83,25 @@ internal class AndroidDownloadStore(private val directory: File) {
         transform(current).also(::save)
     }
 
+    /**
+     * Like [update], except persistence is best-effort: the in-memory state
+     * is updated first and a failed record write (e.g. a full disk) is
+     * swallowed instead of propagated. Only for recording a terminal
+     * failure — losing the in-memory update there would wedge the transfer
+     * as "Downloading" for the rest of the session.
+     */
+    fun updateBestEffort(
+        fileName: String,
+        generation: String,
+        transform: (AndroidDownloadTransfer) -> AndroidDownloadTransfer,
+    ): AndroidDownloadTransfer? = synchronized(lock) {
+        val current = get(fileName)?.takeIf { it.generation == generation } ?: return@synchronized null
+        val updated = transform(current)
+        state.value = state.value + (fileName to updated)
+        runCatching { save(updated) }
+        updated
+    }
+
     fun remove(fileName: String) = synchronized(lock) {
         AtomicFile(recordFile(fileName)).delete()
         state.value = state.value - fileName

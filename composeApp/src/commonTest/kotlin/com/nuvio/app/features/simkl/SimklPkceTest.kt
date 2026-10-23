@@ -60,13 +60,69 @@ class SimklPkceTest {
         assertIs<SimklAuthCallback.NotSimkl>(
             parseSimklAuthCallback("nuvio://auth/trakt?code=a&state=b", "nuvio://auth/simkl"),
         )
-        assertIs<SimklAuthCallback.Invalid>(
+        assertIs<SimklAuthCallback.NotSimkl>(
             parseSimklAuthCallback("nuvio://auth/simkl?code=a", "nuvio://auth/simkl"),
         )
         assertEquals(
             SimklAuthCallback.AuthorizationCode(code = "a", state = "b"),
             parseSimklAuthCallback("nuvio://auth/simkl?code=a&state=b", "nuvio://auth/simkl"),
         )
+    }
+
+    @Test
+    fun `incomplete simkl callbacks are ignored so a pending authorization survives`() {
+        // Blank/missing code: ignored (NotSimkl is the repository's no-op
+        // result), never Invalid, so the pending authorization stays intact.
+        assertIs<SimklAuthCallback.NotSimkl>(
+            parseSimklAuthCallback("nuvio://auth/simkl?state=b", "nuvio://auth/simkl"),
+        )
+        assertIs<SimklAuthCallback.NotSimkl>(
+            parseSimklAuthCallback("nuvio://auth/simkl?code=&state=b", "nuvio://auth/simkl"),
+        )
+        assertIs<SimklAuthCallback.NotSimkl>(
+            parseSimklAuthCallback("nuvio://auth/simkl?code=%20&state=b", "nuvio://auth/simkl"),
+        )
+        // Blank/missing state.
+        assertIs<SimklAuthCallback.NotSimkl>(
+            parseSimklAuthCallback("nuvio://auth/simkl?code=a&state=", "nuvio://auth/simkl"),
+        )
+        assertIs<SimklAuthCallback.NotSimkl>(
+            parseSimklAuthCallback("nuvio://auth/simkl?code=a&state=%20", "nuvio://auth/simkl"),
+        )
+        // Bare callback with no parameters at all.
+        assertIs<SimklAuthCallback.NotSimkl>(
+            parseSimklAuthCallback("nuvio://auth/simkl?", "nuvio://auth/simkl"),
+        )
+        assertIs<SimklAuthCallback.NotSimkl>(
+            parseSimklAuthCallback("nuvio://auth/simkl", "nuvio://auth/simkl"),
+        )
+    }
+
+    @Test
+    fun `callback state must match the pending state to complete authorization`() {
+        val pendingState = "pending-state"
+        // Wrong state with a code present still parses as a code callback,
+        // but the constant-time guard rejects it against the pending state,
+        // so the repository ignores it without touching the pending flow.
+        val forged = parseSimklAuthCallback(
+            "nuvio://auth/simkl?code=a&state=attacker-state",
+            "nuvio://auth/simkl",
+        )
+        assertEquals(
+            SimklAuthCallback.AuthorizationCode(code = "a", state = "attacker-state"),
+            forged,
+        )
+        assertFalse(constantTimeEquals((forged as SimklAuthCallback.AuthorizationCode).state, pendingState))
+        // The legitimate callback carries the exact pending state and passes.
+        val legitimate = parseSimklAuthCallback(
+            "nuvio://auth/simkl?code=a&state=$pendingState",
+            "nuvio://auth/simkl",
+        )
+        assertEquals(
+            SimklAuthCallback.AuthorizationCode(code = "a", state = pendingState),
+            legitimate,
+        )
+        assertTrue(constantTimeEquals((legitimate as SimklAuthCallback.AuthorizationCode).state, pendingState))
     }
 
     @Test

@@ -4,8 +4,11 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.gestures.stopScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -60,6 +63,7 @@ import com.nuvio.app.features.home.components.HomeSkeletonHero
 import com.nuvio.app.features.home.components.HomeSkeletonRow
 import com.nuvio.app.features.home.components.HomeContinueWatchingSectionBottomPadding
 import com.nuvio.app.features.home.components.ContinueWatchingLayout
+import com.nuvio.app.features.library.OfflineHomeToggle
 import com.nuvio.app.features.tracking.TrackingSettingsRepository
 import com.nuvio.app.features.tracking.WatchProgressSource
 import com.nuvio.app.features.watched.WatchedItem
@@ -1077,6 +1081,25 @@ fun HomeScreen(
                 // separate downloads-only row (same items, same click path,
                 // so resume works exactly as online), followed by a poster
                 // grid of everything downloaded.
+                // The way out lives here too: the Offline toggle chip at the
+                // top of the offline homepage, so the mode can be switched
+                // off without leaving Home — including the empty state
+                // below, where neither section renders.
+                item(key = "offline_home_toggle", contentType = "offline_toggle") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = homeSectionPadding,
+                                end = homeSectionPadding,
+                                top = 8.dp,
+                                bottom = 4.dp,
+                            ),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        OfflineHomeToggle()
+                    }
+                }
                 if (continueWatchingPreferences.isVisible && offlineContinueWatchingItems.isNotEmpty()) {
                     item(key = "offline_home_continue_watching", contentType = "continue_watching") {
                         HomeContinueWatchingSection(

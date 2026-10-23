@@ -2,8 +2,6 @@ package com.nuvio.app.features.player
 
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.Locale
 
 internal fun playbackMediaItemFromUrl(
@@ -27,7 +25,21 @@ private fun inferPlaybackMimeType(
 ): String? =
     inferMimeTypeFromStreamType(streamType)
         ?: inferMimeTypeFromResponseHeaders(responseHeaders)
-        ?: inferMimeTypeFromPath(url)
+        ?: if (isLocalPlaybackSource(url)) null else inferMimeTypeFromPath(url)
+
+// Local downloads are named with an extension guessed from the (often opaque)
+// source URL, so it may not match the actual container. Forcing that MIME
+// would pin the extractor to the wrong format; leave it unset so Media3
+// sniffs the bytes instead. Same local-source checks as PlayerEngine's
+// isLocalFileSource (file:) plus the content: and scheme-less absolute-path
+// forms in String.isLocalSubtitleUri().
+private fun isLocalPlaybackSource(url: String): Boolean {
+    val trimmed = url.trim()
+    val scheme = trimmed.substringBefore(':', missingDelimiterValue = "")
+        .lowercase(Locale.US)
+    return scheme == "file" || scheme == "content" ||
+        (':' !in trimmed && trimmed.startsWith("/"))
+}
 
 private fun inferMimeTypeFromStreamType(streamType: String?): String? {
     val normalized = streamType
@@ -200,17 +212,26 @@ internal fun probeMimeType(url: String, headers: Map<String, String>): String? {
     val methods = listOf("HEAD", "GET")
     methods.forEach { method ->
         runCatching {
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = method
-                connectTimeout = 3_000
-                readTimeout = 3_000
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "Mozilla/5.0")
-                setRequestProperty("Accept", "*/*")
-                headers.forEach { (key, value) ->
-                    setRequestProperty(key, value)
+            // Go through PlayerPlaybackNetworking so the probe uses PlaybackTls
+            // (verified TLS for public hosts) instead of the platform default.
+            // It also sets instanceFollowRedirects = true, as before.
+            // Residual: HttpURLConnection offers no per-redirect-hop hook, so
+            // headers set on the connection can still be forwarded by the
+            // platform to a redirect target on another host.
+            val probeHeaders = buildMap {
+                put("Accept", "*/*")
+                putAll(headers)
+                if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+                    put("User-Agent", "Mozilla/5.0")
                 }
             }
+            val connection = PlayerPlaybackNetworking.openConnection(
+                url = url,
+                headers = probeHeaders,
+                method = method,
+                connectTimeoutMs = 3_000,
+                readTimeoutMs = 3_000,
+            )
             try {
                 val responseCode = connection.responseCode
                 if (responseCode in 200..299) {

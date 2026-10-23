@@ -23,7 +23,11 @@ private val qualityRank = listOf("480p", "576p", "720p", "1080p", "1440p", "2160
  * KNOWN size exceeds its tier's ceiling is never eligible (e.g. a 30 GB
  * remux at a 1080p target): the ceiling is a hard filter in [pickFromPool],
  * not a preference. Streams with unknown size stay eligible. Downloads do
- * not use this picker and are unaffected.
+ * not use this picker and are unaffected. The single exception is
+ * [AdaptiveStreamPicker.pickBestSeeded]'s English-oversize fallback: when
+ * the user prefers English audio and EVERY English dub is oversize, the
+ * least-oversize dub is still picked — dub over sub, always — while the
+ * non-English pool keeps the hard filter unchanged.
  */
 private val saneSizeBytesByQuality = mapOf(
     "480p" to 900L * 1024 * 1024,
@@ -124,9 +128,21 @@ private val enAudioAdjacentTag = Regex(
 // the full language names still cover those cases. "latino"/"castellano"/
 // "espanol" name the Spanish dubs common in Latin-American releases, and
 // "pt"/"bul" are standalone tokens guarded by the same word boundaries as
-// every other code.
+// every other code. French scene releases name their audio with fused
+// tokens instead of "french"/"fra": "vff" (version française), "vfq"
+// (version française québécoise) and "truefrench". Those tokens are
+// fused INTERNALLY but still appear as standalone tokens in release
+// names, so the alternation's existing \b...\b wrapping matches them
+// whole — no boundary relaxation is needed (dropping it would let them
+// match inside unrelated words). Without them a "MULTi VFF" release
+// (Japanese + French audio) named no veto language at all and its MULTi
+// tag flagged it as an English dub. "vostfr" is deliberately NOT in
+// this list: VOSTFR (Version Originale Sous-Titrée FR) names the
+// SUBTITLE language — original, unspecified-language audio plus French
+// subtitles — not an audio language, so it must not veto neutral
+// English evidence the way the genuine French dubbed-audio tokens do.
 private const val nonEnglishLanguageAlternation =
-    "japanese|jpn|jp|hindi|hin|spanish|spa|french|fra|fre|german|ger|deu" +
+    "japanese|jpn|jp|hindi|hin|spanish|spa|french|fra|fre|vff|vfq|truefrench|german|ger|deu" +
         "|italian|ita|portuguese|por|russian|rus|korean|kor|chinese|zho" +
         "|arabic|tamil|telugu|malayalam|kannada|bengali|marathi|punjabi|urdu|urd" +
         "|thai|tha|vietnamese|vie|indonesian|ind|malay|dutch|nld|dut" +
@@ -237,6 +253,14 @@ private val releaseTagAnchor = Regex(
     RegexOption.IGNORE_CASE,
 )
 private val englishWordTag = Regex("\\benglish\\b", RegexOption.IGNORE_CASE)
+// Language tokens that name English in structured parsed metadata
+// (StreamClientResolveParsed.languages / .audio): the ISO codes and the
+// full name, matching how DebridStreamPresentation.languageFor reads the
+// same lists (code or label, case-insensitive). Values are tokenized on
+// non-letters (see parsedMetadataTokens), so regional forms ("en-US")
+// reduce to their primary token before this set is consulted.
+private val englishParsedLanguageTokens = setOf("en", "eng", "english")
+private val parsedMetadataTokenSeparator = Regex("[^a-z]+")
 
 // HDR indicators: "hdr" covers HDR10/HDR10+; the trailing boundary keeps
 // "HDRip" (an SDR rip tag) from matching; "dv" needs word boundaries so it
@@ -308,6 +332,9 @@ object AdaptiveStreamPicker {
 
     /**
      * True when the stream's metadata indicates English-dubbed/multi-audio.
+     * Structured parsed metadata (clientResolve.stream.raw.parsed) is
+     * consulted first and settles the question when it names languages —
+     * see the parsed check at the top of the function body.
      * Subtitle metadata does NOT count: "English subtitles" / "eng subs" and
      * subtitle tags like "Multi-Subs" never flag a release by themselves.
      *
@@ -340,6 +367,28 @@ object AdaptiveStreamPicker {
      * does not cancel a named non-English dub.
      */
     fun hasEnglishAudio(stream: StreamItem): Boolean {
+        // Structured parsed metadata is stronger evidence than title tags:
+        // when StreamParser's parsed block (clientResolve.stream.raw.parsed,
+        // read the same way in DebridStreamPresentation) names the release's
+        // languages, that listing settles the question. English named in
+        // parsed.languages or parsed.audio is positive evidence even when
+        // no title tag mentions it; a non-empty language listing with no
+        // English in either list is a veto — the release's audio is those
+        // languages, so a "[DUB]" / "English Dub" title tag cannot make it
+        // an English dub. Neutral listings ("multi" / "unknown") name no
+        // language and settle nothing. With no parsed data (or no named
+        // language in it) the text checks below run exactly as before, so a
+        // bare "Dub" with no language named anywhere — parsed fields
+        // included — still counts as English.
+        val parsed = stream.clientResolve?.stream?.raw?.parsed
+        if (parsed != null) {
+            val namedParsedLanguages = parsedMetadataTokens(parsed.languages)
+                .filter { it != "multi" && it != "multiple" && it != "unknown" }
+            val parsedNamesEnglish = namedParsedLanguages.any { it in englishParsedLanguageTokens } ||
+                parsedMetadataTokens(parsed.audio).any { it in englishParsedLanguageTokens }
+            if (parsedNamesEnglish) return true
+            if (namedParsedLanguages.isNotEmpty()) return false
+        }
         val text = listOfNotNull(stream.name, stream.title, stream.description, stream.behaviorHints.filename)
             .joinToString(" ")
             .toDetectionText()
@@ -410,6 +459,16 @@ object AdaptiveStreamPicker {
         val anchor = releaseTagAnchor.find(text) ?: return false
         return englishWordTag.containsMatchIn(text.substring(anchor.range.first))
     }
+
+    /**
+     * Tokens of one structured parsed-metadata list: each entry lowercased
+     * and split on non-letters, so "en-US" yields "en", "EN.Audio" yields
+     * "en"/"audio", and full names ("English") survive as single tokens.
+     */
+    private fun parsedMetadataTokens(values: List<String>): Set<String> =
+        values.flatMap { value -> value.lowercase().split(parsedMetadataTokenSeparator) }
+            .filter { it.isNotBlank() }
+            .toSet()
 
     /**
      * The non-English side of the language veto, over subtitle-stripped
@@ -597,7 +656,10 @@ object AdaptiveStreamPicker {
      * Returns null when [streams] is empty, or when every candidate is
      * known to exceed its tier's size ceiling — the auto-pick callers then
      * fall back to the manual source list / next-episode card instead of
-     * auto-playing an oversize stream.
+     * auto-playing an oversize stream. One exception: when
+     * [preferEnglishAudio] and the English pool is non-empty but entirely
+     * oversize, its least-oversize member is returned instead (see
+     * pickOversizeFallback) — dub over sub, always, per the user's rule.
      */
     fun pickBestSeeded(
         streams: List<StreamItem>,
@@ -611,7 +673,19 @@ object AdaptiveStreamPicker {
             // seeder gate, so an English dub is never gated out in favor of a
             // non-English stream. English-dub streams are exempt from the HDR
             // seeder requirement (the recursive call is ungated).
-            pickBestSeeded(streams.filter { hasEnglishAudio(it) }, targetQuality)?.let { return it }
+            val english = streams.filter { hasEnglishAudio(it) }
+            if (english.isNotEmpty()) {
+                pickBestSeeded(english, targetQuality)?.let { return it }
+                // The recursion found nothing, which means every English
+                // stream is KNOWN to exceed its tier's sane-size ceiling
+                // (sane and unknown-size streams are pickable, so one would
+                // have been returned — a sane dub at ANY quality beats this
+                // fallback, because the recursion walks every tier first).
+                // Dub over sub, always: the least-oversize dub still wins
+                // over a sane non-English stream instead of falling through
+                // to the non-English pool below.
+                pickOversizeFallback(english, targetQuality)?.let { return it }
+            }
         }
         val eligible = if (requireHdrSeeders) {
             streams.filter { stream ->
@@ -657,5 +731,30 @@ object AdaptiveStreamPicker {
         val ordered = sane.filter { parseSizeBytes(it) != null } + sane.filter { parseSizeBytes(it) == null }
         // maxByOrNull keeps the first of equal scores, so the addon's ordering breaks ties.
         return ordered.maxByOrNull { parseSeeders(it) ?: -1 }
+    }
+
+    /**
+     * Fallback for an English pool that is non-empty but entirely oversize:
+     * the least-oversize member — smallest excess over its own tier's sane
+     * ceiling (the target quality's ceiling for unparseable resolutions,
+     * matching [pickFromPool]'s last-tier treatment) — then best-seeded,
+     * mirroring [pickFromPool]'s ranking; further ties keep the addon's
+     * ordering (minWithOrNull keeps the first minimum). Only known-oversize
+     * streams can appear here: sane and unknown-size streams are pickable
+     * by [pickFromPool], so [pickBestSeeded]'s English recursion would
+     * already have returned one. Used ONLY for the English pool — the
+     * non-English pool keeps the hard ceiling and yields no fallback.
+     */
+    private fun pickOversizeFallback(pool: List<StreamItem>, targetQuality: String): StreamItem? {
+        val oversize = pool.mapNotNull { stream ->
+            val size = parseSizeBytes(stream) ?: return@mapNotNull null
+            val ceiling = saneSizeBytesByQuality[stream.streamResolution() ?: targetQuality]
+                ?: return@mapNotNull null
+            if (size <= ceiling) null else stream to (size - ceiling)
+        }
+        return oversize.minWithOrNull(
+            compareBy<Pair<StreamItem, Long>> { it.second }
+                .thenByDescending { parseSeeders(it.first) ?: -1 },
+        )?.first
     }
 }

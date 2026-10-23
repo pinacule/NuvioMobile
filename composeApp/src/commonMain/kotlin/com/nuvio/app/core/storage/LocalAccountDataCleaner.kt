@@ -91,6 +91,19 @@ internal object LocalAccountDataCleaner {
         StreamContextStore.clear()
     }
 
+    /**
+     * Clears only [ProfileSettingsSync]'s account-scoped sync state: its
+     * pending-push markers in memory and in persisted storage, plus the
+     * account generation bump that invalidates markers recorded before the
+     * clear. Unlike [wipe], local data is intentionally kept — a server
+     * switch keeps the user's local data and only changes which account the
+     * next session belongs to, so the previous account's markers must not
+     * survive to fire against the new server's account.
+     */
+    fun clearProfileSettingsAccountState() {
+        ProfileSettingsSync.clearAccountState()
+    }
+
     internal fun wipePlatformStorage(wipeStorage: () -> Unit = PlatformLocalAccountDataCleaner::wipe) {
         try {
             wipeStorage()

@@ -94,6 +94,15 @@ internal fun AddonsSettingsPageContent(
     var formMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var installModalState by remember { mutableStateOf<AddonInstallModalState?>(null) }
     var addonPendingDeletionUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    // A manifest URL staged by an external deep link only pre-fills the URL field
+    // below — nothing is fetched or installed until the user taps Install, exactly
+    // as if they had pasted the URL themselves.
+    val pendingInstallUrl by AddonRepository.pendingInstallUrl.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingInstallUrl) {
+        val stagedUrl = AddonRepository.consumePendingInstallUrl() ?: return@LaunchedEffect
+        addonUrl = stagedUrl
+        formMessage = null
+    }
     val enterAddonUrlMessage = stringResource(Res.string.addons_error_enter_url)
     val usePersonalMediaCopy = AppFeaturePolicy.personalMediaAddonCopyEnabled
 

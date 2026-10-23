@@ -580,6 +580,19 @@ internal fun SimklSyncSnapshot.resolveCanonicalContentId(contentId: String): Str
  * Check if an episode is watched by resolving through the video ID.
  * Parses the anime-specific ID from videoId (e.g. "mal:123:5" → mal=123, ep=5),
  * finds the Simkl entry, and checks if that episode number has watched_at.
+ *
+ * Episode numbers are only unique inside a season, so matching is coordinate-based,
+ * consistent with [toSimklWatchedProjection] (which keys episodes by their tvdb
+ * season/episode, falling back to the native season/episode):
+ * - A video ID carrying season and episode ("mal:123:2:3") must match the
+ *   (season, episode) pair, natively or via the episode's tvdb mapping — S1E3
+ *   watched must not make S2E3 look watched.
+ * - A video ID carrying only an episode ("mal:123:5") uses the anime-native
+ *   episode number of the entry it names (per-season entries carry exactly one).
+ * - A video ID with no episode segment at all ("mal:123") falls back to the
+ *   caller's episode, which is in TVDB numbering, so it must match the episode's
+ *   projected (tvdb) episode — comparing it against the native episode number
+ *   misses whenever the entry's numbering diverges from TVDB's (split seasons).
  */
 internal fun isWatchedByAnimeVideoId(
     snapshot: SimklSyncSnapshot,
@@ -593,10 +606,26 @@ internal fun isWatchedByAnimeVideoId(
             entry.media?.toTrackingExternalIds()?.sharesAnimeIdentityWith(parsedIds) == true
     } ?: return false
 
-    val targetEpisodeNumber = parsed.episodeNumber ?: episode
+    // "prefix:id:episode" vs "prefix:id:season:episode": with four or more segments
+    // the third is the season and the fourth the episode, not the other way round.
+    val segments = videoId.trim().split(':')
+    val parsedSeasonNumber = segments.getOrNull(2)?.toIntOrNull().takeIf { segments.size >= 4 }
+    val parsedEpisodeNumber = if (segments.size >= 4) {
+        segments.getOrNull(3)?.toIntOrNull()
+    } else {
+        parsed.episodeNumber
+    }
+
     return entry.seasons.any { season ->
         season.episodes.any { ep ->
-            ep.number == targetEpisodeNumber && ep.watchedAt != null
+            if (ep.watchedAt == null) return@any false
+            when {
+                parsedSeasonNumber != null && parsedEpisodeNumber != null ->
+                    (season.number == parsedSeasonNumber && ep.number == parsedEpisodeNumber) ||
+                        (ep.tvdb?.season == parsedSeasonNumber && ep.tvdb?.episode == parsedEpisodeNumber)
+                parsedEpisodeNumber != null -> ep.number == parsedEpisodeNumber
+                else -> (ep.tvdb?.episode ?: ep.number) == episode
+            }
         }
     }
 }

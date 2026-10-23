@@ -176,6 +176,114 @@ class WatchedRepositoryTest {
     }
 
     @Test
+    fun snapshot_dropsServerItemWithPendingDeleteKey() {
+        val tombstonedItem = watchedItem(id = "unmarked", markedAtEpochMs = 1_000L)
+        val keptItem = watchedItem(id = "kept", markedAtEpochMs = 2_000L)
+        val tombstonedKey = watchedItemKey(tombstonedItem.type, tombstonedItem.id)
+        val keptKey = watchedItemKey(keptItem.type, keptItem.id)
+
+        val merged = mergeWatchedSnapshot(
+            serverItems = listOf(tombstonedItem, keptItem),
+            localItems = emptyList(),
+            dirtyKeys = emptySet(),
+            pendingDeleteKeys = setOf(tombstonedKey),
+        )
+
+        assertEquals(mapOf(keptKey to keptItem), merged.items)
+        assertEquals(setOf(tombstonedKey), merged.pendingDeleteKeys)
+        assertTrue(merged.dirtyKeys.isEmpty())
+    }
+
+    @Test
+    fun snapshot_clearsPendingDeleteKeyAbsentFromServer() {
+        val tombstonedItem = watchedItem(id = "unmarked", markedAtEpochMs = 1_000L)
+        val tombstonedKey = watchedItemKey(tombstonedItem.type, tombstonedItem.id)
+
+        val merged = mergeWatchedSnapshot(
+            serverItems = emptyList(),
+            localItems = emptyList(),
+            dirtyKeys = emptySet(),
+            pendingDeleteKeys = setOf(tombstonedKey),
+        )
+
+        assertTrue(merged.items.isEmpty())
+        assertTrue(merged.pendingDeleteKeys.isEmpty())
+    }
+
+    @Test
+    fun snapshot_remarkedLocalItemClearsPendingDeleteKey() {
+        val remarkItem = watchedItem(id = "remarked", markedAtEpochMs = 2_000L)
+        val serverCopy = remarkItem.copy(markedAtEpochMs = 1_000L)
+        val key = watchedItemKey(remarkItem.type, remarkItem.id)
+
+        val merged = mergeWatchedSnapshot(
+            serverItems = listOf(serverCopy),
+            localItems = listOf(remarkItem),
+            dirtyKeys = setOf(key),
+            pendingDeleteKeys = setOf(key),
+        )
+
+        assertEquals(remarkItem, merged.items[key])
+        assertEquals(setOf(key), merged.dirtyKeys)
+        assertTrue(merged.pendingDeleteKeys.isEmpty())
+    }
+
+    @Test
+    fun acknowledgedDelete_clearsOnlyDeletedPendingDeleteKeys() {
+        val deletedItem = watchedItem(id = "deleted", markedAtEpochMs = 1_000L)
+        val stillPendingItem = watchedItem(id = "still-pending", markedAtEpochMs = 2_000L)
+        val deletedKey = watchedItemKey(deletedItem.type, deletedItem.id)
+        val stillPendingKey = watchedItemKey(stillPendingItem.type, stillPendingItem.id)
+
+        val remainingPendingDeleteKeys = acknowledgeSuccessfulWatchedDelete(
+            currentItems = emptyMap(),
+            pendingDeleteKeys = setOf(deletedKey, stillPendingKey),
+            deletedItems = listOf(deletedItem),
+        )
+
+        assertEquals(setOf(stillPendingKey), remainingPendingDeleteKeys)
+    }
+
+    @Test
+    fun acknowledgedDelete_keepsTombstoneWhenItemWasRemarkedInFlight() {
+        val deletedItem = watchedItem(id = "deleted", markedAtEpochMs = 1_000L)
+        val deletedKey = watchedItemKey(deletedItem.type, deletedItem.id)
+
+        val remainingPendingDeleteKeys = acknowledgeSuccessfulWatchedDelete(
+            currentItems = mapOf(deletedKey to deletedItem.copy(markedAtEpochMs = 3_000L)),
+            pendingDeleteKeys = setOf(deletedKey),
+            deletedItems = listOf(deletedItem),
+        )
+
+        assertEquals(setOf(deletedKey), remainingPendingDeleteKeys)
+    }
+
+    @Test
+    fun successfulNuvioDelete_acknowledgesNuvioPendingDeleteState() {
+        assertTrue(
+            shouldAcknowledgeNuvioWatchedDelete(
+                source = WatchProgressSource.NUVIO_SYNC,
+                outcome = WatchedDeleteOutcome(nuvioSyncSucceeded = true),
+            ),
+        )
+        assertFalse(
+            shouldAcknowledgeNuvioWatchedDelete(
+                source = WatchProgressSource.NUVIO_SYNC,
+                outcome = WatchedDeleteOutcome(nuvioSyncSucceeded = false),
+            ),
+        )
+    }
+
+    @Test
+    fun trackerDelete_waitsForRemoteSnapshotAcknowledgement() {
+        val outcome = WatchedDeleteOutcome(
+            succeededTrackerProviderIds = setOf(TrackingProviderId.TRAKT),
+        )
+
+        assertFalse(shouldAcknowledgeNuvioWatchedDelete(WatchProgressSource.TRAKT, outcome))
+    }
+
+    @Test
     fun successfulPush_acknowledgesOnlyPushedDirtyKey() {
         val pushedItem = watchedItem(id = "pushed", markedAtEpochMs = 1_000L)
         val pendingItem = watchedItem(id = "pending", markedAtEpochMs = 2_000L)

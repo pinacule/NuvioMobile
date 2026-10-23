@@ -51,6 +51,67 @@ class StreamAutoPlayLoadingPolicyTest {
     }
 
     @Test
+    fun `adaptive pick is pending before the repository decides`() {
+        assertTrue(
+            StreamsUiState(requestToken = "new")
+                .isAdaptiveAutoPickPending("new", manualSelection = false, adaptivePickDone = false),
+        )
+    }
+
+    @Test
+    fun `adaptive pick stays pending while streams are still loading`() {
+        // Non-direct flows publish autoPlayDecided with no overlay together
+        // with their initial loading groups; the pick is still in flight.
+        val loading = StreamsUiState(
+            requestToken = "new",
+            autoPlayDecided = true,
+            isAnyLoading = true,
+            showDirectAutoPlayOverlay = false,
+        )
+        assertTrue(loading.isAdaptiveAutoPickPending("new", manualSelection = false, adaptivePickDone = false))
+    }
+
+    @Test
+    fun `adaptive pick stays pending while the direct autoplay overlay is up`() {
+        val overlay = StreamsUiState(
+            requestToken = "new",
+            autoPlayDecided = true,
+            isAnyLoading = false,
+            showDirectAutoPlayOverlay = true,
+        )
+        assertTrue(overlay.isAdaptiveAutoPickPending("new", manualSelection = false, adaptivePickDone = false))
+    }
+
+    @Test
+    fun `adaptive pick ends when autoplay settled with no stream`() {
+        // The yield configurations (FIRST_STREAM / REGEX_MATCH with no playable
+        // stream, MANUAL reuse-last-link with no cached link, MANUAL binge
+        // reuse+prefer with no persisted group) all settle into this state;
+        // pending must clear so the sources list replaces the loading screen.
+        val settled = StreamsUiState(
+            requestToken = "new",
+            autoPlayDecided = true,
+            isAnyLoading = false,
+            showDirectAutoPlayOverlay = false,
+            autoPlayStream = null,
+        )
+        assertFalse(settled.isAdaptiveAutoPickPending("new", manualSelection = false, adaptivePickDone = false))
+    }
+
+    @Test
+    fun `adaptive pick is never pending for manual selection a finished pick or another request`() {
+        val settled = StreamsUiState(
+            requestToken = "new",
+            autoPlayDecided = true,
+            isAnyLoading = false,
+            showDirectAutoPlayOverlay = false,
+        )
+        assertFalse(settled.isAdaptiveAutoPickPending("new", manualSelection = true, adaptivePickDone = false))
+        assertFalse(settled.isAdaptiveAutoPickPending("new", manualSelection = false, adaptivePickDone = true))
+        assertFalse(settled.isAdaptiveAutoPickPending("other", manualSelection = false, adaptivePickDone = false))
+    }
+
+    @Test
     fun `last link reuse starts with loading even in manual mode`() {
         assertTrue(
             StreamsUiState().shouldShowAutoPlayLoading(

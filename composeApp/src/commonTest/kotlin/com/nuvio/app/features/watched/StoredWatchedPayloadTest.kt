@@ -41,6 +41,30 @@ class StoredWatchedPayloadTest {
     }
 
     @Test
+    fun pendingDeleteKeys_roundTripAlongsideDirtyKeys() {
+        val providerPayload = StoredProviderWatchedPayload(
+            dirtyWatchedKeys = setOf("movie:tt1234567:-1:-1"),
+            pendingDeleteWatchedKeys = setOf("movie:tt7654321:-1:-1"),
+        )
+        val payload = StoredWatchedPayload(
+            dirtyWatchedKeys = setOf("movie:tt1111111:-1:-1"),
+            pendingDeleteWatchedKeys = setOf("movie:tt2222222:-1:-1"),
+            providerPayloads = mapOf("trakt" to providerPayload),
+        )
+
+        val restored = json.decodeFromString<StoredWatchedPayload>(json.encodeToString(payload))
+
+        assertEquals(payload, restored)
+    }
+
+    @Test
+    fun legacyPayload_defaultsToNoPendingDeletes() {
+        val restored = json.decodeFromString<StoredWatchedPayload>("{\"items\":[]}")
+
+        assertTrue(restored.pendingDeleteWatchedKeys.isEmpty())
+    }
+
+    @Test
     fun legacyPayload_defaultsToNoProviderSnapshots() {
         val restored = json.decodeFromString<StoredWatchedPayload>("{\"items\":[]}")
 

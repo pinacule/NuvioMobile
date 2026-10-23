@@ -24,7 +24,7 @@ class WatchedItemsStoreTest {
                             name = key,
                             markedAtEpochMs = index.toLong(),
                         )
-                        store.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+                        store.update { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, _, _ ->
                             nuvioItems[key] = item
                             providerItems
                                 .getOrPut(TrackingProviderId.TRAKT, ::mutableMapOf)[key] = item
@@ -38,7 +38,7 @@ class WatchedItemsStoreTest {
             repeat(4) {
                 launch(Dispatchers.Default) {
                     repeat(500) {
-                        store.read { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+                        store.read { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, _, _ ->
                             val nuvioKeys = nuvioItems.keys.toSet()
                             assertEquals(nuvioKeys, providerItems[TrackingProviderId.TRAKT].orEmpty().keys)
                             assertEquals(nuvioKeys, dirtyNuvioKeys)
@@ -49,7 +49,7 @@ class WatchedItemsStoreTest {
             }
         }
 
-        store.read { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys ->
+        store.read { nuvioItems, providerItems, dirtyNuvioKeys, dirtyProviderKeys, _, _ ->
             assertEquals(2_000, nuvioItems.size)
             assertEquals(nuvioItems.keys, providerItems[TrackingProviderId.TRAKT].orEmpty().keys)
             assertEquals(nuvioItems.keys, dirtyNuvioKeys)

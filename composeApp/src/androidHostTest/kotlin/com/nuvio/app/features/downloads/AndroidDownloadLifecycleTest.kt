@@ -3,6 +3,7 @@ package com.nuvio.app.features.downloads
 import android.app.job.JobInfo
 import org.robolectric.RuntimeEnvironment
 import java.io.File
+import java.io.IOException
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -58,6 +59,32 @@ class AndroidDownloadLifecycleTest {
         assertEquals("\"v1\"", restored.validator)
         assertEquals(transfer.generation, restored.generation)
         assertEquals(transfer.jobId, restored.jobId)
+    }
+
+    @Test
+    fun failureIsRecordedInMemoryWhenPersistenceFails() {
+        val context = RuntimeEnvironment.getApplication()
+        val scheduler = AndroidDownloadScheduler(context)
+        val transfer = scheduler.store.begin(downloadItem().copy(fileName = "disk-full.mkv"))
+        // Sabotage persistence: replace the store directory with a regular
+        // file so every record write fails, as on a full disk. fail() must
+        // not throw, and the in-memory state must still move to Failed —
+        // otherwise the item stays "Downloading" for the whole session and
+        // callers skip their failure notification / jobFinished.
+        val storeDirectory = File(context.filesDir, "download-transfers")
+        try {
+            storeDirectory.deleteRecursively()
+            storeDirectory.writeText("not a directory")
+
+            scheduler.fail(transfer, IOException("No space left on device"))
+
+            val failed = assertNotNull(scheduler.store.get(transfer.item.fileName))
+            assertEquals(DownloadStatus.Failed, failed.item.status)
+            assertEquals("No space left on device", failed.item.errorMessage)
+            assertEquals("No space left on device", failed.failureDetail)
+        } finally {
+            storeDirectory.delete()
+        }
     }
 
     @Test

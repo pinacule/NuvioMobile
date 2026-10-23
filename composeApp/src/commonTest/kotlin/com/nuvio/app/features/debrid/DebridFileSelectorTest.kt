@@ -189,7 +189,7 @@ class DebridFileSelectorTest {
     }
 
     @Test
-    fun `missing or ambiguous episodes do not fall back to another file`() {
+    fun `missing episodes do not fall back to another file`() {
         val files = listOf(
             TorboxTorrentFileDto(id = 1, name = "Show.S01E01.mkv", size = 900),
             TorboxTorrentFileDto(id = 2, name = "Show.S01E02.720p.mkv", size = 200),
@@ -197,8 +197,113 @@ class DebridFileSelectorTest {
         )
 
         assertNull(TorboxFileSelector().selectFile(files, resolve(), 1, 3))
-        assertNull(TorboxFileSelector().selectFile(files, resolve(), 1, 2))
         assertNull(TorboxFileSelector().selectFile(files, resolve(filename = "missing.mkv", fileIdx = 0), null, null))
+    }
+
+    @Test
+    fun `ambiguous episode matches pick the shortest exact single episode file`() {
+        val files = listOf(
+            TorboxTorrentFileDto(id = 1, name = "Show.S01E01.mkv", size = 900),
+            TorboxTorrentFileDto(id = 2, name = "Show.S01E02.720p.mkv", size = 200),
+            TorboxTorrentFileDto(id = 3, name = "Show.S01E02.1080p.mkv", size = 400),
+        )
+
+        assertEquals(2, TorboxFileSelector().selectFile(files, resolve(), 1, 2)?.id)
+        assertEquals(2, TorboxFileSelector().selectFile(files.reversed(), resolve(), 1, 2)?.id)
+    }
+
+    @Test
+    fun `episode pattern prefers exact single episode over multi episode file`() {
+        val files = listOf(
+            TorboxTorrentFileDto(id = 1, name = "Show.S02E01E02.mkv", size = 900),
+            TorboxTorrentFileDto(id = 2, name = "Show.S02E01.1080p.WEB-DL.x264.mkv", size = 200),
+            TorboxTorrentFileDto(id = 3, name = "Show.S02E02.mkv", size = 400),
+        )
+
+        assertEquals(2, TorboxFileSelector().selectFile(files, resolve(), 2, 1)?.id)
+        assertEquals(2, TorboxFileSelector().selectFile(files.reversed(), resolve(), 2, 1)?.id)
+
+        val rangeFiles = listOf(
+            TorboxTorrentFileDto(id = 1, name = "Show.S02E01-02.mkv", size = 900),
+            TorboxTorrentFileDto(id = 2, name = "Show.S02E01.mkv", size = 200),
+        )
+
+        assertEquals(2, TorboxFileSelector().selectFile(rangeFiles, resolve(), 2, 1)?.id)
+    }
+
+    @Test
+    fun `absolute numbered pack file is picked via episode token fallback`() {
+        val files = listOf(
+            TorboxTorrentFileDto(id = 1, name = "[SubsPlease] Re:Zero - 01 (1080p).mkv", size = 100),
+            TorboxTorrentFileDto(id = 2, name = "[SubsPlease] Re:Zero - 02 (1080p).mkv", size = 200),
+            TorboxTorrentFileDto(id = 3, name = "[SubsPlease] Re:Zero - 03 (1080p).mkv", size = 300),
+        )
+
+        val selected = TorboxFileSelector().selectFile(
+            files = files,
+            resolve = resolve(title = "Re:Zero"),
+            season = 1,
+            episode = 2,
+        )
+
+        assertEquals(2, selected?.id)
+    }
+
+    @Test
+    fun `episode only tokens are picked via fallback`() {
+        val files = listOf(
+            TorboxTorrentFileDto(id = 1, name = "Some Show - E01.mkv", size = 100),
+            TorboxTorrentFileDto(id = 2, name = "Some Show - E02.mkv", size = 200),
+            TorboxTorrentFileDto(id = 3, name = "Some Show EP03.mkv", size = 300),
+        )
+
+        assertEquals(
+            2,
+            TorboxFileSelector().selectFile(files, resolve(title = "Some Show"), 1, 2)?.id,
+        )
+        assertEquals(
+            3,
+            TorboxFileSelector().selectFile(files, resolve(title = "Some Show"), 1, 3)?.id,
+        )
+    }
+
+    @Test
+    fun `wrong absolute or wrong title files are not picked via fallback`() {
+        val wrongNumbers = listOf(
+            TorboxTorrentFileDto(id = 1, name = "Re:Zero - 03.mkv", size = 100),
+            TorboxTorrentFileDto(id = 2, name = "Re:Zero - 04.mkv", size = 200),
+        )
+
+        assertNull(TorboxFileSelector().selectFile(wrongNumbers, resolve(title = "Re:Zero"), 1, 2))
+
+        val wrongTitle = listOf(
+            TorboxTorrentFileDto(id = 1, name = "Other Show - 02.mkv", size = 100),
+            TorboxTorrentFileDto(id = 2, name = "Other Show - E02.mkv", size = 200),
+        )
+
+        assertNull(TorboxFileSelector().selectFile(wrongTitle, resolve(title = "Re:Zero"), 1, 2))
+
+        val markedWithToken = listOf(
+            TorboxTorrentFileDto(id = 1, name = "Re:Zero S01E03 - 02.mkv", size = 100),
+        )
+
+        assertNull(TorboxFileSelector().selectFile(markedWithToken, resolve(title = "Re:Zero"), 1, 2))
+    }
+
+    @Test
+    fun `season two fallback matches episode token but cannot derive absolute number`() {
+        // No absolute number or season offset reaches the selector, so a true
+        // absolute-numbered file ("- 26" = S02E01) cannot be derived and must
+        // not be guessed; a within-season token ("- 01") still matches.
+        val absoluteOnly = listOf(
+            TorboxTorrentFileDto(id = 1, name = "Re:Zero - 26.mkv", size = 100),
+        )
+
+        assertNull(TorboxFileSelector().selectFile(absoluteOnly, resolve(title = "Re:Zero"), 2, 1))
+
+        val withRelative = absoluteOnly + TorboxTorrentFileDto(id = 2, name = "Re:Zero - 01.mkv", size = 200)
+
+        assertEquals(2, TorboxFileSelector().selectFile(withRelative, resolve(title = "Re:Zero"), 2, 1)?.id)
     }
 
     @Test

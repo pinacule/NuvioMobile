@@ -1,6 +1,8 @@
 package com.nuvio.app.features.simkl
 
 import com.nuvio.app.features.watched.WatchedItem
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -60,6 +62,76 @@ class SimklHistoryPushGuardTest {
         )
 
         assertEquals(listOf(1 to 1, 9 to 10), pushed.map { it.season to it.episode })
+    }
+
+    @Test
+    fun `an anime film proven by the snapshot is rescued for pushing`() {
+        val snapshot = SimklSyncSnapshot(
+            entries = listOf(
+                SimklLibraryEntry(
+                    mediaType = SimklMediaType.ANIME,
+                    animeType = "movie",
+                    movie = SimklMedia(
+                        title = "Anime Film",
+                        year = 2020,
+                        ids = buildJsonObject {
+                            put("simkl", 70001)
+                            put("mal", 555)
+                        },
+                    ),
+                ),
+            ),
+        )
+        val animeFilm = WatchedItem(
+            id = "mal:555",
+            type = "anime",
+            name = "Anime Film",
+            markedAtEpochMs = 1_700_000_000_000,
+        )
+
+        // The pure guard still drops it; only the snapshot rescue lets it through.
+        assertTrue(simklHistoryPushItems(listOf(animeFilm)).isEmpty())
+        assertEquals(1, simklAnimeMoviePushItems(listOf(animeFilm), snapshot).size)
+    }
+
+    @Test
+    fun `an anime series in the snapshot is not rescued for pushing`() {
+        val snapshot = SimklSyncSnapshot(
+            entries = listOf(
+                SimklLibraryEntry(
+                    mediaType = SimklMediaType.ANIME,
+                    animeType = "tv",
+                    show = SimklMedia(
+                        title = "Anime Series",
+                        year = 2020,
+                        ids = buildJsonObject {
+                            put("simkl", 70002)
+                            put("mal", 777)
+                        },
+                    ),
+                ),
+            ),
+        )
+        val animeSeries = WatchedItem(
+            id = "mal:777",
+            type = "anime",
+            name = "Anime Series",
+            markedAtEpochMs = 1_700_000_000_000,
+        )
+
+        assertTrue(simklAnimeMoviePushItems(listOf(animeSeries), snapshot).isEmpty())
+    }
+
+    @Test
+    fun `an anime mark with no snapshot entry is not rescued for pushing`() {
+        val animeFilm = WatchedItem(
+            id = "mal:555",
+            type = "anime",
+            name = "Anime Film",
+            markedAtEpochMs = 1_700_000_000_000,
+        )
+
+        assertTrue(simklAnimeMoviePushItems(listOf(animeFilm), SimklSyncSnapshot()).isEmpty())
     }
 
     @Test

@@ -38,6 +38,7 @@ internal data class StoredProviderWatchedPayload(
     val extraWatchedKeys: Set<String> = emptySet(),
     val extraWatchedKeyGroups: List<StoredWatchedAliasGroup> = emptyList(),
     val dirtyWatchedKeys: Set<String> = emptySet(),
+    val pendingDeleteWatchedKeys: Set<String> = emptySet(),
 )
 
 @Serializable
@@ -49,6 +50,7 @@ internal data class StoredWatchedPayload(
     val deltaCursorEventId: Long = 0L,
     val deltaInitialized: Boolean = false,
     val dirtyWatchedKeys: Set<String> = emptySet(),
+    val pendingDeleteWatchedKeys: Set<String> = emptySet(),
     val providerPayloads: Map<String, StoredProviderWatchedPayload> = emptyMap(),
 )
 

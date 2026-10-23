@@ -12,10 +12,15 @@ internal fun parseSimklAuthCallback(
     if (callbackUrl != redirectUri && !callbackUrl.startsWith("$redirectUri?")) {
         return SimklAuthCallback.NotSimkl
     }
-    val parsed = runCatching { Url(callbackUrl) }.getOrNull() ?: return SimklAuthCallback.Invalid
+    // Incomplete or unparseable callbacks are ignored (NotSimkl), never
+    // treated as a failed sign-in: any app or web page can fire a
+    // nuvio://auth/simkl link, and a stray callback with a blank/missing
+    // code or state must not destroy a pending authorization that is
+    // still waiting for its legitimate callback.
+    val parsed = runCatching { Url(callbackUrl) }.getOrNull() ?: return SimklAuthCallback.NotSimkl
     val code = parsed.parameters["code"].orEmpty().trim()
     val state = parsed.parameters["state"].orEmpty().trim()
-    if (code.isBlank() || state.isBlank()) return SimklAuthCallback.Invalid
+    if (code.isBlank() || state.isBlank()) return SimklAuthCallback.NotSimkl
     return SimklAuthCallback.AuthorizationCode(code = code, state = state)
 }
 

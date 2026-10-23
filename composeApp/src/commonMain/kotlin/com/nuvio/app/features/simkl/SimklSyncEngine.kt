@@ -28,7 +28,11 @@ internal class SimklSyncEngine(
         }
 
         val playback = if (hasPlaybackActivityChanged(current.activities, activities)) {
-            mergeFetchedPlayback(fetched = remote.fetchPlayback(), held = current.playback)
+            mergeFetchedPlayback(
+                fetched = remote.fetchPlayback(),
+                held = current.playback,
+                lastSyncedAtEpochMs = current.lastSyncedAtEpochMs,
+            )
         } else {
             current.playback
         }

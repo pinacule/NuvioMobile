@@ -526,7 +526,7 @@ internal fun AppGate(
                     null
                 }
                 PlatformBackHandler(
-                    enabled = gateScreen == AppGateScreen.ProfileSelection.name && !profileSelectionLoading,
+                    enabled = gateScreen == AppGateScreen.ProfileSelection.name && !profileSelectionLoading && onBack != null,
                 ) {
                     onBack?.invoke()
                 }

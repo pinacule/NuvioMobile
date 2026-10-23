@@ -1402,6 +1402,7 @@ object WatchProgressRepository {
     }
 
     private fun pushScrobbleToServer(entry: WatchProgressEntry, profileId: Int) {
+        if (activeSource.providerId != null) return
         if (ServerItemRef.isServerId(entry.parentMetaId)) return
         val operationGeneration = profileGeneration.takeIf { profileId == currentProfileId }
         accountScopeSnapshot().launch {

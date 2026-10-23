@@ -3,6 +3,7 @@ package com.nuvio.app.features.downloads
 import android.app.job.JobParameters
 import android.app.job.JobService
 import androidx.annotation.RequiresApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -40,13 +41,28 @@ class DownloadsTransferJobService : JobService() {
             DownloadsLiveStatusPlatform.buildNotification(this, transfer.item), JOB_END_NOTIFICATION_POLICY_REMOVE)
         val run = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val retry = scheduler.execute(transfer, params.network) { updated ->
-                    updated.item.totalBytes?.let { updateEstimatedNetworkBytes(params, it, 0L) }
-                    updateTransferredNetworkBytes(params, updated.item.downloadedBytes, 0L)
-                    DownloadsLiveStatusPlatform.notifyTransfer(updated.item)
+                // Only execute() is guarded: an exception escaping it (e.g.
+                // recording a failure on a full disk) must not skip
+                // jobFinished or the failure notification below. Mirrors the
+                // catch in DownloadsTransferWorker.doWork.
+                var retry = false
+                try {
+                    retry = scheduler.execute(transfer, params.network) { updated ->
+                        updated.item.totalBytes?.let { updateEstimatedNetworkBytes(params, it, 0L) }
+                        updateTransferredNetworkBytes(params, updated.item.downloadedBytes, 0L)
+                        DownloadsLiveStatusPlatform.notifyTransfer(updated.item)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    // execute() records its own terminal failures; this is
+                    // for failures of that recording itself. fail() is
+                    // best-effort and does not throw; runCatching is
+                    // belt-and-braces so jobFinished is always reached.
+                    runCatching { scheduler.fail(transfer, error) }
                 }
                 jobFinished(params, retry)
-                scheduler.notifyCurrent(fileName)
+                runCatching { scheduler.notifyCurrent(fileName) }
             } finally {
                 if (runs[generation] === currentCoroutineContext()[Job]) runs.remove(generation)
             }

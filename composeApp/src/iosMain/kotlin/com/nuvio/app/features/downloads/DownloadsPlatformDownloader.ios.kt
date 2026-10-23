@@ -83,12 +83,39 @@ internal actual object DownloadsPlatformDownloader {
             val tempPath = "$downloadsDirectory/${request.destinationFileName}.part"
 
             try {
-                DownloadSubtitles.prepare(request.item, NSURL.fileURLWithPath(destinationPath).absoluteString!!)
+                // Mirror AndroidDownloadScheduler.refreshAgedHttpSource: a link that
+                // aged while the download waited/paused is re-resolved before the
+                // transfer starts. The partial stays, guarded by the size check
+                // below; when nothing fresh resolves the current link is kept.
+                var activeItem = request.item
+                var activeRequest = request
+                if (activeItem.hasAgedHttpSource(DownloadsClock.nowEpochMs())) {
+                    val fresh = try {
+                        reResolveHttpDownloadSource(activeItem)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (fresh != null) {
+                        activeItem = fresh.copy(
+                            status = activeItem.status,
+                            downloadedBytes = activeItem.downloadedBytes,
+                            totalBytes = activeItem.totalBytes,
+                            errorMessage = null,
+                        )
+                        DownloadsRepository.refreshItemSource(activeItem)
+                        activeRequest = DownloadPlatformRequest(activeItem)
+                    }
+                }
+
+                DownloadSubtitles.prepare(activeItem, NSURL.fileURLWithPath(destinationPath).absoluteString!!)
                 var resumeFromBytes = fileSizeOrNull(tempPath)?.coerceAtLeast(0L) ?: 0L
 
                 var attemptedRangeRequest = resumeFromBytes > 0L
+                var sourceSwapAttempted = false
                 var result = performDownloadRequest(
-                    request = request,
+                    request = activeRequest,
                     rangeStart = if (attemptedRangeRequest) resumeFromBytes else null,
                     resumeFromBytes = resumeFromBytes,
                     tempPath = tempPath,
@@ -96,18 +123,86 @@ internal actual object DownloadsPlatformDownloader {
                     onProgress = onProgress,
                 )
 
-                if (attemptedRangeRequest && result.statusCode == 416) {
-                    removePathIfExists(tempPath)
-                    resumeFromBytes = 0L
-                    attemptedRangeRequest = false
-                    result = performDownloadRequest(
-                        request = request,
-                        rangeStart = null,
-                        resumeFromBytes = 0L,
-                        tempPath = tempPath,
-                        handle = handle,
-                        onProgress = onProgress,
-                    )
+                while (true) {
+                    if (attemptedRangeRequest && result.statusCode == 416) {
+                        removePathIfExists(tempPath)
+                        resumeFromBytes = 0L
+                        attemptedRangeRequest = false
+                        result = performDownloadRequest(
+                            request = activeRequest,
+                            rangeStart = null,
+                            resumeFromBytes = 0L,
+                            tempPath = tempPath,
+                            handle = handle,
+                            onProgress = onProgress,
+                        )
+                        continue
+                    }
+
+                    // Mirror AndroidDownloadScheduler.executeOnce: a stale link
+                    // (403/404/410) gets ONE swap to a freshly resolved URL and an
+                    // immediate retry with it, never a verbatim retry of the dead
+                    // URL. The partial is kept; the resumed response is
+                    // size-checked below and the partial dropped on mismatch.
+                    if (result.statusCode in STALE_HTTP_STATUS_CODES && !sourceSwapAttempted) {
+                        sourceSwapAttempted = true
+                        val refreshed = try {
+                            refreshHttpDownloadSource(activeItem)
+                        } catch (cancellation: CancellationException) {
+                            throw cancellation
+                        } catch (_: Exception) {
+                            null
+                        }
+                        if (refreshed != null && refreshed.sourceUrl != activeItem.sourceUrl) {
+                            activeItem = refreshed.copy(
+                                status = DownloadStatus.Downloading,
+                                downloadedBytes = activeItem.downloadedBytes,
+                                totalBytes = activeItem.totalBytes,
+                                errorMessage = null,
+                            )
+                            DownloadsRepository.refreshItemSource(activeItem)
+                            activeRequest = DownloadPlatformRequest(activeItem)
+                            attemptedRangeRequest = resumeFromBytes > 0L
+                            result = performDownloadRequest(
+                                request = activeRequest,
+                                rangeStart = if (attemptedRangeRequest) resumeFromBytes else null,
+                                resumeFromBytes = resumeFromBytes,
+                                tempPath = tempPath,
+                                handle = handle,
+                                onProgress = onProgress,
+                            )
+                            continue
+                        }
+                    }
+
+                    // Mirror Android's isResumeSizeMismatch (androidMain, so the
+                    // condition is inlined): a 206 whose Content-Range total
+                    // differs from the size the partial was written for belongs
+                    // to a different encode — drop the partial (its bytes were
+                    // appended against the old total) and restart from zero.
+                    if (attemptedRangeRequest && result.statusCode == 206 && resumeFromBytes > 0L) {
+                        val expectedTotalBytes = activeItem.totalBytes
+                        val resumedTotalBytes = parseContentRangeTotal(result.contentRange)
+                        if (
+                            expectedTotalBytes != null && expectedTotalBytes > 0L &&
+                            resumedTotalBytes != null && resumedTotalBytes != expectedTotalBytes
+                        ) {
+                            removePathIfExists(tempPath)
+                            resumeFromBytes = 0L
+                            attemptedRangeRequest = false
+                            result = performDownloadRequest(
+                                request = activeRequest,
+                                rangeStart = null,
+                                resumeFromBytes = 0L,
+                                tempPath = tempPath,
+                                handle = handle,
+                                onProgress = onProgress,
+                            )
+                            continue
+                        }
+                    }
+
+                    break
                 }
 
                 if (result.statusCode !in 200..299) {
@@ -299,6 +394,10 @@ private class IosDownloadDelegate(
         didReceiveData: NSData,
     ) {
         if (fileError != null) return
+        // A non-2xx response carries no file bytes (and no open output file):
+        // ignore its body so the result's status code reaches start(), which
+        // swaps in a fresh source for stale links (403/404/410).
+        if (result?.statusCode?.let { it !in 200..299 } == true) return
 
         val file = outputFile ?: run {
             fileError = IllegalStateException(runBlocking { getString(Res.string.downloads_error_partial_file_not_open) })
