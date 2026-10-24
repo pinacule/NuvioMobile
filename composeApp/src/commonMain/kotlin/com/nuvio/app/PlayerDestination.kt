@@ -14,7 +14,6 @@ import com.nuvio.app.features.player.ExternalPlayerPlatform
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.player.PlayerScreen
-import com.nuvio.app.features.watchprogress.ResumePromptRepository
 import com.nuvio.app.navigation.NuvioNavigator
 import com.nuvio.app.navigation.PlayerRoute
 
@@ -38,9 +37,6 @@ internal fun PlayerDestination(
         }
         Box(modifier = Modifier.fillMaxSize())
         return
-    }
-    LaunchedEffect(launch.videoId) {
-        launch.videoId?.let { ResumePromptRepository.markPlayerEntered(it) }
     }
     // System back must match the player's UI back button (PlayerScreen's
     // onBack below): both exit via onExitToLibrary — pop to the tab root,

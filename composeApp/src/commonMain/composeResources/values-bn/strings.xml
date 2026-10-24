@@ -640,7 +640,6 @@
     <string name="episodes_cd_watched">দেখেছি</string>
     <string name="episodes_season">সিজন %1$d</string>
     <string name="episodes_specials">বিশেষ</string>
-    <string name="floating_prompt_continue_where_left_off">আপনি যেখানে ছেড়েছিলেন সেখানে চালিয়ে যান</string>
     <string name="hero_add_to_library">লাইব্রেরিতে যোগ করুন</string>
     <string name="hero_mark_unwatched">না দেখা হিসেবে চিহ্নিত করুন</string>
     <string name="hero_mark_watched">দেখা হয়েছে হিসেবে চিহ্নিত করুন</string>
@@ -800,8 +799,6 @@
     <string name="settings_custom_poster_screen_search">সার্চ</string>
     <string name="settings_custom_poster_screen_details">বিস্তারিত স্ক্রীন</string>
     <string name="settings_show_secret">মান দেখান</string>
-    <string name="settings_continue_watching_resume_prompt_description">প্লেয়ার থেকে বেরিয়ে যাওয়ার পরে অ্যাপ খোলার সময় আপনি যেখানে ছেড়েছিলেন সেখানে চালিয়ে যেতে একটি পপআপ দেখান।</string>
-    <string name="settings_continue_watching_resume_prompt_title">লঞ্চে প্রম্পট আবার শুরু করুন</string>
     <string name="settings_continue_watching_blur_next_up_description">স্পয়লার এড়াতে কন্টিনিউ ওয়াচিং-এ না দেখা পর্বের থাম্বনেইলগুলিকে ব্লার করুন।</string>
     <string name="settings_continue_watching_blur_next_up_title">"দেখা চালিয়ে যান"-এ না দেখা কন্টেন্ট ব্লার করুন</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">সম্প্রচারের আগে দেখা চালিয়ে যেতে আসন্ন পর্ব অন্তর্ভুক্ত করুন।</string>
@@ -816,7 +813,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">সম্প্রচার না হওয়া পর্বগুলোকে আলাদা \'আসন্ন\' সারিতে সরান</string>
     <string name="upcoming_section_title">আসন্ন</string>
     <string name="settings_continue_watching_section_card_style">পোস্টার স্টাইল</string>
-    <string name="settings_continue_watching_section_on_launch">লঞ্চে</string>
     <string name="settings_continue_watching_section_up_next_behavior">পরবর্তী পর্বের আচরণ</string>
     <string name="settings_continue_watching_section_visibility">ভিজিবিলিটি</string>
     <string name="settings_continue_watching_show_description">হোম স্ক্রিনে কন্টিনিউ ওয়াচিং শেল্ফ দেখান।</string>
@@ -1609,7 +1605,6 @@
     <string name="profile_who_is_watching">কে দেখছেন?</string>
     <string name="profile_already_active">আপনি ইতিমধ্যেই "%1$s" এ আছেন</string>
     <string name="provider_downloaded">ডাউনলোড করা হয়েছে</string>
-    <string name="resume_prompt_action">আবার শুরু করুন</string>
     <string name="streams_active_scrapers">সক্রিয় স্ক্র্যাপার</string>
     <string name="streams_checking_more_addons">আরও অ্যাডন পরীক্ষা করা হচ্ছে…</string>
     <string name="streams_copy_link">স্ট্রিম লিঙ্ক কপি করুন</string>

@@ -3,6 +3,7 @@ package com.nuvio.app.features.downloads
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
+import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.features.p2p.NuvioEngineHost
 import com.nuvio.app.features.p2p.P2pSettingsStorage
 import kotlinx.coroutines.CoroutineScope
@@ -31,8 +32,19 @@ internal actual object DownloadsPlatformDownloader {
         // Background jobs can start without MainActivity; torrent transfers need the engine and its settings.
         P2pSettingsStorage.initialize(context.applicationContext)
         NuvioEngineHost.initialize(context.applicationContext)
-        return downloadScheduler ?: AndroidDownloadScheduler(context.applicationContext).also { downloadScheduler = it }
+        // The Wi-Fi gate reads DeviceEnvironment, whose holder is otherwise
+        // only initialized from MainActivity: without this, a job/worker
+        // process would always read "not Wi-Fi" and park every transfer.
+        DeviceEnvironment.initialize(context.applicationContext)
+        val created = downloadScheduler ?: AndroidDownloadScheduler(context.applicationContext).also { downloadScheduler = it }
+        // Runs in every process that touches downloads (app, job, worker,
+        // receiver), so the Wi-Fi gate watches wherever a transfer can run.
+        DownloadWifiWatcher.initialize(context.applicationContext)
+        return created
     }
+
+    /** The scheduler when one already exists, without creating it. */
+    internal fun schedulerOrNull(): AndroidDownloadScheduler? = downloadScheduler
 
     internal fun managedTransfers(): List<AndroidDownloadTransfer> =
         downloadScheduler?.store?.transfers?.value?.values?.toList().orEmpty()
@@ -48,6 +60,10 @@ internal actual object DownloadsPlatformDownloader {
         onPaused: () -> Unit,
     ): DownloadsTaskHandle {
         val scheduler = checkNotNull(downloadScheduler) { "Downloads are not initialized" }
+        // A transfer starting in the foreground is the moment to ask for the
+        // notification permission the status notification needs; in a
+        // background process there is no activity and this no-ops.
+        DownloadsLiveStatusPlatform.requestNotificationPermissionIfNeeded()
         val transfer = scheduler.enqueue(request.item, request.resetValidator)
         val observer = observerScope.launch {
             scheduler.store.transfers.map { it[request.destinationFileName] }

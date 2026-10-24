@@ -639,7 +639,6 @@
     <string name="episodes_cd_watched">Đã xem</string>
     <string name="episodes_season">Mùa %1$d</string>
     <string name="episodes_specials">Tập đặc biệt</string>
-    <string name="floating_prompt_continue_where_left_off">Tiếp tục từ chỗ đã dừng.</string>
     <string name="hero_add_to_library">Thêm vào thư viện</string>
     <string name="hero_mark_unwatched">Đánh dấu chưa xem</string>
     <string name="hero_mark_watched">Đánh dấu đã xem</string>
@@ -802,8 +801,6 @@
     <string name="settings_custom_poster_screen_search">Tìm kiếm</string>
     <string name="settings_custom_poster_screen_details">Màn hình chi tiết</string>
     <string name="settings_show_secret">Hiện giá trị</string>
-    <string name="settings_continue_watching_resume_prompt_description">Hiển thị hộp thoại để tiếp tục từ chỗ đã dừng khi mở lại ứng dụng sau khi thoát khỏi trình phát.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Lời nhắc Tiếp tục xem</string>
     <string name="settings_continue_watching_blur_next_up_description">Làm mờ ảnh thu nhỏ tập tiếp theo trong Tiếp tục xem để tránh tiết lộ nội dung.</string>
     <string name="settings_continue_watching_blur_next_up_title">Làm mờ Chưa xem trong Tiếp tục xem</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Bao gồm các tập sắp tới trong Tiếp tục xem trước khi phát sóng.</string>
@@ -818,7 +815,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">Chuyển các tập chưa phát sóng vào hàng Sắp ra mắt riêng biệt.</string>
     <string name="upcoming_section_title">Sắp chiếu</string>
     <string name="settings_continue_watching_section_card_style">KIỂU THẺ POSTER</string>
-    <string name="settings_continue_watching_section_on_launch">KHI KHỞI ĐỘNG</string>
     <string name="settings_continue_watching_section_up_next_behavior">TẬP TIẾP THEO</string>
     <string name="settings_continue_watching_section_visibility">HIỂN THỊ</string>
     <string name="settings_continue_watching_show_description">Hiển thị mục Tiếp tục xem trên Trang chủ</string>
@@ -1649,7 +1645,6 @@
     <string name="profile_who_is_watching">Ai đang xem?</string>
     <string name="profile_already_active">Bạn đang trong hồ sơ &quot;%1$s&quot;</string>
     <string name="provider_downloaded">Đã tải xuống</string>
-    <string name="resume_prompt_action">Xem tiếp</string>
     <string name="streams_active_scrapers">Trình thu thập dữ liệu đang hoạt động</string>
     <string name="streams_checking_more_addons">Đang kiểm tra thêm tiện ích…</string>
     <string name="streams_copy_link">Sao chép liên kết luồng</string>

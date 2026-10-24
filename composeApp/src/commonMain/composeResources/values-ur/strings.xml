@@ -639,7 +639,6 @@
     <string name="episodes_cd_watched">دیکھا ہوا</string>
     <string name="episodes_season">سیزن %1$d</string>
     <string name="episodes_specials">خصوصی اقساط</string>
-    <string name="floating_prompt_continue_where_left_off">جہاں چھوڑا تھا وہیں سے جاری رکھیں</string>
     <string name="hero_add_to_library">لائبریری میں شامل کریں</string>
     <string name="hero_mark_unwatched">نہ دیکھا ہوا نشان لگائیں</string>
     <string name="hero_mark_watched">دیکھا ہوا نشان لگائیں</string>
@@ -798,8 +797,6 @@
     <string name="settings_custom_poster_screen_search">تلاش</string>
     <string name="settings_custom_poster_screen_details">تفصیلات کی اسکرین</string>
     <string name="settings_show_secret">ویلیو دکھائیں</string>
-    <string name="settings_continue_watching_resume_prompt_description">پلیئر سے باہر آنے کے بعد ایپ دوبارہ کھولنے پر وہیں سے جاری رکھنے کے لیے پاپ اَپ دکھائیں جہاں آپ نے چھوڑا تھا۔</string>
-    <string name="settings_continue_watching_resume_prompt_title">ایپ کھلنے پر جاری رکھنے کا پیغام</string>
     <string name="settings_continue_watching_blur_next_up_description">Spoilers سے بچنے کے لیے دیکھنا جاری رکھیں میں نہ دیکھی گئی اقساط کے thumbnails دھندلے کریں۔</string>
     <string name="settings_continue_watching_blur_next_up_title">دیکھنا جاری رکھیں میں نہ دیکھی گئی اقساط دھندلی کریں</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">آنے والی اقساط نشر ہونے سے پہلے ہی دیکھنا جاری رکھیں میں شامل کریں۔</string>
@@ -814,7 +811,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">غیر نشر شدہ اقساط کو الگ آنے والی قطار میں منتقل کریں</string>
     <string name="upcoming_section_title">آنے والے</string>
     <string name="settings_continue_watching_section_card_style">پوسٹر کارڈ کا انداز</string>
-    <string name="settings_continue_watching_section_on_launch">ایپ کھلنے پر</string>
     <string name="settings_continue_watching_section_up_next_behavior">اگلی قسط کا رویہ</string>
     <string name="settings_continue_watching_section_visibility">دکھائی دینے کی ترتیب</string>
     <string name="settings_continue_watching_show_description">Home اسکرین پر دیکھنا جاری رکھیں کی قطار دکھائیں۔</string>
@@ -1607,7 +1603,6 @@
     <string name="profile_who_is_watching">کون دیکھ رہا ہے؟</string>
     <string name="profile_already_active">آپ پہلے ہی "%1$s" پروفائل پر ہیں</string>
     <string name="provider_downloaded">ڈاؤن لوڈ شدہ</string>
-    <string name="resume_prompt_action">وہیں سے جاری رکھیں</string>
     <string name="streams_active_scrapers">فعال Scrapers</string>
     <string name="streams_checking_more_addons">مزید Addons چیک کیے جا رہے ہیں…</string>
     <string name="streams_copy_link">اسٹریم لنک کاپی کریں</string>

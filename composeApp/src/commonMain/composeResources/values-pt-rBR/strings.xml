@@ -639,7 +639,6 @@
     <string name="episodes_cd_watched">Assistido</string>
     <string name="episodes_season">Temporada %1$d</string>
     <string name="episodes_specials">Especiais</string>
-    <string name="floating_prompt_continue_where_left_off">Continue de onde parou</string>
     <string name="hero_add_to_library">Adicionar à biblioteca</string>
     <string name="hero_mark_unwatched">Marcar como não assistido</string>
     <string name="hero_mark_watched">Marcar como assistido</string>
@@ -802,8 +801,6 @@
     <string name="settings_custom_poster_screen_search">Busca</string>
     <string name="settings_custom_poster_screen_details">Tela de detalhes</string>
     <string name="settings_show_secret">Mostrar valor</string>
-    <string name="settings_continue_watching_resume_prompt_description">Mostrar um popup para continuar de onde parou ao abrir o app após sair do player.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Prompt de retomada ao iniciar</string>
     <string name="settings_continue_watching_blur_next_up_description">Desfocar thumbnails do próximo episódio em Continuar Assistindo para evitar spoilers.</string>
     <string name="settings_continue_watching_blur_next_up_title">Desfocar Não Assistidos em Continuar Assistindo</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Incluir episódios futuros em Continuar Assistindo antes de serem exibidos.</string>
@@ -818,7 +815,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">Move episódios ainda não exibidos para uma linha separada de Em Breve</string>
     <string name="upcoming_section_title">Em Breve</string>
     <string name="settings_continue_watching_section_card_style">ESTILO DO CARD DE PÔSTER</string>
-    <string name="settings_continue_watching_section_on_launch">AO INICIAR</string>
     <string name="settings_continue_watching_section_up_next_behavior">COMPORTAMENTO DO PRÓXIMO</string>
     <string name="settings_continue_watching_section_visibility">VISIBILIDADE</string>
     <string name="settings_continue_watching_show_description">Exibir a prateleira Continuar Assistindo na tela inicial.</string>
@@ -1649,7 +1645,6 @@
     <string name="profile_who_is_watching">Quem está assistindo?</string>
     <string name="profile_already_active">Você já está em "%1$s"</string>
     <string name="provider_downloaded">Baixado</string>
-    <string name="resume_prompt_action">Retomar</string>
     <string name="streams_active_scrapers">Scrapers ativos</string>
     <string name="streams_checking_more_addons">Verificando mais addons…</string>
     <string name="streams_copy_link">Copiar link da stream</string>

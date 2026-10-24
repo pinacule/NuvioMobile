@@ -630,7 +630,6 @@
     <string name="episodes_cd_watched">Гледано</string>
     <string name="episodes_season">Сезон %1$d</string>
     <string name="episodes_specials">Специални</string>
-    <string name="floating_prompt_continue_where_left_off">Продължи от там, където спря</string>
     <string name="hero_add_to_library">Добави към библиотеката</string>
     <string name="hero_mark_unwatched">Маркирай като негледано</string>
     <string name="hero_mark_watched">Маркирай като гледано</string>
@@ -767,8 +766,6 @@
     <string name="settings_poster_width_large">Голям</string>
     <string name="settings_poster_width_standard">Стандартен</string>
     <string name="settings_show_secret">Покажи стойността</string>
-    <string name="settings_continue_watching_resume_prompt_description">Показвай изскачащ прозорец за продължаване от там, където сте спрели, при отваряне на приложението след излизане от плейъра.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Подкана за продължаване при стартиране</string>
     <string name="settings_continue_watching_blur_next_up_description">Замъглявайте миниатюрите на неизгледаните епизоди в раздела „Продължи гледането“, за да избегнете спойлери.</string>
     <string name="settings_continue_watching_blur_next_up_title">Замъгли негледаното в „Продължи гледането"</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Включи предстоящи епизоди в „Продължи гледането" преди да са излъчени.</string>
@@ -783,7 +780,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">Премести неизлъчените епизоди в отделен ред „Предстоящи“</string>
     <string name="upcoming_section_title">Предстоящи</string>
     <string name="settings_continue_watching_section_card_style">СТИЛ НА КАРТИЧКАТА С ПОСТЕР</string>
-    <string name="settings_continue_watching_section_on_launch">ПРИ СТАРТИРАНЕ</string>
     <string name="settings_continue_watching_section_up_next_behavior">ПОВЕДЕНИЕ НА „СЛЕДВА"</string>
     <string name="settings_continue_watching_section_visibility">ВИДИМОСТ</string>
     <string name="settings_continue_watching_show_description">Покажи полицата „Продължи гледането" на началния екран.</string>
@@ -1539,7 +1535,6 @@
     <string name="profile_use_primary_addons_description">Споделяй настройките на добавките от основния профил, вместо да управляваш отделен списък.</string>
     <string name="profile_who_is_watching">Кой гледа?</string>
     <string name="provider_downloaded">Изтеглено</string>
-    <string name="resume_prompt_action">Продължи</string>
     <string name="streams_active_scrapers">Активни скрепъри</string>
     <string name="streams_checking_more_addons">Проверяване на още добавки…</string>
     <string name="streams_copy_link">Копирай връзката на изтоника</string>

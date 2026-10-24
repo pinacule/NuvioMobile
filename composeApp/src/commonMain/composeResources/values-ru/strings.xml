@@ -630,7 +630,6 @@
     <string name="episodes_cd_watched">Смотрел</string>
     <string name="episodes_season">Сезон %1$d</string>
     <string name="episodes_specials">Специальные предложения</string>
-    <string name="floating_prompt_continue_where_left_off">Продолжить с того места, где вы остановились</string>
     <string name="hero_add_to_library">Добавить в библиотеку</string>
     <string name="hero_mark_unwatched">Отметить как непросмотренное</string>
     <string name="hero_mark_watched">Отметить как просмотренное</string>
@@ -767,8 +766,6 @@
     <string name="settings_poster_width_large">Большой</string>
     <string name="settings_poster_width_standard">Стандартный</string>
     <string name="settings_show_secret">Показать значение</string>
-    <string name="settings_continue_watching_resume_prompt_description">Покажите всплывающее окно, чтобы продолжить с того места, на котором вы остановились, при открытии приложения после выхода из плеера.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Возобновить запрос при запуске</string>
     <string name="settings_continue_watching_blur_next_up_description">Размытие миниатюр непросмотренных эпизодов в режиме «Продолжить просмотр», чтобы избежать спойлеров.</string>
     <string name="settings_continue_watching_blur_next_up_title">Размытие непросмотренного в продолжении просмотра</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Включите предстоящие серии в «Продолжить просмотр» перед их выходом в эфир.</string>
@@ -783,7 +780,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">Переместить невышедшие выпуски в отдельную строку «Предстоящие».</string>
     <string name="upcoming_section_title">Предстоящие</string>
     <string name="settings_continue_watching_section_card_style">СТИЛЬ КАРТОЧКИ</string>
-    <string name="settings_continue_watching_section_on_launch">НА ЗАПУСКЕ</string>
     <string name="settings_continue_watching_section_up_next_behavior">СЛЕДУЮЩЕЕ ПОВЕДЕНИЕ</string>
     <string name="settings_continue_watching_section_visibility">ВИДИМОСТЬ</string>
     <string name="settings_continue_watching_show_description">Отобразите полку «Продолжить просмотр» на главном экране.</string>
@@ -1539,7 +1535,6 @@
     <string name="profile_use_primary_addons_description">Поделитесь настройками дополнений основного профиля вместо управления отдельным списком.</string>
     <string name="profile_who_is_watching">Кто смотрит?</string>
     <string name="provider_downloaded">Скачано</string>
-    <string name="resume_prompt_action">Продолжить</string>
     <string name="streams_active_scrapers">Активные парсеры</string>
     <string name="streams_checking_more_addons">Проверяем другие дополнения…</string>
     <string name="streams_copy_link">Скопировать ссылку на поток</string>

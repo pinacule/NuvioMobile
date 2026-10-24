@@ -15,7 +15,6 @@ import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.player.externalPlaybackSession
 import com.nuvio.app.features.streams.StreamLaunchStore
 import com.nuvio.app.features.streams.StreamsRepository
-import com.nuvio.app.features.watchprogress.ResumePromptRepository
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.navigation.*
 import kotlinx.serialization.modules.SerializersModule
@@ -60,7 +59,6 @@ internal fun disposeRouteResources(route: AppRoute) {
         }
 
         is PlayerRoute -> {
-            ResumePromptRepository.markPlayerExitedNormally()
             PlayerLaunchStore.remove(route.launchId)
         }
 

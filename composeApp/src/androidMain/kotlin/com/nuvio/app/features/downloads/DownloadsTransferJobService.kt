@@ -3,6 +3,7 @@ package com.nuvio.app.features.downloads
 import android.app.job.JobParameters
 import android.app.job.JobService
 import androidx.annotation.RequiresApi
+import com.nuvio.app.core.device.DeviceEnvironment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -36,6 +37,17 @@ class DownloadsTransferJobService : JobService() {
         val generation = params.extras.getString(AndroidDownloadScheduler.GENERATION) ?: return false
         val transfer = scheduler.store.get(fileName)?.takeIf { it.generation == generation } ?: return false
         if (!scheduler.isActive(transfer)) return false
+        if (!DeviceEnvironment.isWifi()) {
+            // Wi-Fi-only gate, job-process half: the job constraint is
+            // NETWORK_TYPE_ANY (JobScheduler has no Wi-Fi-only type), so a
+            // job scheduled on Wi-Fi can be (re)started by the OS on
+            // cellular — including via onNetworkChanged, which used to
+            // restart HTTP transfers onto the new network. Park instead of
+            // transferring; the watcher auto-resumes on Wi-Fi return.
+            // Returning false ends this job run without an OS reschedule.
+            scheduler.pauseForWifi(fileName)
+            return false
+        }
         DownloadsLiveStatusPlatform.initialize(this)
         setNotification(params, DownloadsLiveStatusPlatform.notificationId(transfer.item.id),
             DownloadsLiveStatusPlatform.buildNotification(this, transfer.item), JOB_END_NOTIFICATION_POLICY_REMOVE)

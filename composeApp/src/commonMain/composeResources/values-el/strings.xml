@@ -343,7 +343,6 @@
     <string name="episodes_cd_watched">Παρακολουθήθηκε</string>
     <string name="episodes_season">Σεζόν %1$d</string>
     <string name="episodes_specials">Ειδικά</string>
-    <string name="floating_prompt_continue_where_left_off">Συνέχεια από εκεί που σταματήσατε</string>
     <string name="hero_add_to_library">Προσθήκη στη βιβλιοθήκη</string>
     <string name="hero_mark_unwatched">Σήμανση ως μη παρακολουθηθέν</string>
     <string name="hero_mark_watched">Σήμανση ως παρακολουθηθέν</string>
@@ -511,10 +510,7 @@
     <string name="settings_custom_poster_screen_library">Βιβλιοθήκη</string>
     <string name="settings_custom_poster_screen_search">Αναζήτηση</string>
     <string name="settings_custom_poster_screen_details">Οθόνη λεπτομερειών</string>
-    <string name="settings_continue_watching_resume_prompt_description">Εμφάνιση αναδυόμενου παραθύρου για συνέχεια από εκεί που σταματήσατε κατά το άνοιγμα της εφαρμογής μετά από έξοδο από το πρόγραμμα αναπαραγωγής.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Προτροπή συνέχισης κατά την εκκίνηση</string>
     <string name="settings_continue_watching_section_card_style">ΣΤΥΛ ΚΑΡΤΑΣ ΑΦΙΣΑΣ</string>
-    <string name="settings_continue_watching_section_on_launch">ΚΑΤΑ ΤΗΝ ΕΚΚΙΝΗΣΗ</string>
     <string name="settings_continue_watching_section_up_next_behavior">ΣΥΜΠΕΡΙΦΟΡΑ ΕΠΟΜΕΝΟΥ</string>
     <string name="settings_continue_watching_section_visibility">ΟΡΑΤΟΤΗΤΑ</string>
     <string name="settings_continue_watching_show_description">Εμφάνιση της ενότητας Συνέχεια παρακολούθησης στην Αρχική οθόνη.</string>
@@ -1143,7 +1139,6 @@
     <string name="profile_use_primary_addons_description">Κοινή χρήση της ρύθμισης πρόσθετων του κύριου προφίλ αντί για διαχείριση ξεχωριστής λίστας.</string>
     <string name="profile_who_is_watching">Ποιος παρακολουθεί;</string>
     <string name="provider_downloaded">Ληφθέν</string>
-    <string name="resume_prompt_action">Συνέχεια</string>
     <string name="streams_active_scrapers">Ενεργοί πάροχοι</string>
     <string name="streams_checking_more_addons">Έλεγχος περισσότερων πρόσθετων…</string>
     <string name="streams_copy_link">Αντιγραφή συνδέσμου ροής</string>

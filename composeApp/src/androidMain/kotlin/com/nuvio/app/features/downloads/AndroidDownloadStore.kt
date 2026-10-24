@@ -62,7 +62,11 @@ internal class AndroidDownloadStore(private val directory: File) {
         val previous = get(item.fileName)?.takeIf { it.item.id == item.id }
         if (previous?.item?.status == DownloadStatus.Downloading) return@synchronized previous
         val transfer = AndroidDownloadTransfer(
-            item = item.copy(status = DownloadStatus.Downloading, errorMessage = null, localFileUri = null),
+            // A transfer that is actually starting is by definition not
+            // waiting for Wi-Fi: clear the gate flag so a Downloading item
+            // can never carry a stale park (the repository clears it too;
+            // this is the store-side half of the same invariant).
+            item = item.copy(status = DownloadStatus.Downloading, waitingForWifi = false, errorMessage = null, localFileUri = null),
             jobId = previous?.jobId ?: ((state.value.values.maxOfOrNull { it.jobId } ?: 0) + 1),
             generation = UUID.randomUUID().toString(),
             // A swapped-in source URL must never reuse the previous link's

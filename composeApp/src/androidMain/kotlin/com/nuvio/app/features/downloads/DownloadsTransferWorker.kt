@@ -7,6 +7,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.core.device.DeviceEnvironment
 import kotlinx.coroutines.CancellationException
 
 class DownloadsTransferWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
@@ -16,6 +17,15 @@ class DownloadsTransferWorker(context: Context, parameters: WorkerParameters) : 
         val generation = inputData.getString(AndroidDownloadScheduler.GENERATION) ?: return Result.failure()
         val transfer = scheduler.store.get(fileName)?.takeIf { it.generation == generation } ?: return Result.success()
         if (!scheduler.isActive(transfer)) return Result.success()
+        if (!DeviceEnvironment.isWifi()) {
+            // Wi-Fi-only gate, worker-process half: the WorkManager
+            // constraint is CONNECTED (any network), so a worker can start
+            // on cellular. Park instead of transferring; Result.success
+            // (not retry) so the worker does not loop back onto cellular —
+            // the watcher auto-resumes on Wi-Fi return.
+            scheduler.pauseForWifi(fileName)
+            return Result.success()
+        }
         DownloadsLiveStatusPlatform.initialize(applicationContext)
         try {
             if (AppFeaturePolicy.downloadForegroundServiceEnabled) {

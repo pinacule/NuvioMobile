@@ -2,6 +2,7 @@ package com.nuvio.app.features.downloads
 
 import com.nuvio.app.features.player.SubtitleAddonRequest
 import com.nuvio.app.features.streams.StreamSubtitle
+import com.nuvio.app.features.watchprogress.WatchProgressEntry
 import kotlinx.serialization.Serializable
 import kotlinx.coroutines.runBlocking
 import nuvio.composeapp.generated.resources.Res
@@ -65,6 +66,18 @@ data class DownloadItem(
     val errorMessage: String? = null,
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
+    /**
+     * Parked by the Wi-Fi-only gate ([DownloadWifiGate]): the download was
+     * paused because the device left Wi-Fi (or started while off Wi-Fi) and
+     * auto-resumes when Wi-Fi returns. A plain user pause never sets this
+     * flag (pausing clears it), so the watcher never auto-resumes something
+     * the user stopped on purpose — except when the user then taps Resume
+     * while off Wi-Fi: that parks the item as waiting, and it auto-resumes
+     * on Wi-Fi return, because the user just asked it to run. Persisted
+     * with the item (both payload codecs tolerate the new field: missing
+     * in old payloads decodes to false).
+     */
+    val waitingForWifi: Boolean = false,
     /** When [sourceUrl] was last (re-)resolved; null means at creation ([createdAtEpochMs]). */
     val sourceResolvedAtEpochMs: Long? = null,
 ) {
@@ -122,6 +135,28 @@ enum class DownloadEnqueueResult {
             P2pDisabled -> getString(Res.string.downloads_enqueue_p2p_disabled)
         }
     }
+}
+
+/** Watched state + in-progress entry for one completed download. */
+internal data class DownloadWatchState(
+    val progressEntry: WatchProgressEntry?,
+    val isWatched: Boolean,
+) {
+    /** The entry worth drawing a progress bar for — the episode grid's visible-entry rule. */
+    val visibleProgressEntry: WatchProgressEntry?
+        get() = progressEntry?.takeIf { it.durationMs > 0L && !it.isCompleted }
+}
+
+/**
+ * The completed downloads whose already-computed watch state says they were
+ * watched. Active downloads are excluded even if a caller passes the full
+ * item list instead of only [DownloadsUiState.completedItems].
+ */
+internal fun watchedCompletedDownloads(
+    items: List<DownloadItem>,
+    watchStates: Map<String, DownloadWatchState>,
+): List<DownloadItem> = items.filter { item ->
+    item.status == DownloadStatus.Completed && watchStates[item.id]?.isWatched == true
 }
 
 internal fun List<DownloadItem>.sortedForSeriesDownloads(): List<DownloadItem> =

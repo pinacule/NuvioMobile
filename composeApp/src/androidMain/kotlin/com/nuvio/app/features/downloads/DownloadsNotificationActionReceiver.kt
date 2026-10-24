@@ -3,6 +3,7 @@ package com.nuvio.app.features.downloads
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.nuvio.app.core.device.DeviceEnvironment
 
 class DownloadsNotificationActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -18,8 +19,18 @@ class DownloadsNotificationActionReceiver : BroadcastReceiver() {
             when (action) {
                 actionPause -> scheduler.pause(transfer.item.fileName)
                 actionResume -> if (transfer.item.status == DownloadStatus.Paused || transfer.item.status == DownloadStatus.Failed) {
-                    scheduler.enqueue(transfer.item)
-                    DownloadsRepository.reattachBackgroundDownload(downloadId)
+                    if (!DeviceEnvironment.isWifi()) {
+                        // Wi-Fi-only gate: this path enqueues a job
+                        // directly, bypassing the repository's start guard,
+                        // so it needs its own check. Park instead of
+                        // transferring; the watcher auto-resumes on Wi-Fi.
+                        scheduler.pauseForWifi(transfer.item.fileName)
+                        DownloadsRepository.ensureLoaded()
+                        DownloadsRepository.markWaitingForWifi(downloadId)
+                    } else {
+                        scheduler.enqueue(transfer.item)
+                        DownloadsRepository.reattachBackgroundDownload(downloadId)
+                    }
                 }
             }
             return
