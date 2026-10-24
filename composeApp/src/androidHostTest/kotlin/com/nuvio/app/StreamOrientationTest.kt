@@ -112,11 +112,18 @@ class StreamOrientationTest {
     }
 
     @Test
-    fun disablingBingeGroupReuseKeepsEpisodeSourcesInPortrait() {
-        verifySavedBingeGroupOrientation(reuseBingeGroup = false)
+    fun disablingBingeGroupReuseFallsBackToAdaptivePickOnUnmatchedGroup() {
+        // Batch 29: the adaptive-pick stand-down for a persisted binge group
+        // is a deferral, not a veto. With reuse off and no matching group in
+        // the freshly fetched list, the pick fires as fallback and opens the
+        // player (landscape) instead of leaving the sources list up.
+        verifySavedBingeGroupOrientation(reuseBingeGroup = false, expectLandscapeRequest = true)
     }
 
-    private fun verifySavedBingeGroupOrientation(reuseBingeGroup: Boolean) {
+    private fun verifySavedBingeGroupOrientation(
+        reuseBingeGroup: Boolean,
+        expectLandscapeRequest: Boolean = false,
+    ) {
         PlayerSettingsRepository.ensureLoaded()
         PlayerSettingsRepository.setStreamReuseLastLinkEnabled(false)
         PlayerSettingsRepository.setStreamAutoPlayMode(StreamAutoPlayMode.MANUAL)
@@ -178,7 +185,13 @@ class StreamOrientationTest {
                 compose.waitForIdle()
             }
             assertEquals(5, server.requestCount)
-            assertNoLandscapeRequest()
+            if (expectLandscapeRequest) {
+                compose.waitUntil(timeoutMillis = 5_000) {
+                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE in OrientationTrackingActivity.requests
+                }
+            } else {
+                assertNoLandscapeRequest()
+            }
         }
     }
 
