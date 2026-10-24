@@ -630,7 +630,6 @@
     <string name="episodes_cd_watched">Bekeken</string>
     <string name="episodes_season">Seizoen %1$d</string>
     <string name="episodes_specials">Specials</string>
-    <string name="floating_prompt_continue_where_left_off">Ga verder waar je gebleven was</string>
     <string name="hero_add_to_library">Toevoegen aan bibliotheek</string>
     <string name="hero_mark_unwatched">Markeren als onbekeken</string>
     <string name="hero_mark_watched">Markeren als bekeken</string>
@@ -767,8 +766,6 @@
     <string name="settings_poster_width_large">Groot</string>
     <string name="settings_poster_width_standard">Standaard</string>
     <string name="settings_show_secret">Waarde tonen</string>
-    <string name="settings_continue_watching_resume_prompt_description">Toon een pop-up om verder te gaan waar je gebleven was bij het openen van de app na het verlaten van de speler.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Hervatprompt bij opstarten</string>
     <string name="settings_continue_watching_blur_next_up_description">Vervaag miniaturen van de volgende aflevering in Verder kijken om spoilers te vermijden.</string>
     <string name="settings_continue_watching_blur_next_up_title">Onbekeken vervagen in Verder kijken</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Toon aankomende afleveringen in Verder kijken voordat ze worden uitgezonden.</string>
@@ -783,7 +780,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">Verplaats nog niet uitgezonden afleveringen naar een aparte rij voor binnenkort</string>
     <string name="upcoming_section_title">Binnenkort</string>
     <string name="settings_continue_watching_section_card_style">POSTERKAARTSTIJL</string>
-    <string name="settings_continue_watching_section_on_launch">BIJ OPSTARTEN</string>
     <string name="settings_continue_watching_section_up_next_behavior">GEDRAG VOLGENDE AFLEVERING</string>
     <string name="settings_continue_watching_section_visibility">ZICHTBAARHEID</string>
     <string name="settings_continue_watching_show_description">Toon de sectie Verder kijken op het startscherm.</string>
@@ -1556,7 +1552,6 @@
     <string name="profile_use_primary_addons_description">Deel de add-on-configuratie van het hoofdprofiel in plaats van een aparte lijst te beheren.</string>
     <string name="profile_who_is_watching">Wie kijkt er?</string>
     <string name="provider_downloaded">Gedownload</string>
-    <string name="resume_prompt_action">Hervatten</string>
     <string name="streams_active_scrapers">Actieve scrapers</string>
     <string name="streams_checking_more_addons">Meer add-ons controleren...</string>
     <string name="streams_copy_link">Streamlink kopiëren</string>

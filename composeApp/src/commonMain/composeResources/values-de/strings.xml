@@ -433,7 +433,6 @@
     <string name="episodes_cd_watched">Gesehen</string>
     <string name="episodes_season">Staffel %1$d</string>
     <string name="episodes_specials">Specials</string>
-    <string name="floating_prompt_continue_where_left_off">Da fortfahren, wo du aufgehört hast</string>
     <string name="hero_add_to_library">Zur Bibliothek hinzufügen</string>
     <string name="hero_mark_unwatched">Als ungesehen markieren</string>
     <string name="hero_mark_watched">Als gesehen markieren</string>
@@ -512,10 +511,7 @@
     <string name="settings_poster_width_dense">Dicht</string>
     <string name="settings_poster_width_large">Groß</string>
     <string name="settings_poster_width_standard">Standard</string>
-    <string name="settings_continue_watching_resume_prompt_description">Beim Öffnen der App nach dem Verlassen des Players ein Popup anzeigen, um dort fortzusetzen, wo du aufgehört hast.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Fortsetzen-Aufforderung beim Start</string>
     <string name="settings_continue_watching_section_card_style">KARTENSTIL</string>
-    <string name="settings_continue_watching_section_on_launch">BEIM START</string>
     <string name="settings_continue_watching_section_up_next_behavior">VERHALTEN „ALS NÄCHSTES“</string>
     <string name="settings_continue_watching_section_visibility">SICHTBARKEIT</string>
     <string name="settings_continue_watching_show_description">Die Weiterschauen-Reihe auf dem Startbildschirm anzeigen.</string>
@@ -1009,7 +1005,6 @@
     <string name="profile_use_primary_addons_description">Das Addon-Setup des Hauptprofils mitverwenden, statt eine separate Liste zu pflegen.</string>
     <string name="profile_who_is_watching">Wer schaut?</string>
     <string name="provider_downloaded">Heruntergeladen</string>
-    <string name="resume_prompt_action">Fortsetzen</string>
     <string name="streams_active_scrapers">Aktive Scraper</string>
     <string name="streams_checking_more_addons">Weitere Addons werden geprüft…</string>
     <string name="streams_copy_link">Stream-Link kopieren</string>

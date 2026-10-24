@@ -535,7 +535,6 @@
     <string name="episodes_cd_watched">Vu</string>
     <string name="episodes_season">Saison %1$d</string>
     <string name="episodes_specials">Spéciaux</string>
-    <string name="floating_prompt_continue_where_left_off">Reprendre où vous en étiez</string>
     <string name="hero_add_to_library">Ajouter à la bibliothèque</string>
     <string name="hero_mark_unwatched">Marquer comme non vu</string>
     <string name="hero_mark_watched">Marquer comme vu</string>
@@ -621,8 +620,6 @@
     <string name="settings_poster_width_large">Grand</string>
     <string name="settings_poster_width_standard">Standard</string>
     <string name="settings_show_secret">Afficher la valeur</string>
-    <string name="settings_continue_watching_resume_prompt_description">Afficher une invite pour reprendre là où vous en étiez à l’ouverture de l’application après avoir quitté le lecteur.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Invite de reprise au démarrage</string>
     <string name="settings_continue_watching_blur_next_up_description">Floute les vignettes du prochain épisode dans Continuer à regarder pour éviter les spoilers.</string>
     <string name="settings_continue_watching_blur_next_up_title">Flouter le contenu non vu dans Continuer à regarder</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Incluez les épisodes à venir dans Continuer à regarder avant leur diffusion.</string>
@@ -634,7 +631,6 @@
     <string name="settings_continue_watching_sort_mode_streaming">Style streaming</string>
     <string name="settings_continue_watching_sort_mode_streaming_desc">Éléments sortis d’abord, à venir à la fin</string>
     <string name="settings_continue_watching_section_card_style">STYLE DE CARTE D’AFFICHE</string>
-    <string name="settings_continue_watching_section_on_launch">AU DÉMARRAGE</string>
     <string name="settings_continue_watching_section_up_next_behavior">COMPORTEMENT DE LA SUITE</string>
     <string name="settings_continue_watching_section_visibility">VISIBILITÉ</string>
     <string name="settings_continue_watching_show_description">Afficher le bandeau Continuer à regarder sur l’écran d’accueil.</string>
@@ -1310,7 +1306,6 @@
     <string name="profile_use_primary_addons_description">Partager la configuration des addons du profil principal plutôt que de gérer une liste séparée.</string>
     <string name="profile_who_is_watching">Qui regarde ?</string>
     <string name="provider_downloaded">Téléchargé</string>
-    <string name="resume_prompt_action">Reprendre</string>
     <string name="streams_active_scrapers">Scrapers actifs</string>
     <string name="streams_checking_more_addons">Vérification d’autres addons…</string>
     <string name="streams_copy_link">Copier le lien du stream</string>

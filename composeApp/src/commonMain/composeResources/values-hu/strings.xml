@@ -469,7 +469,6 @@
     <string name="episodes_cd_watched">Megtekintett</string>
     <string name="episodes_season">%1$d. évad</string>
     <string name="episodes_specials">Különkiadások</string>
-    <string name="floating_prompt_continue_where_left_off">Folytatás onnan, ahol abbahagytad</string>
     <string name="hero_add_to_library">Hozzáadás a könyvtárhoz</string>
     <string name="hero_mark_unwatched">Megjelölés nem megtekintettként</string>
     <string name="hero_mark_watched">Megjelölés megtekintettként</string>
@@ -553,8 +552,6 @@
     <string name="settings_poster_width_dense">Sűrű</string>
     <string name="settings_poster_width_large">Nagy</string>
     <string name="settings_poster_width_standard">Szabványos</string>
-    <string name="settings_continue_watching_resume_prompt_description">Ha a lejátszóból való kilépés után nyitod meg újra az alkalmazást, egy felugró ablak jelenik meg, amellyel folytathatod a nézést onnan, ahol abbahagytad.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Folytatási felhívás indításkor</string>
     <string name="settings_continue_watching_blur_next_up_description">A következő epizód bélyegképeinek elhomályosítása a Nézés folytatása sorban a spoilerek elkerülése érdekében.</string>
     <string name="settings_continue_watching_blur_next_up_title">Nem látottak elhomályosítása a Nézés folytatásában</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">A még adásba nem került, közelgő epizódok megjelenítése a Nézés folytatása sorban.</string>
@@ -566,7 +563,6 @@
     <string name="settings_continue_watching_sort_mode_streaming">Streaming stílus</string>
     <string name="settings_continue_watching_sort_mode_streaming_desc">A már megjelent elemek előre, a közelgők a sor végére kerülnek</string>
     <string name="settings_continue_watching_section_card_style">POSZTERKÁRTYA STÍLUSA</string>
-    <string name="settings_continue_watching_section_on_launch">INDÍTÁSKOR</string>
     <string name="settings_continue_watching_section_up_next_behavior">KÖVETKEZŐ ELEM VISELKEDÉSE</string>
     <string name="settings_continue_watching_section_visibility">LÁTHATÓSÁG</string>
     <string name="settings_continue_watching_show_description">A Nézés folytatása sor megjelenítése a Kezdőlapon.</string>
@@ -1115,7 +1111,6 @@
     <string name="profile_use_primary_addons_description">A fő profil kiegészítő-konfigurációjának megosztása ahelyett, hogy külön listát kezelnél.</string>
     <string name="profile_who_is_watching">Ki nézi?</string>
     <string name="provider_downloaded">Letöltve</string>
-    <string name="resume_prompt_action">Folytatás</string>
     <string name="streams_active_scrapers">Aktív keresők (scraperek)</string>
     <string name="streams_checking_more_addons">További kiegészítők ellenőrzése…</string>
     <string name="streams_copy_link">Stream link másolása</string>

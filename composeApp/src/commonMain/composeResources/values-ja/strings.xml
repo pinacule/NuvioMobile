@@ -525,7 +525,6 @@
     <string name="episodes_cd_watched">視聴済み</string>
     <string name="episodes_season">シーズン %1$d</string>
     <string name="episodes_specials">スペシャル</string>
-    <string name="floating_prompt_continue_where_left_off">続きから再生</string>
     <string name="hero_add_to_library">ライブラリに追加</string>
     <string name="hero_mark_unwatched">未視聴にする</string>
     <string name="hero_mark_watched">視聴済みにする</string>
@@ -611,8 +610,6 @@
     <string name="settings_poster_width_large">大</string>
     <string name="settings_poster_width_standard">標準</string>
     <string name="settings_show_secret">値を表示</string>
-    <string name="settings_continue_watching_resume_prompt_description">プレーヤーから離脱後にアプリを開くと、続きから再生するポップアップを表示します。</string>
-    <string name="settings_continue_watching_resume_prompt_title">起動時に再開プロンプトを表示</string>
     <string name="settings_continue_watching_blur_next_up_description">ネタバレを避けるため「視聴を続ける」の次のエピソードのサムネイルをぼかします。</string>
     <string name="settings_continue_watching_blur_next_up_title">「視聴を続ける」で未視聴をぼかす</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">放送前の今後のエピソードも「視聴を続ける」に表示します。</string>
@@ -624,7 +621,6 @@
     <string name="settings_continue_watching_sort_mode_streaming">ストリーミングスタイル</string>
     <string name="settings_continue_watching_sort_mode_streaming_desc">公開済みを先頭に、今後のものを末尾に表示</string>
     <string name="settings_continue_watching_section_card_style">ポスターカードスタイル</string>
-    <string name="settings_continue_watching_section_on_launch">起動時</string>
     <string name="settings_continue_watching_section_up_next_behavior">次のエピソードの動作</string>
     <string name="settings_continue_watching_section_visibility">表示</string>
     <string name="settings_continue_watching_show_description">ホーム画面に「視聴を続ける」セクションを表示します。</string>
@@ -1290,7 +1286,6 @@
     <string name="profile_use_primary_addons_description">個別のリストを管理する代わりに、メインプロフィールのアドオン設定を共有します。</string>
     <string name="profile_who_is_watching">誰が視聴しますか？</string>
     <string name="provider_downloaded">ダウンロード済み</string>
-    <string name="resume_prompt_action">再開</string>
     <string name="streams_active_scrapers">アクティブなスクレイパー</string>
     <string name="streams_checking_more_addons">さらにアドオンを確認中…</string>
     <string name="streams_copy_link">ストリームリンクをコピー</string>

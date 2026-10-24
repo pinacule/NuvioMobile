@@ -543,7 +543,6 @@
     <string name="episodes_cd_watched">Vizionat</string>
     <string name="episodes_season">Sezonul %1$d</string>
     <string name="episodes_specials">Ediții speciale</string>
-    <string name="floating_prompt_continue_where_left_off">Continuă de unde ai rămas</string>
     <string name="hero_add_to_library">Adaugă în bibliotecă</string>
     <string name="hero_mark_unwatched">Marchează ca nevizionat</string>
     <string name="hero_mark_watched">Marchează ca vizionat</string>
@@ -629,8 +628,6 @@
     <string name="settings_poster_width_large">Mare</string>
     <string name="settings_poster_width_standard">Standard</string>
     <string name="settings_show_secret">Afișează valoarea</string>
-    <string name="settings_continue_watching_resume_prompt_description">Afișează o fereastră pop-up pentru a continua de unde ai rămas atunci când deschizi aplicația după ce ai ieșit din player.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Mesaj de reluare la pornire</string>
     <string name="settings_continue_watching_blur_next_up_description">Estompează miniaturile episoadelor următoare din Continuă vizionarea pentru a evita spoilerele.</string>
     <string name="settings_continue_watching_blur_next_up_title">Estompează episoadele nevizionate în Continuă vizionarea</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Include episoadele viitoare în Continuă vizionarea înainte ca acestea să fie difuzate.</string>
@@ -642,7 +639,6 @@
     <string name="settings_continue_watching_sort_mode_streaming">Stil platformă de streaming</string>
     <string name="settings_continue_watching_sort_mode_streaming_desc">Elementele lansate primele, cele viitoare la sfârșit</string>
     <string name="settings_continue_watching_section_card_style">STIL CARD POSTER</string>
-    <string name="settings_continue_watching_section_on_launch">LA PORNIRE</string>
     <string name="settings_continue_watching_section_up_next_behavior">COMPORTAMENT EPISODUL URMĂTOR</string>
     <string name="settings_continue_watching_section_visibility">VIZIBILITATE</string>
     <string name="settings_continue_watching_show_description">Afișează rândul Continuă vizionarea pe ecranul principal.</string>
@@ -1318,7 +1314,6 @@
     <string name="profile_use_primary_addons_description">Partajează configurația de extensii a profilului principal în loc să gestionezi o listă separată.</string>
     <string name="profile_who_is_watching">Cine vizionează?</string>
     <string name="provider_downloaded">Descărcat</string>
-    <string name="resume_prompt_action">Reia</string>
     <string name="streams_active_scrapers">Scrapere active</string>
     <string name="streams_checking_more_addons">Se verifică și alte extensii…</string>
     <string name="streams_copy_link">Copiază linkul fluxului</string>

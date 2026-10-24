@@ -293,7 +293,6 @@
     <string name="episodes_cd_watched">נצפה</string>
     <string name="episodes_season">עונה %1$d</string>
     <string name="episodes_specials">מיוחדים</string>
-    <string name="floating_prompt_continue_where_left_off">המשך מהמקום שבו הפסקת</string>
     <string name="hero_add_to_library">הוסף לספרייה</string>
     <string name="hero_mark_unwatched">סמן כלא נצפה</string>
     <string name="hero_mark_watched">סמן כנצפה</string>
@@ -588,7 +587,6 @@
     <string name="profile_use_primary_addons">השתמש בתוספים של הפרופיל הראשי</string>
     <string name="profile_who_is_watching">מי צופה?</string>
     <string name="provider_downloaded">הורד</string>
-    <string name="resume_prompt_action">המשך</string>
     <string name="streams_active_scrapers">סקרייפרים פעילים</string>
     <string name="streams_checking_more_addons">בודק תוספים נוספים…</string>
     <string name="streams_episode_fallback_title">פרק</string>

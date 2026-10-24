@@ -554,7 +554,6 @@
     <string name="episodes_cd_watched">İzlendi</string>
     <string name="episodes_season">%1$d. sezon</string>
     <string name="episodes_specials">Özel bölümler</string>
-    <string name="floating_prompt_continue_where_left_off">Kaldığın yerden devam et</string>
     <string name="hero_add_to_library">Kitaplığa ekle</string>
     <string name="hero_mark_unwatched">İzlenmedi olarak işaretle</string>
     <string name="hero_mark_watched">İzlendi olarak işaretle</string>
@@ -690,8 +689,6 @@
     <string name="settings_poster_width_large">Büyük</string>
     <string name="settings_poster_width_standard">Standart</string>
     <string name="settings_show_secret">Değeri göster</string>
-    <string name="settings_continue_watching_resume_prompt_description">Oynatıcıdan çıktıktan sonra uygulamayı açınca kaldığın yerden devam etmen için bir pencere göster.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Açılışta devam et uyarısı</string>
     <string name="settings_continue_watching_blur_next_up_description">Sürprizbozanları (spoiler) önlemek için İzlemeye Devam Et rafındaki sonraki bölüm küçük resimlerini bulanıklaştır.</string>
     <string name="settings_continue_watching_blur_next_up_title">İzlemeye Devam Et Rafında İzlenmeyenleri Bulanıklaştır</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Gelecek bölümleri daha yayınlanmadan önce İzlemeye Devam Et rafına dahil et.</string>
@@ -706,7 +703,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">Yayınlanmamış bölümleri ayrı bir Gelecek İçerikler satırına taşıyın</string>
     <string name="upcoming_section_title">Yakında</string>
     <string name="settings_continue_watching_section_card_style">KART STİLİ</string>
-    <string name="settings_continue_watching_section_on_launch">AÇILIŞTA</string>
     <string name="settings_continue_watching_section_up_next_behavior">SONRAKİ DAVRANIŞI</string>
     <string name="settings_continue_watching_section_visibility">GÖRÜNÜRLÜK</string>
     <string name="settings_continue_watching_show_description">Ana ekranda İzlemeye Devam Et rafını göster.</string>
@@ -1465,7 +1461,6 @@
     <string name="profile_use_primary_addons_description">Ayrı bir liste yönetmek yerine ana profilin eklenti ayarlarını paylaş.</string>
     <string name="profile_who_is_watching">Kim izliyor?</string>
     <string name="provider_downloaded">İndirildi</string>
-    <string name="resume_prompt_action">Devam et</string>
     <string name="streams_active_scrapers">Aktif scraper'lar</string>
     <string name="streams_checking_more_addons">Daha fazla eklenti kontrol ediliyor…</string>
     <string name="streams_copy_link">Yayın bağlantısını kopyala</string>

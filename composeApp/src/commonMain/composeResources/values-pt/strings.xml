@@ -520,7 +520,6 @@
     <string name="episodes_cd_watched">Visto</string>
     <string name="episodes_season">Temporada %1$d</string>
     <string name="episodes_specials">Especiais</string>
-    <string name="floating_prompt_continue_where_left_off">Continua de onde ficaste</string>
     <string name="hero_add_to_library">Adicionar à biblioteca</string>
     <string name="hero_mark_unwatched">Marcar como não visto</string>
     <string name="hero_mark_watched">Marcar como visto</string>
@@ -605,8 +604,6 @@
     <string name="settings_poster_width_large">Grande</string>
     <string name="settings_poster_width_standard">Normal</string>
     <string name="settings_show_secret">Mostrar valor</string>
-    <string name="settings_continue_watching_resume_prompt_description">Mostra uma mensagem para continuares de onde ficaste quando abrires a app após teres saído do leitor.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Confirmar retoma ao iniciar</string>
     <string name="settings_continue_watching_blur_next_up_description">Desfoca as miniaturas do próximo episódio no Continuar a Ver para evitar spoilers.</string>
     <string name="settings_continue_watching_blur_next_up_title">Desfocar não vistos no Continuar a Ver</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Inclui os próximos episódios no Continuar a Ver antes de serem emitidos.</string>
@@ -618,7 +615,6 @@
     <string name="settings_continue_watching_sort_mode_streaming">Estilo de plataforma de streaming</string>
     <string name="settings_continue_watching_sort_mode_streaming_desc">Itens já lançados primeiro, os próximos no fim</string>
     <string name="settings_continue_watching_section_card_style">ESTILO DOS CARTÕES COM CARTAZ</string>
-    <string name="settings_continue_watching_section_on_launch">AO INICIAR</string>
     <string name="settings_continue_watching_section_up_next_behavior">COMPORTAMENTO DO SEGUINTE</string>
     <string name="settings_continue_watching_section_visibility">VISIBILIDADE</string>
     <string name="settings_continue_watching_show_description">Apresenta a linha Continuar a Ver na página inicial.</string>
@@ -1263,7 +1259,6 @@
     <string name="profile_use_primary_addons_description">Partilha a configuração de addons do perfil principal em vez de gerires uma lista separada.</string>
     <string name="profile_who_is_watching">Quem está a ver?</string>
     <string name="provider_downloaded">Transferido</string>
-    <string name="resume_prompt_action">Retomar</string>
     <string name="streams_active_scrapers">Scrapers ativos</string>
     <string name="streams_checking_more_addons">A verificar mais addons…</string>
     <string name="streams_copy_link">Copiar link do stream</string>

@@ -491,7 +491,6 @@
     <string name="episodes_cd_watched">Ditonton</string>
     <string name="episodes_season">Musim %1$d</string>
     <string name="episodes_specials">Spesial</string>
-    <string name="floating_prompt_continue_where_left_off">Lanjutkan dari tempat Anda berhenti</string>
     <string name="hero_add_to_library">Tambah ke pustaka</string>
     <string name="hero_mark_unwatched">Tandai sebagai belum ditonton</string>
     <string name="hero_mark_watched">Tandai sebagai sudah ditonton</string>
@@ -576,8 +575,6 @@
     <string name="settings_poster_width_large">Besar</string>
     <string name="settings_poster_width_standard">Standar</string>
     <string name="settings_show_secret">Tampilkan nilai</string>
-    <string name="settings_continue_watching_resume_prompt_description">Tampilkan popup untuk melanjutkan dari tempat Anda berhenti saat membuka aplikasi setelah keluar dari pemutar.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Prompt lanjutkan saat dibuka</string>
     <string name="settings_continue_watching_blur_next_up_description">Buramkan thumbnail episode berikutnya di Lanjutkan Menonton untuk menghindari spoiler.</string>
     <string name="settings_continue_watching_blur_next_up_title">Buramkan yang Belum Ditonton di Lanjutkan Menonton</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Sertakan episode mendatang di Lanjutkan Menonton sebelum tayang.</string>
@@ -589,7 +586,6 @@
     <string name="settings_continue_watching_sort_mode_streaming">Gaya Streaming</string>
     <string name="settings_continue_watching_sort_mode_streaming_desc">Item yang sudah rilis lebih dulu, yang mendatang di akhir</string>
     <string name="settings_continue_watching_section_card_style">GAYA KARTU POSTER</string>
-    <string name="settings_continue_watching_section_on_launch">SAAT DIBUKA</string>
     <string name="settings_continue_watching_section_up_next_behavior">PERILAKU BERIKUTNYA</string>
     <string name="settings_continue_watching_section_visibility">VISIBILITAS</string>
     <string name="settings_continue_watching_show_description">Tampilkan rak Lanjutkan Menonton di Beranda.</string>
@@ -1182,7 +1178,6 @@
     <string name="profile_use_primary_addons_description">Bagikan pengaturan addon profil utama alih-alih mengelola daftar terpisah.</string>
     <string name="profile_who_is_watching">Siapa yang menonton?</string>
     <string name="provider_downloaded">Diunduh</string>
-    <string name="resume_prompt_action">Lanjutkan</string>
     <string name="streams_active_scrapers">Scraper aktif</string>
     <string name="streams_checking_more_addons">Memeriksa addon lainnya…</string>
     <string name="streams_copy_link">Salin tautan stream</string>

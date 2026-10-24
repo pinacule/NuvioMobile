@@ -852,7 +852,6 @@
     <string name="external_player_failed">Kunne ikke åpne ekstern avspiller</string>
     <string name="external_player_not_configured">Velg en ekstern avspiller i innstillinger først</string>
     <string name="external_player_unavailable">Ingen ekstern avspiller er tilgjengelig</string>
-    <string name="floating_prompt_continue_where_left_off">Fortsett der du slapp</string>
     <string name="generic_addon">Tillegg</string>
     <string name="generic_trailer">Trailer</string>
     <string name="generic_unknown">Ukjent</string>
@@ -1239,7 +1238,6 @@ Du bruker denne funksjonen helt på eget ansvar. P2P kan deaktiveres når som he
     <string name="profile_who_is_watching">Hvem ser?</string>
     <string name="provider_downloaded">Lastet ned</string>
     <string name="rating_audience_score">Publikumspoeng</string>
-    <string name="resume_prompt_action">Gjenoppta</string>
     <string name="search_error_no_results_for_catalog">Ingen søkeresultater returnert for %1$s.</string>
     <string name="sentry_disable_dialog_subtitle">Fremtidige krasj og nåværende ANR-er fra denne enheten vil ikke bli rapportert. Dette kan gjøre enhetsspesifikke feil mye vanskeligere å rette.</string>
     <string name="sentry_disable_dialog_title">Slå av krasjrapporter?</string>
@@ -1388,10 +1386,7 @@ Du bruker denne funksjonen helt på eget ansvar. P2P kan deaktiveres når som he
     <string name="settings_content_discovery_section_sources">KILDER</string>
     <string name="settings_continue_watching_blur_next_up_description">Slør neste episode-miniature for å unngå spoilere.</string>
     <string name="settings_continue_watching_blur_next_up_title">Slør usette i Fortsett å se</string>
-    <string name="settings_continue_watching_resume_prompt_description">Vis popup for å fortsette der du slapp ved oppstart.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Fortsett-prompt ved oppstart</string>
     <string name="settings_continue_watching_section_card_style">PLAKATSTIL</string>
-    <string name="settings_continue_watching_section_on_launch">VED OPPSTART</string>
     <string name="settings_continue_watching_section_sort_order">SORTERINGSREKKEFØLGE</string>
     <string name="settings_continue_watching_section_up_next_behavior">NESTE OPPFØRSEL</string>
     <string name="settings_continue_watching_section_visibility">SYNLIGHET</string>
