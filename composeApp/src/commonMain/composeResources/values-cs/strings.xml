@@ -525,7 +525,6 @@
     <string name="episodes_cd_watched">Zhlédnuto</string>
     <string name="episodes_season">Série %1$d</string>
     <string name="episodes_specials">Speciály</string>
-    <string name="floating_prompt_continue_where_left_off">Pokračovat tam, kde jste přestali</string>
     <string name="hero_add_to_library">Přidat do knihovny</string>
     <string name="hero_mark_unwatched">Označit jako nezhlédnuté</string>
     <string name="hero_mark_watched">Označit jako zhlédnuté</string>
@@ -611,8 +610,6 @@
     <string name="settings_poster_width_large">Velký</string>
     <string name="settings_poster_width_standard">Standardní</string>
     <string name="settings_show_secret">Zobrazit hodnotu</string>
-    <string name="settings_continue_watching_resume_prompt_description">Zobrazit výzvu k pokračování tam, kde jste přestali, při otevření aplikace po odchodu z přehrávače.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Výzva k pokračování při spuštění</string>
     <string name="settings_continue_watching_blur_next_up_description">Rozostřit miniatury dalších epizod v Pokračovat ve sledování pro zamezení spoilerů.</string>
     <string name="settings_continue_watching_blur_next_up_title">Rozostřit nezhlédnuté v Pokračovat ve sledování</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Zahrnout nadcházející epizody do Pokračovat ve sledování ještě před jejich odvysíláním.</string>
@@ -624,7 +621,6 @@
     <string name="settings_continue_watching_sort_mode_streaming">Styl streamování</string>
     <string name="settings_continue_watching_sort_mode_streaming_desc">Nejprve vydané položky, nadcházející na konci</string>
     <string name="settings_continue_watching_section_card_style">STYL KARTY PLAKÁTU</string>
-    <string name="settings_continue_watching_section_on_launch">PŘI SPUŠTĚNÍ</string>
     <string name="settings_continue_watching_section_up_next_behavior">CHOVÁNÍ "DALŠÍ NA ŘADĚ"</string>
     <string name="settings_continue_watching_section_visibility">VIDITELNOST</string>
     <string name="settings_continue_watching_show_description">Zobrazit panel Pokračovat ve sledování na domovské obrazovce.</string>
@@ -1292,7 +1288,6 @@
     <string name="profile_use_primary_addons_description">Místo spravování odděleného seznamu sdílejte nastavení doplňků s hlavním profilem.</string>
     <string name="profile_who_is_watching">Kdo se dívá?</string>
     <string name="provider_downloaded">Staženo</string>
-    <string name="resume_prompt_action">Pokračovat</string>
     <string name="streams_active_scrapers">Aktivní scrapers</string>
     <string name="streams_checking_more_addons">Kontrola dalších doplňků…</string>
     <string name="streams_copy_link">Kopírovat odkaz na stream</string>

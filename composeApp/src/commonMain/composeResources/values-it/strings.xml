@@ -296,7 +296,6 @@
   <string name="episodes_cd_watched">Visto</string>
   <string name="episodes_season">Stagione %1$d</string>
   <string name="episodes_specials">Speciali</string>
-  <string name="floating_prompt_continue_where_left_off">Riprendi da dove avevi interrotto</string>
   <string name="hero_add_to_library">Aggiungi alla libreria</string>
   <string name="hero_mark_unwatched">Segna come non visto</string>
   <string name="hero_mark_watched">Segna come visto</string>
@@ -375,10 +374,7 @@
   <string name="settings_poster_width_dense">Denso</string>
   <string name="settings_poster_width_large">Grande</string>
   <string name="settings_poster_width_standard">Standard</string>
-  <string name="settings_continue_watching_resume_prompt_description">Mostra un popup per riprendere la visione all'apertura dell'app se eri uscito dal player.</string>
-  <string name="settings_continue_watching_resume_prompt_title">Richiesta ripresa all'avvio</string>
   <string name="settings_continue_watching_section_card_style">STILE SCHEDA</string>
-  <string name="settings_continue_watching_section_on_launch">ALL'AVVIO</string>
   <string name="settings_continue_watching_section_up_next_behavior">COMPORTAMENTO "PROSSIMO EPISODIO"</string>
   <string name="settings_continue_watching_section_visibility">VISIBILITÀ</string>
   <string name="settings_continue_watching_show_description">Mostra la riga "Continua a guardare" nella schermata Home.</string>
@@ -903,7 +899,6 @@
   <string name="profile_use_primary_addons_description">Condividi la configurazione degli addon del profilo principale invece di gestirne una lista separata.</string>
   <string name="profile_who_is_watching">Chi sta guardando?</string>
   <string name="provider_downloaded">Scaricato</string>
-  <string name="resume_prompt_action">Riprendi</string>
   <string name="streams_active_scrapers">Scraper attivi</string>
   <string name="streams_checking_more_addons">Controllo altri addon…</string>
   <string name="streams_copy_link">Copia link del flusso</string>

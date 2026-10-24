@@ -491,7 +491,6 @@
     <string name="episodes_cd_watched">Obejrzane</string>
     <string name="episodes_season">Sezon %1$d</string>
     <string name="episodes_specials">Odcinki specjalne</string>
-    <string name="floating_prompt_continue_where_left_off">Kontynuuj od miejsca, w którym skończyłeś</string>
     <string name="hero_add_to_library">Dodaj do biblioteki</string>
     <string name="hero_mark_unwatched">Oznacz jako nieobejrzane</string>
     <string name="hero_mark_watched">Oznacz jako obejrzane</string>
@@ -593,8 +592,6 @@
     <string name="settings_custom_poster_screen_search">Wyszukiwanie</string>
     <string name="settings_custom_poster_screen_details">Strona szczegółów</string>
     <string name="settings_show_secret">Pokaż wartość</string>
-    <string name="settings_continue_watching_resume_prompt_description">Pokaż okno kontynuowania od miejsca, w którym skończyłeś, po otwarciu aplikacji po wyjściu z odtwarzacza.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Monit o wznowienie przy uruchomieniu</string>
     <string name="settings_continue_watching_blur_next_up_description">Rozmyj miniatury następnych odcinków w Kontynuuj oglądanie, aby uniknąć spoilerów.</string>
     <string name="settings_continue_watching_blur_next_up_title">Rozmyj nieobejrzane w Kontynuuj oglądanie</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Uwzględnij nadchodzące odcinki w Kontynuuj oglądanie przed ich emisją.</string>
@@ -609,7 +606,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">Przenieś niewydane odcinki do oddzielnego rzędu Nadchodzące</string>
     <string name="upcoming_section_title">Nadchodzące</string>
     <string name="settings_continue_watching_section_card_style">STYL KARTY</string>
-    <string name="settings_continue_watching_section_on_launch">PRZY URUCHOMIENIU</string>
     <string name="settings_continue_watching_section_up_next_behavior">ZACHOWANIE NASTĘPNEGO</string>
     <string name="settings_continue_watching_section_visibility">WIDOCZNOŚĆ</string>
     <string name="settings_continue_watching_show_description">Wyświetl półkę Kontynuuj oglądanie na ekranie głównym.</string>
@@ -1213,7 +1209,6 @@
     <string name="profile_use_primary_addons_description">Udostępnij konfigurację dodatków głównego profilu zamiast zarządzać osobną listą.</string>
     <string name="profile_who_is_watching">Kto ogląda?</string>
     <string name="provider_downloaded">Pobrane</string>
-    <string name="resume_prompt_action">Wznów</string>
     <string name="streams_active_scrapers">Aktywne scrapery</string>
     <string name="streams_checking_more_addons">Sprawdzanie kolejnych dodatków…</string>
     <string name="streams_copy_link">Kopiuj link strumienia</string>

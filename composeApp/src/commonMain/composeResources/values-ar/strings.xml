@@ -567,7 +567,6 @@
     <string name="episodes_cd_watched">تمت المشاهدة</string>
     <string name="episodes_season">الموسم %1$d</string>
     <string name="episodes_specials">الحلقات الخاصة</string>
-    <string name="floating_prompt_continue_where_left_off">متابعة من حيث توقفت</string>
     <string name="hero_add_to_library">إضافة للمكتبة</string>
     <string name="hero_mark_unwatched">تحديد كغير مشاهد</string>
     <string name="hero_mark_watched">تحديد كمشاهد</string>
@@ -703,8 +702,6 @@
     <string name="settings_poster_width_large">كبير</string>
     <string name="settings_poster_width_standard">قياسي</string>
     <string name="settings_show_secret">إظهار القيمة</string>
-    <string name="settings_continue_watching_resume_prompt_description">إظهار نافذة منبثقة لمتابعة المشاهدة من حيث توقفت عند فتح التطبيق بعد الخروج من المشغّل.</string>
-    <string name="settings_continue_watching_resume_prompt_title">طلب الاستئناف عند التشغيل</string>
     <string name="settings_continue_watching_blur_next_up_description">تعتيم صور الحلقات التالية في متابعة المشاهدة لتجنب حرق الأحداث.</string>
     <string name="settings_continue_watching_blur_next_up_title">تعتيم غير المشاهد في متابعة المشاهدة</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">إظهار الحلقات القادمة في متابعة المشاهدة قبل موعد عرضها.</string>
@@ -719,7 +716,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">نقل الحلقات التي لم تُعرض بعد إلى صف «القادم» منفصل</string>
     <string name="upcoming_section_title">يعرض قريباً</string>
     <string name="settings_continue_watching_section_card_style">نمط البطاقات</string>
-    <string name="settings_continue_watching_section_on_launch">عند التشغيل</string>
     <string name="settings_continue_watching_section_up_next_behavior">سلوك الحلقة التالية</string>
     <string name="settings_continue_watching_section_visibility">الظهور</string>
     <string name="settings_continue_watching_show_description">عرض صف «متابعة المشاهدة» على الشاشة الرئيسية.</string>
@@ -1455,7 +1451,6 @@
     <string name="profile_use_primary_addons_description">استخدام إعدادات إضافات الملف الشخصي الرئيسي بدل إدارة قائمة مستقلة.</string>
     <string name="profile_who_is_watching">من يشاهد؟</string>
     <string name="provider_downloaded">تم التنزيل</string>
-    <string name="resume_prompt_action">استئناف</string>
     <string name="streams_active_scrapers">أدوات الاستخراج النشطة</string>
     <string name="streams_checking_more_addons">جارٍ فحص إضافات أخرى…</string>
     <string name="streams_copy_link">نسخ رابط البث</string>

@@ -515,7 +515,6 @@
     <string name="episodes_cd_watched">Pozreté</string>
     <string name="episodes_season">Séria %1$d</string>
     <string name="episodes_specials">Špeciály</string>
-    <string name="floating_prompt_continue_where_left_off">Pokračovať tam, kde ste skončili</string>
     <string name="hero_add_to_library">Pridať do knižnice</string>
     <string name="hero_mark_unwatched">Označiť ako nepozreté</string>
     <string name="hero_mark_watched">Označiť ako pozreté</string>
@@ -600,8 +599,6 @@
     <string name="settings_poster_width_large">Veľký</string>
     <string name="settings_poster_width_standard">Štandardný</string>
     <string name="settings_show_secret">Zobraziť hodnotu</string>
-    <string name="settings_continue_watching_resume_prompt_description">Zobraziť vyskakovacie okno na pokračovanie tam, kde ste skončili, pri otvorení aplikácie po opustení prehrávača.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Výzva na pokračovanie pri spustení</string>
     <string name="settings_continue_watching_blur_next_up_description">Rozmazať miniatúry ďalších epizód v sekcii Pokračovať v sledovaní, aby sa predišlo spoilerom.</string>
     <string name="settings_continue_watching_blur_next_up_title">Rozmazať nepozreté v Pokračovať v sledovaní</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Zahrnúť nadchádzajúce epizódy do sekcie Pokračovať v sledovaní pred ich vysielaním.</string>
@@ -613,7 +610,6 @@
     <string name="settings_continue_watching_sort_mode_streaming">Štýl streamovania</string>
     <string name="settings_continue_watching_sort_mode_streaming_desc">Vydané položky ako prvé, nadchádzajúce na konci</string>
     <string name="settings_continue_watching_section_card_style">ŠTÝL KARTY PLAGÁTU</string>
-    <string name="settings_continue_watching_section_on_launch">PRI SPUSTENÍ</string>
     <string name="settings_continue_watching_section_up_next_behavior">SPRÁVANIE ĎALŠEJ EPIZÓDY</string>
     <string name="settings_continue_watching_section_visibility">VIDITEĽNOSŤ</string>
     <string name="settings_continue_watching_show_description">Zobraziť policu Pokračovať v sledovaní na domovskej obrazovke.</string>
@@ -1266,7 +1262,6 @@
     <string name="profile_use_primary_addons_description">Zdieľať nastavenie doplnkov hlavného profilu namiesto správy samostatného zoznamu.</string>
     <string name="profile_who_is_watching">Kto sleduje?</string>
     <string name="provider_downloaded">Stiahnuté</string>
-    <string name="resume_prompt_action">Pokračovať</string>
     <string name="streams_active_scrapers">Aktívne scrapery</string>
     <string name="streams_checking_more_addons">Kontrola ďalších doplnkov…</string>
     <string name="streams_copy_link">Kopírovať odkaz na stream</string>

@@ -639,7 +639,6 @@
     <string name="episodes_cd_watched">Pogledano</string>
     <string name="episodes_season">Sezona %1$d</string>
     <string name="episodes_specials">Posebni dodaci</string>
-    <string name="floating_prompt_continue_where_left_off">Nastavite gdje ste stali</string>
     <string name="hero_add_to_library">Dodaj u medijateku</string>
     <string name="hero_mark_unwatched">Označi kao nepogledano</string>
     <string name="hero_mark_watched">Označi kao pogledano</string>
@@ -802,8 +801,6 @@
     <string name="settings_custom_poster_screen_search">Pretraživanje</string>
     <string name="settings_custom_poster_screen_details">Zaslon s pojedinostima</string>
     <string name="settings_show_secret">Prikaži vrijednost</string>
-    <string name="settings_continue_watching_resume_prompt_description">Prikaži skočni prozor za nastavak gdje ste stali pri otvaranju aplikacije nakon izlaska iz reproduktora.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Upit za nastavak pri pokretanju</string>
     <string name="settings_continue_watching_blur_next_up_description">Zamuti sličice nepogledanih epizoda u Nastavi gledati kako bi se izbjegli spojleri.</string>
     <string name="settings_continue_watching_blur_next_up_title">Zamuti nepogledano u Nastavi gledati</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Uključi nadolazeće epizode u Nastavi gledati prije nego što se emitiraju.</string>
@@ -818,7 +815,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">Premjesti neemitirane epizode u zaseban redak Nadolazeće</string>
     <string name="upcoming_section_title">Nadolazeće</string>
     <string name="settings_continue_watching_section_card_style">STIL KARTICE PLAKATA</string>
-    <string name="settings_continue_watching_section_on_launch">PRI POKRETANJU</string>
     <string name="settings_continue_watching_section_up_next_behavior">PONAŠANJE SLJEDEĆE EPIZODE</string>
     <string name="settings_continue_watching_section_visibility">VIDLJIVOST</string>
     <string name="settings_continue_watching_show_description">Prikaži policu Nastavi gledati na početnom zaslonu.</string>
@@ -1622,7 +1618,6 @@
     <string name="profile_who_is_watching">Tko gleda?</string>
     <string name="profile_already_active">Već ste na profilu „%1$s”</string>
     <string name="provider_downloaded">Preuzeto</string>
-    <string name="resume_prompt_action">Nastavi</string>
     <string name="streams_active_scrapers">Aktivni strugači</string>
     <string name="streams_checking_more_addons">Provjera dodatnih dodataka…</string>
     <string name="streams_copy_link">Kopiraj poveznicu streama</string>

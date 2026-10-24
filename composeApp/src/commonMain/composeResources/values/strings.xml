@@ -658,7 +658,6 @@
     <string name="episodes_cd_watched">Watched</string>
     <string name="episodes_season">Season %1$d</string>
     <string name="episodes_specials">Specials</string>
-    <string name="floating_prompt_continue_where_left_off">Continue where you left off</string>
     <string name="hero_add_to_library">Add to library</string>
     <string name="hero_download">Download</string>
     <string name="hero_choose_stream">Choose stream</string>
@@ -823,8 +822,6 @@
     <string name="settings_custom_poster_screen_search">Search</string>
     <string name="settings_custom_poster_screen_details">Details Screen</string>
     <string name="settings_show_secret">Show value</string>
-    <string name="settings_continue_watching_resume_prompt_description">Show a popup to continue where you left off when opening the app after leaving from the player.</string>
-    <string name="settings_continue_watching_resume_prompt_title">Resume prompt on launch</string>
     <string name="settings_continue_watching_blur_next_up_description">Blur unwatched episode thumbnails in Continue Watching to avoid spoilers.</string>
     <string name="settings_continue_watching_blur_next_up_title">Blur Unwatched in Continue Watching</string>
     <string name="settings_continue_watching_show_unaired_next_up_description">Include upcoming episodes in Continue Watching before they air.</string>
@@ -839,7 +836,6 @@
     <string name="settings_continue_watching_sort_mode_split_upcoming_desc">Move unaired episodes to a separate Upcoming row</string>
     <string name="upcoming_section_title">Upcoming</string>
     <string name="settings_continue_watching_section_card_style">POSTER CARD STYLE</string>
-    <string name="settings_continue_watching_section_on_launch">ON LAUNCH</string>
     <string name="settings_continue_watching_section_up_next_behavior">NEXT UP BEHAVIOR</string>
     <string name="settings_continue_watching_section_visibility">VISIBILITY</string>
     <string name="settings_continue_watching_show_description">Display the Continue Watching shelf on the Home screen.</string>
@@ -1679,7 +1675,6 @@
     <string name="profile_who_is_watching">Who&apos;s watching?</string>
     <string name="profile_already_active">You&apos;re already on &quot;%1$s&quot;</string>
     <string name="provider_downloaded">Downloaded</string>
-    <string name="resume_prompt_action">Resume</string>
     <string name="streams_active_scrapers">Active scrapers</string>
     <string name="streams_checking_more_addons">Checking more addons…</string>
     <string name="streams_copy_link">Copy stream link</string>
@@ -1797,6 +1792,8 @@
     <string name="downloads_live_downloading_with_total">Downloading %1$s • %2$s / %3$s</string>
     <string name="downloads_live_failed">Download failed</string>
     <string name="downloads_live_paused">Paused %1$s</string>
+    <string name="downloads_live_waiting_for_wifi">Waiting for Wi-Fi</string>
+    <string name="downloads_label_waiting_for_wifi">Waiting for Wi-Fi</string>
     <string name="library_remove_confirm">Remove</string>
     <string name="library_remove_from_list_message">Remove %1$s from %2$s?</string>
     <string name="library_remove_message">Remove %1$s from your library?</string>
@@ -1951,6 +1948,9 @@
     <string name="downloads_eta_under_minute">%1$s · under a minute left</string>
     <string name="downloads_summary_active">%1$d downloading</string>
     <string name="downloads_summary_storage">%1$s on this device</string>
+    <string name="downloads_delete_watched_action">Delete watched (%1$d · %2$s)</string>
+    <string name="downloads_delete_watched_confirm_title">Delete watched downloads?</string>
+    <string name="downloads_delete_watched_confirm_message">Delete %1$d watched downloads and free %2$s?</string>
     <string name="downloads_show_summary">%1$d episodes · %2$s</string>
     <string name="downloads_episode_label">E%1$d · %2$s</string>
     <string name="downloads_enqueue_replaced">Replaced previous download</string>
