@@ -36,14 +36,11 @@ import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepositor
 import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
 import com.nuvio.app.features.watchprogress.ContinueWatchingSortMode
 import nuvio.composeapp.generated.resources.Res
-import nuvio.composeapp.generated.resources.settings_continue_watching_resume_prompt_description
-import nuvio.composeapp.generated.resources.settings_continue_watching_resume_prompt_title
 import nuvio.composeapp.generated.resources.settings_continue_watching_blur_next_up_description
 import nuvio.composeapp.generated.resources.settings_continue_watching_blur_next_up_title
 import nuvio.composeapp.generated.resources.settings_continue_watching_show_unaired_next_up_description
 import nuvio.composeapp.generated.resources.settings_continue_watching_show_unaired_next_up_title
 import nuvio.composeapp.generated.resources.settings_continue_watching_section_card_style
-import nuvio.composeapp.generated.resources.settings_continue_watching_section_on_launch
 import nuvio.composeapp.generated.resources.settings_continue_watching_section_sort_order
 import nuvio.composeapp.generated.resources.settings_continue_watching_section_up_next_behavior
 import nuvio.composeapp.generated.resources.settings_continue_watching_section_visibility
@@ -77,7 +74,6 @@ internal fun LazyListScope.continueWatchingSettingsContent(
     useEpisodeThumbnails: Boolean,
     showUnairedNextUp: Boolean,
     blurNextUp: Boolean,
-    showResumePromptOnLaunch: Boolean,
     sortMode: ContinueWatchingSortMode,
 ) {
     item {
@@ -149,22 +145,6 @@ internal fun LazyListScope.continueWatchingSettingsContent(
                         onCheckedChange = ContinueWatchingPreferencesRepository::setBlurNextUp,
                     )
                 }
-            }
-        }
-    }
-    item {
-        SettingsSection(
-            title = stringResource(Res.string.settings_continue_watching_section_on_launch),
-            isTablet = isTablet,
-        ) {
-            SettingsGroup(isTablet = isTablet) {
-                SettingsSwitchRow(
-                    title = stringResource(Res.string.settings_continue_watching_resume_prompt_title),
-                    description = stringResource(Res.string.settings_continue_watching_resume_prompt_description),
-                    checked = showResumePromptOnLaunch,
-                    isTablet = isTablet,
-                    onCheckedChange = ContinueWatchingPreferencesRepository::setShowResumePromptOnLaunch,
-                )
             }
         }
     }

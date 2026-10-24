@@ -49,16 +49,22 @@ internal object EpisodeDownloadPlanner {
 
     /**
      * First video to download from: the latest in-progress episode, the episode
-     * after a completed one (season rollover included), or the first released
-     * episode when the show was never started.
+     * after a completed one (season rollover included), or — when there is no
+     * usable anchor — the first regular (season >= 1) episode. Some catalogs
+     * lead with season-0 specials (e.g. an unaired pilot with no streams at
+     * all), so an unanchored start skips them; a specials-only series still
+     * starts at its first special.
      */
     fun resolveStartVideo(videos: List<MetaVideo>, anchor: EpisodeAnchor?): MetaVideo? {
         val ordered = orderedReleases(videos)
         if (ordered.isEmpty()) return null
-        if (anchor == null) return ordered.first()
-        val idx = ordered.indexOfFirst { it.season == anchor.season && it.episode == anchor.episode }
-        if (idx < 0) return ordered.first()
-        return if (anchor.isCompleted) ordered.getOrNull(idx + 1) else ordered[idx]
+        if (anchor != null) {
+            val idx = ordered.indexOfFirst { it.season == anchor.season && it.episode == anchor.episode }
+            if (idx >= 0) {
+                return if (anchor.isCompleted) ordered.getOrNull(idx + 1) else ordered[idx]
+            }
+        }
+        return ordered.firstOrNull { (it.season ?: 0) >= 1 } ?: ordered.first()
     }
 
     /**

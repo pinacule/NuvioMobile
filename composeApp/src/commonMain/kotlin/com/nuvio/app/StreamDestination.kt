@@ -97,6 +97,29 @@ internal fun adaptivePickStandsDownForBingeGroup(
         !reuseBingeGroup &&
         hasPersistedBingeGroup
 
+/**
+ * Whether the adaptive pick may act on this evaluation when
+ * [adaptivePickStandsDownForBingeGroup] stood it down for a persisted binge
+ * group. The stand-down is a deferral, not a veto: the binge flow only owns
+ * the launch while it can still choose, or once it has chosen. While the
+ * repository flow is undecided — streams still loading, not yet decided, or
+ * the direct auto-play overlay still up — the pick waits (returning without
+ * latching itself done). Once the flow has settled with no stream chosen,
+ * the persisted group matched nothing in the freshly fetched list, so the
+ * pick proceeds as the fallback. The settled shape mirrors the one in
+ * `StreamsUiState.isAdaptiveAutoPickPending`: decided, not loading, no
+ * direct overlay, no auto-play stream.
+ */
+internal fun adaptivePickProceedsAfterBingeStandDown(
+    standsDownForBingeGroup: Boolean,
+    autoPlayDecided: Boolean,
+    isAnyLoading: Boolean,
+    showDirectAutoPlayOverlay: Boolean,
+    hasAutoPlayStream: Boolean,
+): Boolean =
+    !standsDownForBingeGroup ||
+        (autoPlayDecided && !isAnyLoading && !showDirectAutoPlayOverlay && !hasAutoPlayStream)
+
 @Composable
 internal fun StreamDestination(
     route: StreamRoute,
@@ -801,8 +824,10 @@ internal fun StreamDestination(
     // list was bypassed: after loading finishes, pick the best stream for the current
     // network/battery/data-saver state and play it through the normal funnel.
     // Yields to: manual selection, the stream-reuse flow, the configured
-    // settings-based auto-play, and a persisted binge group when the binge
-    // preference is on but reuse is off. Falls back to the list when nothing
+    // settings-based auto-play, and — while the repository's binge flow is
+    // still deciding — a persisted binge group when the binge preference is
+    // on but reuse is off; if that flow settles with no matching stream, the
+    // pick proceeds as the fallback. Falls back to the list when nothing
     // is pickable.
     LaunchedEffect(
         adaptivePickDone,
@@ -810,6 +835,8 @@ internal fun StreamDestination(
         streamsUiState.isAnyLoading,
         streamsUiState.hasAnyStreams,
         streamsUiState.autoPlayStream,
+        streamsUiState.autoPlayDecided,
+        streamsUiState.showDirectAutoPlayOverlay,
         streamsUiState.requestToken,
         expectedStreamsRequestToken,
         launch.manualSelection,
@@ -818,15 +845,24 @@ internal fun StreamDestination(
         if (streamsUiState.requestToken != expectedStreamsRequestToken) return@LaunchedEffect
         if (StreamAutoPlayPolicy.isEffectivelyEnabled(playerSettings)) return@LaunchedEffect
         if (
-            adaptivePickStandsDownForBingeGroup(
-                mode = playerSettings.streamAutoPlayMode,
-                preferBingeGroup = playerSettings.streamAutoPlayPreferBingeGroup,
-                reuseBingeGroup = playerSettings.streamAutoPlayReuseBingeGroup,
-                hasPersistedBingeGroup = launch.parentMetaId
-                    ?.let { parentMetaId -> BingeGroupCacheRepository.get(parentMetaId) } != null,
+            !adaptivePickProceedsAfterBingeStandDown(
+                standsDownForBingeGroup = adaptivePickStandsDownForBingeGroup(
+                    mode = playerSettings.streamAutoPlayMode,
+                    preferBingeGroup = playerSettings.streamAutoPlayPreferBingeGroup,
+                    reuseBingeGroup = playerSettings.streamAutoPlayReuseBingeGroup,
+                    hasPersistedBingeGroup = launch.parentMetaId
+                        ?.let { parentMetaId -> BingeGroupCacheRepository.get(parentMetaId) } != null,
+                ),
+                autoPlayDecided = streamsUiState.autoPlayDecided,
+                isAnyLoading = streamsUiState.isAnyLoading,
+                showDirectAutoPlayOverlay = streamsUiState.showDirectAutoPlayOverlay,
+                hasAutoPlayStream = streamsUiState.autoPlayStream != null,
             )
         ) {
-            adaptivePickDone = true
+            // The binge flow still owns this launch (not settled yet) or has
+            // already chosen its stream: wait WITHOUT latching
+            // adaptivePickDone, so the effect re-evaluates when the streams
+            // state changes and the pick can still fire on a binge miss.
             return@LaunchedEffect
         }
         if (streamsUiState.isAnyLoading) return@LaunchedEffect

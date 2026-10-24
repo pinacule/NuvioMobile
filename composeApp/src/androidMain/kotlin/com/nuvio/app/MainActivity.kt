@@ -76,7 +76,6 @@ import com.nuvio.app.features.streams.StreamBadgeSettingsStorage
 import com.nuvio.app.features.streams.BingeGroupCacheStorage
 import com.nuvio.app.features.watchprogress.ContinueWatchingEnrichmentStorage
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesStorage
-import com.nuvio.app.features.watchprogress.ResumePromptStorage
 import com.nuvio.app.features.watchprogress.WatchProgressStorage
 
 open class MainActivity : AppCompatActivity() {
@@ -142,7 +141,6 @@ open class MainActivity : AppCompatActivity() {
         DeviceEnvironment.initialize(applicationContext)
         DataSaverStorage.initialize(applicationContext)
         ContinueWatchingPreferencesStorage.initialize(applicationContext)
-        ResumePromptStorage.initialize(applicationContext)
         ContinueWatchingEnrichmentStorage.initialize(applicationContext)
         EpisodeReleaseNotificationsStorage.initialize(applicationContext)
         WatchProgressStorage.initialize(applicationContext)
@@ -156,6 +154,7 @@ open class MainActivity : AppCompatActivity() {
         DownloadsPlatformDownloader.initialize(applicationContext)
         PreloadCachePlatform.initialize(applicationContext)
         DownloadsLiveStatusPlatform.initialize(applicationContext)
+        DownloadsLiveStatusPlatform.bindActivity(this)
         AndroidAppUpdaterPlatform.initialize(applicationContext)
         PlatformLocalAccountDataCleaner.initialize(applicationContext)
         EpisodeReleaseNotificationPlatform.initialize(applicationContext)
@@ -188,6 +187,7 @@ open class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         EpisodeReleaseNotificationPlatform.unbindActivity(this)
+        DownloadsLiveStatusPlatform.unbindActivity(this)
         val receiver = pipRemoteActionReceiver
         if (receiver != null) {
             runCatching { unregisterReceiver(receiver) }
@@ -201,6 +201,9 @@ open class MainActivity : AppCompatActivity() {
         permissions: Array<String>,
         grantResults: IntArray,
     ) {
+        if (DownloadsLiveStatusPlatform.handlePermissionRequestResult(requestCode, grantResults)) {
+            return
+        }
         if (EpisodeReleaseNotificationPlatform.handlePermissionRequestResult(requestCode, grantResults)) {
             return
         }

@@ -2,6 +2,7 @@ package com.nuvio.app.features.downloads
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.core.device.DeviceEnvironment
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.buildP2pMagnetUri
 import com.nuvio.app.features.p2p.canonicalP2pInfoHash
@@ -335,6 +336,7 @@ object DownloadsRepository {
         mutateItem(downloadId) { current ->
             current.copy(
                 status = DownloadStatus.Paused,
+                waitingForWifi = false,
                 updatedAtEpochMs = DownloadsClock.nowEpochMs(),
                 errorMessage = null,
             )
@@ -349,13 +351,103 @@ object DownloadsRepository {
             .forEach(::pauseDownload)
     }
 
+    /**
+     * Wi-Fi snapshot for the download gate ([DownloadWifiGate]): fail-closed,
+     * so an unknown transport never transfers. Desktop/iOS report Wi-Fi
+     * unconditionally, so the gate only ever bites on Android.
+     */
+    private fun isWifiAvailable(): Boolean =
+        runCatching { DeviceEnvironment.isWifi() }.getOrDefault(false)
+
+    /**
+     * Parks every actively transferring download as waiting for Wi-Fi
+     * (called by the Android network watcher when Wi-Fi is lost). Progress
+     * is preserved; this is not an error and never touches Failed items.
+     * A user-paused download is already Paused, so it is never flagged and
+     * never auto-resumed.
+     */
+    fun pauseDownloadsForWifi() {
+        ensureLoaded()
+        _uiState.value.items
+            .filter { it.status == DownloadStatus.Downloading }
+            .map { it.id }
+            .forEach { downloadId ->
+                activeHandles.remove(downloadId)?.cancel()
+                mutateItem(downloadId) { current ->
+                    if (current.status == DownloadStatus.Downloading) {
+                        DownloadWifiGate.parkAsWaiting(current)
+                    } else {
+                        current
+                    }
+                }
+            }
+    }
+
+    /**
+     * Resumes every download parked by the Wi-Fi gate, now that Wi-Fi is
+     * back. User-paused downloads (flag unset) are left alone. Re-checks
+     * Wi-Fi per item through [startDownload]'s own guard, so a race with
+     * another network change cannot start a transfer on cellular.
+     */
+    fun resumeWifiWaitingDownloads() {
+        ensureLoaded()
+        if (!isWifiAvailable()) return
+        _uiState.value.items
+            .filter { DownloadWifiGate.shouldAutoResume(it, isWifi = true) }
+            .map { it.id }
+            .forEach { downloadId ->
+                val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return@forEach
+                val reset = item.copy(
+                    status = DownloadStatus.Downloading,
+                    waitingForWifi = false,
+                    errorMessage = null,
+                    localFileUri = null,
+                    updatedAtEpochMs = DownloadsClock.nowEpochMs(),
+                )
+                replaceItem(reset)
+                persist()
+                startDownload(reset)
+            }
+    }
+
+    /**
+     * Marks one download as waiting for Wi-Fi without starting it (used by
+     * the notification Resume action when it is tapped while off Wi-Fi).
+     * A no-op for finished downloads; anything else is parked, so a resume
+     * tap off Wi-Fi always lands in the waiting state, never on cellular.
+     */
+    fun markWaitingForWifi(downloadId: String) {
+        ensureLoaded()
+        val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
+        if (item.status == DownloadStatus.Completed) return
+        activeHandles.remove(downloadId)?.cancel()
+        mutateItem(downloadId) { current ->
+            if (current.status == DownloadStatus.Completed) current
+            else DownloadWifiGate.parkAsWaiting(current)
+        }
+    }
+
     fun resumeDownload(downloadId: String) {
         ensureLoaded()
         val item = _uiState.value.items.firstOrNull { it.id == downloadId } ?: return
         if (item.status != DownloadStatus.Paused && item.status != DownloadStatus.Failed) return
 
+        if (!isWifiAvailable()) {
+            // Never transfer on cellular, even on an explicit resume tap:
+            // park as waiting instead. The watcher auto-resumes on Wi-Fi.
+            mutateItem(downloadId) { current ->
+                if (current.status == DownloadStatus.Paused || current.status == DownloadStatus.Failed) {
+                    DownloadWifiGate.parkAsWaiting(current)
+                } else {
+                    current
+                }
+            }
+            return
+        }
+
         val reset = item.copy(
             status = DownloadStatus.Downloading,
+            waitingForWifi = false,
             errorMessage = null,
             localFileUri = null,
             updatedAtEpochMs = DownloadsClock.nowEpochMs(),
@@ -394,6 +486,7 @@ object DownloadsRepository {
         val keepPartial = DownloadsPlatformDownloader.keepsPartialAcrossSourceSwap
         val marked = item.copy(
             status = DownloadStatus.Downloading,
+            waitingForWifi = false,
             errorMessage = null,
             localFileUri = null,
             downloadedBytes = if (keepPartial) item.downloadedBytes else 0L,
@@ -485,8 +578,22 @@ object DownloadsRepository {
         val restoredItems = decoded.items
             .map { item ->
                 val statusNormalized = DownloadsPlatformDownloader.restoreItem(item)
+                // The Wi-Fi-park flag can live in either record: an
+                // app-process park writes the repository payload, a
+                // background-process park writes the transfer store. A
+                // Paused restore keeps the flag from both, so a parked
+                // download still auto-resumes after process death; a
+                // running restore clears it, since a transfer that is
+                // actually running is not waiting.
+                val wifiMerged = if (statusNormalized.status == DownloadStatus.Paused) {
+                    statusNormalized.copy(
+                        waitingForWifi = item.waitingForWifi || statusNormalized.waitingForWifi,
+                    )
+                } else {
+                    statusNormalized.copy(waitingForWifi = false)
+                }
 
-                val localUriNormalized = normalizeCompletedLocalFileUri(statusNormalized)
+                val localUriNormalized = normalizeCompletedLocalFileUri(wifiMerged)
                 if (localUriNormalized != item) {
                     shouldPersistNormalized = true
                 }
@@ -577,6 +684,17 @@ object DownloadsRepository {
     }
 
     private fun startDownload(item: DownloadItem, resetValidator: Boolean = false) {
+        if (!isWifiAvailable()) {
+            // Wi-Fi-only gate: every transfer start funnels through here
+            // (enqueue, resume, retry, restart after process death), so a
+            // single guard covers all of them. Park the incoming item —
+            // which may carry a freshly resolved URL — instead of starting
+            // the transfer, so no byte ever moves on cellular.
+            replaceItem(DownloadWifiGate.parkAsWaiting(item))
+            persist()
+            return
+        }
+
         val request = DownloadPlatformRequest(item, resetValidator)
 
         val handle = DownloadsPlatformDownloader.start(

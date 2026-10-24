@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.ComponentActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -27,6 +29,61 @@ internal actual object DownloadsLiveStatusPlatform {
 
     private var appContext: Context? = null
     private val lastRenderStateById = mutableMapOf<String, RenderState>()
+
+    // Notification-permission prompt (mirrors EpisodeReleaseNotificationPlatform):
+    // the download notifications are useless without POST_NOTIFICATIONS, and
+    // nothing in the download flow ever asked for it, so a user who never
+    // enabled episode-release notifications never saw a download notification
+    // at all. The prompt fires once per process, on the first transfer start
+    // while the app is in the foreground.
+    private const val permissionRequestCode = 4608
+    private var currentActivity: ComponentActivity? = null
+    private var permissionPromptShown = false
+
+    fun bindActivity(activity: ComponentActivity) {
+        currentActivity = activity
+    }
+
+    fun unbindActivity(activity: ComponentActivity) {
+        if (currentActivity === activity) {
+            currentActivity = null
+        }
+    }
+
+    fun handlePermissionRequestResult(requestCode: Int, grantResults: IntArray): Boolean {
+        if (requestCode != permissionRequestCode) return false
+        // Fire-and-forget: granting takes effect on the next progress post
+        // (within a second of progress), so no continuation is needed.
+        return true
+    }
+
+    fun requestNotificationPermissionIfNeeded() {
+        if (permissionPromptShown) return
+        val context = appContext ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        val activity = currentActivity ?: return
+        permissionPromptShown = true
+        activity.runOnUiThread {
+            runCatching {
+                if (!activity.isDestroyed) {
+                    ActivityCompat.requestPermissions(
+                        activity,
+                        arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                        permissionRequestCode,
+                    )
+                } else {
+                    // Activity died between the post and execution (e.g.
+                    // rotation): allow a later live activity to retry.
+                    permissionPromptShown = false
+                }
+            }.onFailure {
+                permissionPromptShown = false
+            }
+        }
+    }
 
     /**
      * Last status seen per download id, for terminal-outcome detection
@@ -55,12 +112,15 @@ internal actual object DownloadsLiveStatusPlatform {
                 item.status == DownloadStatus.Paused ||
                 item.status == DownloadStatus.Failed
         }
+        // Waiting-for-Wi-Fi items are Paused, so they are included above;
+        // their distinct rendering comes from downloadNotificationContentFor.
         val managedIds = DownloadsPlatformDownloader.managedTransfers().map { it.item.id }.toSet()
 
         val trackedNow = managedIds.toMutableSet()
         activeItems.filterNot { it.id in managedIds }.forEach { item ->
             val renderState = RenderState(
                 status = item.status,
+                waitingForWifi = item.waitingForWifi,
                 progressPercent = progressPercent(item),
                 downloadedBucket = item.downloadedBytes / (512L * 1024L),
                 totalBytes = item.totalBytes,
@@ -184,8 +244,8 @@ internal actual object DownloadsLiveStatusPlatform {
         val subtitle = buildSubtitle(item)
         val launchPendingIntent = buildLaunchPendingIntent(context, item)
 
-        // Terminal failures alert on the outcomes channel; progress and
-        // paused notifications stay silent on the live-status channel.
+        // Terminal failures alert on the outcomes channel; progress, paused
+        // and waiting notifications stay silent on the live-status channel.
         val builderChannelId =
             if (item.status == DownloadStatus.Failed) outcomesChannelId else channelId
         val notificationBuilder = NotificationCompat.Builder(context, builderChannelId)
@@ -197,8 +257,10 @@ internal actual object DownloadsLiveStatusPlatform {
             .setContentIntent(launchPendingIntent)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
 
-        when (item.status) {
-            DownloadStatus.Downloading -> {
+        // Branches on the shared content mapping (same one the tests cover),
+        // so the notification can never disagree with the gate about state.
+        when (downloadNotificationContentFor(item)) {
+            DownloadNotificationContent.Progress -> {
                 notificationBuilder
                     .setOngoing(true)
                     .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -221,20 +283,43 @@ internal actual object DownloadsLiveStatusPlatform {
                 }
             }
 
-            DownloadStatus.Paused,
-            DownloadStatus.Failed,
-            DownloadStatus.Completed,
+            DownloadNotificationContent.WaitingForWifi -> {
+                // Parked by the Wi-Fi gate: silent, not ongoing, and no
+                // Resume action — resuming is automatic on Wi-Fi return,
+                // and a manual resume off Wi-Fi would no-op. Tapping the
+                // notification body still opens the Downloads screen.
+                notificationBuilder
+                    .setOngoing(false)
+                    .setAutoCancel(false)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setProgress(0, 0, false)
+            }
+
+            DownloadNotificationContent.Paused,
+            DownloadNotificationContent.Finished,
             -> {
                 notificationBuilder
                     .setOngoing(false)
                     .setAutoCancel(false)
-                    .setPriority(
-                        if (item.status == DownloadStatus.Failed) {
-                            NotificationCompat.PRIORITY_HIGH
-                        } else {
-                            NotificationCompat.PRIORITY_LOW
-                        },
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setProgress(0, 0, false)
+                    .addAction(
+                        0,
+                        runBlocking { getString(Res.string.action_resume) },
+                        buildActionPendingIntent(
+                            context = context,
+                            action = DownloadsNotificationActionReceiver.actionResume,
+                            downloadId = item.id,
+                            fileName = item.fileName,
+                        ),
                     )
+            }
+
+            DownloadNotificationContent.Failed -> {
+                notificationBuilder
+                    .setOngoing(false)
+                    .setAutoCancel(false)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setProgress(0, 0, false)
                     .addAction(
                         0,
@@ -271,6 +356,10 @@ internal actual object DownloadsLiveStatusPlatform {
 
     private fun buildSubtitle(item: DownloadItem): String {
         val detail = item.displaySubtitle
+        if (DownloadWifiGate.isWaiting(item)) {
+            val waiting = runBlocking { getString(Res.string.downloads_live_waiting_for_wifi) }
+            return if (detail.isBlank()) waiting else "$detail · $waiting"
+        }
         return when (item.status) {
             DownloadStatus.Downloading -> {
                 val downloaded = formatBytes(item.downloadedBytes)
@@ -417,6 +506,7 @@ internal actual object DownloadsLiveStatusPlatform {
 
     private data class RenderState(
         val status: DownloadStatus,
+        val waitingForWifi: Boolean,
         val progressPercent: Int,
         val downloadedBucket: Long,
         val totalBytes: Long?,

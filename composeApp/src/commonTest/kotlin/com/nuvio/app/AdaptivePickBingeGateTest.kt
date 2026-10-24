@@ -89,6 +89,110 @@ class AdaptivePickBingeGateTest {
         }
     }
 
+    // (vi) Stand-down + the repository binge flow still undecided: the pick
+    // must wait WITHOUT latching itself done — streams still loading, not
+    // yet decided, or the direct auto-play overlay still up all keep the
+    // binge flow's first claim alive.
+    @Test
+    fun `stand down with binge flow undecided keeps the pick waiting`() {
+        // Not decided yet (and nothing else in flight).
+        assertFalse(
+            adaptivePickProceedsAfterBingeStandDown(
+                standsDownForBingeGroup = true,
+                autoPlayDecided = false,
+                isAnyLoading = false,
+                showDirectAutoPlayOverlay = false,
+                hasAutoPlayStream = false,
+            ),
+        )
+        // Still loading the sources the binge flow will choose from.
+        assertFalse(
+            adaptivePickProceedsAfterBingeStandDown(
+                standsDownForBingeGroup = true,
+                autoPlayDecided = false,
+                isAnyLoading = true,
+                showDirectAutoPlayOverlay = false,
+                hasAutoPlayStream = false,
+            ),
+        )
+        // Decided flag published early (non-direct flows do this) but groups
+        // are still loading.
+        assertFalse(
+            adaptivePickProceedsAfterBingeStandDown(
+                standsDownForBingeGroup = true,
+                autoPlayDecided = true,
+                isAnyLoading = true,
+                showDirectAutoPlayOverlay = false,
+                hasAutoPlayStream = false,
+            ),
+        )
+        // Decided and loaded, but the direct auto-play overlay is still up.
+        assertFalse(
+            adaptivePickProceedsAfterBingeStandDown(
+                standsDownForBingeGroup = true,
+                autoPlayDecided = true,
+                isAnyLoading = false,
+                showDirectAutoPlayOverlay = true,
+                hasAutoPlayStream = false,
+            ),
+        )
+    }
+
+    // (vii) Stand-down + the binge flow settled with NO stream: the
+    // persisted group matched nothing in the freshly fetched list, so the
+    // stand-down expires and the adaptive pick proceeds as the fallback.
+    @Test
+    fun `stand down with binge flow settled empty lets the pick proceed`() {
+        assertTrue(
+            adaptivePickProceedsAfterBingeStandDown(
+                standsDownForBingeGroup = true,
+                autoPlayDecided = true,
+                isAnyLoading = false,
+                showDirectAutoPlayOverlay = false,
+                hasAutoPlayStream = false,
+            ),
+        )
+    }
+
+    // (viii) Stand-down + the binge flow settled WITH a stream: that stream
+    // owns playback; the adaptive pick stays out.
+    @Test
+    fun `stand down with binge flow settled on a stream keeps the pick out`() {
+        assertFalse(
+            adaptivePickProceedsAfterBingeStandDown(
+                standsDownForBingeGroup = true,
+                autoPlayDecided = true,
+                isAnyLoading = false,
+                showDirectAutoPlayOverlay = false,
+                hasAutoPlayStream = true,
+            ),
+        )
+    }
+
+    // (ix) No stand-down: this predicate imposes nothing at any flow state —
+    // the pick follows its normal path exactly as before (its own downstream
+    // guards still apply, e.g. an already-chosen auto-play stream).
+    @Test
+    fun `no stand down leaves the pick on its normal path`() {
+        for (decided in listOf(false, true)) {
+            for (loading in listOf(false, true)) {
+                for (overlay in listOf(false, true)) {
+                    for (hasStream in listOf(false, true)) {
+                        assertTrue(
+                            adaptivePickProceedsAfterBingeStandDown(
+                                standsDownForBingeGroup = false,
+                                autoPlayDecided = decided,
+                                isAnyLoading = loading,
+                                showDirectAutoPlayOverlay = overlay,
+                                hasAutoPlayStream = hasStream,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     // Exhaustive sweep: across every mode x preference x reuse x persisted
     // combination, exactly one stands the pick down — case (i).
     @Test

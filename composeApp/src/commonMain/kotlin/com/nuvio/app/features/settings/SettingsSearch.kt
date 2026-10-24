@@ -781,16 +781,6 @@ internal fun settingsSearchEntries(
             PlaybackSearchRow("blur-next-up", stringResource(Res.string.settings_continue_watching_blur_next_up_title), stringResource(Res.string.settings_continue_watching_blur_next_up_description)),
         ),
     )
-    addContinueWatchingRows(
-        addRow = ::addRow,
-        pageLabel = continueWatchingPage,
-        section = stringResource(Res.string.settings_continue_watching_section_on_launch),
-        icon = Icons.Rounded.Style,
-        rows = listOf(
-            PlaybackSearchRow("resume-prompt", stringResource(Res.string.settings_continue_watching_resume_prompt_title), stringResource(Res.string.settings_continue_watching_resume_prompt_description)),
-        ),
-    )
-
     val posterSection = stringResource(Res.string.settings_poster_card_style)
     listOf(
         PlaybackSearchRow("poster-width", stringResource(Res.string.settings_poster_card_width)),

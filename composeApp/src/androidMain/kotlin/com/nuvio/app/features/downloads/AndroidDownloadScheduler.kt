@@ -125,6 +125,31 @@ internal class AndroidDownloadScheduler(val context: Context) {
         paused?.let { DownloadsLiveStatusPlatform.notifyTransfer(it.item) }
     }
 
+    /**
+     * Wi-Fi-gate park for the transfer store: like [pause], but the item
+     * keeps [DownloadItem.waitingForWifi] so the repository can auto-resume
+     * it when Wi-Fi returns — including when the park happened in a
+     * background job process where the repository was never loaded (the
+     * repository merges the store flag on its next load). Cancelling the
+     * scheduled job stops the running transfer's coroutine; the partial
+     * file stays, so resume continues from the same byte offset.
+     */
+    fun pauseForWifi(fileName: String) {
+        val transfer = store.get(fileName) ?: return
+        if (transfer.item.status != DownloadStatus.Downloading) return
+        val paused = store.update(fileName, transfer.generation) {
+            it.copy(
+                item = it.item.copy(
+                    status = DownloadStatus.Paused,
+                    waitingForWifi = true,
+                    errorMessage = null,
+                ),
+            )
+        }
+        cancelScheduled(transfer)
+        paused?.let { DownloadsLiveStatusPlatform.notifyTransfer(it.item) }
+    }
+
     fun remove(fileName: String) {
         val transfer = store.get(fileName)
         val outputFileName = transfer?.outputFileName?.takeIf { it != fileName }

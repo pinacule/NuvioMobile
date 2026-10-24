@@ -136,40 +136,84 @@ private fun localizedContinueWatchingMetaLine(item: ContinueWatchingItem): Strin
 private fun ContinueWatchingItem.isCloudLibraryItem(): Boolean =
     parentMetaType.equals(CloudLibraryContentType, ignoreCase = true)
 
-private fun ContinueWatchingItem.continueWatchingArtworkUrl(
-    useEpisodeThumbnails: Boolean,
-): String? = when {
-    isNextUp && useEpisodeThumbnails -> firstNonBlank(
-        episodeThumbnail,
-        poster,
-        background,
-        imageUrl,
-    )
-    isNextUp -> firstNonBlank(
-        poster,
-        background,
-        episodeThumbnail,
-        imageUrl,
-    )
-    useEpisodeThumbnails -> firstNonBlank(
-        episodeThumbnail,
-        poster,
-        background,
-        imageUrl,
-    )
-    else -> firstNonBlank(
-        poster,
-        background,
-        episodeThumbnail,
-        imageUrl,
-    )
+/**
+ * Appends [candidate] to this artwork fallback queue (trimmed, blanks skipped,
+ * duplicates dropped) and queues its raw pre-overlay variant ([rawVariant])
+ * immediately after it.
+ *
+ * The raw variants preserve the semantics of the legacy single-fallback model:
+ * when a custom poster overlay replaced the poster/background, the original
+ * URL was the one fallback tried on load failure. Inside the queue that
+ * variant now sits directly behind its overlaid counterpart, ahead of the
+ * remaining artwork. A raw variant is only queued when its candidate is
+ * present — exactly when the legacy fallback could engage.
+ */
+private fun MutableList<String>.addArtworkCandidate(candidate: String?, rawVariant: String?) {
+    val normalized = candidate?.trim()?.takeIf { it.isNotBlank() } ?: return
+    val existingIndex = indexOf(normalized)
+    val rawInsertIndex = if (existingIndex >= 0) {
+        existingIndex + 1
+    } else {
+        add(normalized)
+        size
+    }
+    val raw = rawVariant?.trim()?.takeIf { it.isNotBlank() } ?: return
+    if (raw !in this) add(rawInsertIndex, raw)
 }
 
-private fun ContinueWatchingItem.continueWatchingPosterArtworkUrl(
+/**
+ * Ordered artwork URLs for the wide-card strip, in the exact priority order
+ * [continueWatchingArtworkUrl] picks its single URL from. The first element is
+ * that URL; the rest form the load-failure fallback queue consumed by
+ * [com.nuvio.app.core.poster.CustomPosterFallbackInterceptor] (via its
+ * FALLBACK_URLS_KEY), so a rotted episode still falls back to the show's
+ * poster/background instead of rendering an empty card.
+ */
+internal fun ContinueWatchingItem.continueWatchingArtworkUrls(
     useEpisodeThumbnails: Boolean,
-): String? {
+): List<String> = buildList {
+    when {
+        isNextUp && useEpisodeThumbnails -> {
+            addArtworkCandidate(episodeThumbnail, null)
+            addArtworkCandidate(poster, rawPosterUrl)
+            addArtworkCandidate(background, rawBackgroundUrl)
+            addArtworkCandidate(imageUrl, null)
+        }
+        isNextUp -> {
+            addArtworkCandidate(poster, rawPosterUrl)
+            addArtworkCandidate(background, rawBackgroundUrl)
+            addArtworkCandidate(episodeThumbnail, null)
+            addArtworkCandidate(imageUrl, null)
+        }
+        useEpisodeThumbnails -> {
+            addArtworkCandidate(episodeThumbnail, null)
+            addArtworkCandidate(poster, rawPosterUrl)
+            addArtworkCandidate(background, rawBackgroundUrl)
+            addArtworkCandidate(imageUrl, null)
+        }
+        else -> {
+            addArtworkCandidate(poster, rawPosterUrl)
+            addArtworkCandidate(background, rawBackgroundUrl)
+            addArtworkCandidate(episodeThumbnail, null)
+            addArtworkCandidate(imageUrl, null)
+        }
+    }
+}
+
+private fun ContinueWatchingItem.continueWatchingArtworkUrl(
+    useEpisodeThumbnails: Boolean,
+): String? = continueWatchingArtworkUrls(useEpisodeThumbnails).firstOrNull()
+
+/**
+ * Ordered artwork URLs for the poster card, in the exact priority order
+ * [continueWatchingPosterArtworkUrl] picks its single URL from. See
+ * [continueWatchingArtworkUrls] for the queue semantics.
+ */
+internal fun ContinueWatchingItem.continueWatchingPosterArtworkUrls(
+    useEpisodeThumbnails: Boolean,
+): List<String> {
     if (seasonNumber == null || episodeNumber == null) {
-        return continueWatchingArtworkUrl(useEpisodeThumbnails)
+        return continueWatchingArtworkUrls(useEpisodeThumbnails)
     }
 
     val normalizedEpisodeThumbnail = episodeThumbnail?.trim()?.takeIf { it.isNotBlank() }
@@ -177,82 +221,109 @@ private fun ContinueWatchingItem.continueWatchingPosterArtworkUrl(
         ?.trim()
         ?.takeIf { it.isNotBlank() && it != normalizedEpisodeThumbnail }
 
-    return firstNonBlank(
-        poster,
-        background,
-        nonEpisodeImageUrl,
-        if (useEpisodeThumbnails) episodeThumbnail else null,
-        imageUrl,
-    )
+    return buildList {
+        addArtworkCandidate(poster, rawPosterUrl)
+        addArtworkCandidate(background, rawBackgroundUrl)
+        addArtworkCandidate(nonEpisodeImageUrl, null)
+        if (useEpisodeThumbnails) addArtworkCandidate(episodeThumbnail, null)
+        addArtworkCandidate(imageUrl, null)
+    }
+}
+
+private fun ContinueWatchingItem.continueWatchingPosterArtworkUrl(
+    useEpisodeThumbnails: Boolean,
+): String? = continueWatchingPosterArtworkUrls(useEpisodeThumbnails).firstOrNull()
+
+/**
+ * Ordered artwork URLs for the landscape card, in the exact priority order
+ * [continueWatchingCardArtworkUrl] picks its single URL from. See
+ * [continueWatchingArtworkUrls] for the queue semantics.
+ */
+internal fun ContinueWatchingItem.continueWatchingCardArtworkUrls(
+    useEpisodeThumbnails: Boolean,
+    preferBackdropForNextUp: Boolean,
+): List<String> = buildList {
+    when {
+        isNextUp && preferBackdropForNextUp -> {
+            addArtworkCandidate(background, rawBackgroundUrl)
+            addArtworkCandidate(poster, rawPosterUrl)
+            addArtworkCandidate(episodeThumbnail, null)
+            addArtworkCandidate(imageUrl, null)
+        }
+        isNextUp && useEpisodeThumbnails -> {
+            addArtworkCandidate(episodeThumbnail, null)
+            addArtworkCandidate(background, rawBackgroundUrl)
+            addArtworkCandidate(poster, rawPosterUrl)
+            addArtworkCandidate(imageUrl, null)
+        }
+        isNextUp -> {
+            addArtworkCandidate(background, rawBackgroundUrl)
+            addArtworkCandidate(poster, rawPosterUrl)
+            addArtworkCandidate(episodeThumbnail, null)
+            addArtworkCandidate(imageUrl, null)
+        }
+        useEpisodeThumbnails -> {
+            addArtworkCandidate(episodeThumbnail, null)
+            addArtworkCandidate(background, rawBackgroundUrl)
+            addArtworkCandidate(poster, rawPosterUrl)
+            addArtworkCandidate(imageUrl, null)
+        }
+        else -> {
+            addArtworkCandidate(background, rawBackgroundUrl)
+            addArtworkCandidate(poster, rawPosterUrl)
+            addArtworkCandidate(episodeThumbnail, null)
+            addArtworkCandidate(imageUrl, null)
+        }
+    }
 }
 
 private fun ContinueWatchingItem.continueWatchingCardArtworkUrl(
     useEpisodeThumbnails: Boolean,
     preferBackdropForNextUp: Boolean,
-): String? = when {
-    isNextUp && preferBackdropForNextUp -> firstNonBlank(
-        background,
-        poster,
-        episodeThumbnail,
-        imageUrl,
-    )
-    isNextUp && useEpisodeThumbnails -> firstNonBlank(
-        episodeThumbnail,
-        background,
-        poster,
-        imageUrl,
-    )
-    isNextUp -> firstNonBlank(
-        background,
-        poster,
-        episodeThumbnail,
-        imageUrl,
-    )
-    useEpisodeThumbnails -> firstNonBlank(
-        episodeThumbnail,
-        background,
-        poster,
-        imageUrl,
-    )
-    else -> firstNonBlank(
-        background,
-        poster,
-        episodeThumbnail,
-        imageUrl,
-    )
-}
+): String? = continueWatchingCardArtworkUrls(
+    useEpisodeThumbnails = useEpisodeThumbnails,
+    preferBackdropForNextUp = preferBackdropForNextUp,
+).firstOrNull()
 
-private fun firstNonBlank(vararg values: String?): String? =
-    values.firstOrNull { value -> !value.isNullOrBlank() }?.trim()
-
-private fun ContinueWatchingItem.fallbackUrlForArtwork(artworkUrl: String?): String? {
-    if (artworkUrl.isNullOrBlank()) return null
-    val trimmed = artworkUrl.trim()
-    if (trimmed == poster?.trim() && !rawPosterUrl.isNullOrBlank() && rawPosterUrl != poster) return rawPosterUrl
-    if (trimmed == background?.trim() && !rawBackgroundUrl.isNullOrBlank() && rawBackgroundUrl != background) return rawBackgroundUrl
-    return null
-}
-
+/**
+ * Builds the Coil model for a Continue Watching artwork queue: the first URL
+ * is the primary (identical to the URL the single-URL selectors picked), and
+ * the remaining URLs ride along as the ordered FALLBACK_URLS_KEY queue, so
+ * [com.nuvio.app.core.poster.CustomPosterFallbackInterceptor] retries the next
+ * candidate whenever a load fails (e.g. a rotted episode still) instead of the
+ * card rendering empty. A single-URL queue keeps the plain string model, as
+ * before.
+ */
 @Composable
 private fun continuewatchingImageModel(
-    imageUrl: String?,
-    fallbackUrl: String?,
+    artworkUrls: List<String>,
 ): Any? {
     val platformContext = coil3.compose.LocalPlatformContext.current
-    return remember(imageUrl, fallbackUrl, platformContext) {
-        if (imageUrl.isNullOrBlank()) return@remember imageUrl
-        if (!fallbackUrl.isNullOrBlank() && fallbackUrl != imageUrl) {
-            coil3.request.ImageRequest.Builder(platformContext)
-                .data(imageUrl)
+    return remember(artworkUrls, platformContext) {
+        when {
+            artworkUrls.isEmpty() -> null
+            artworkUrls.size == 1 -> artworkUrls.first()
+            else -> coil3.request.ImageRequest.Builder(platformContext)
+                .data(artworkUrls.first())
                 .memoryCacheKeyExtras(
-                    mapOf(com.nuvio.app.core.poster.CustomPosterFallbackInterceptor.FALLBACK_URL_KEY to fallbackUrl)
+                    mapOf(
+                        com.nuvio.app.core.poster.CustomPosterFallbackInterceptor.FALLBACK_URLS_KEY to
+                            artworkUrls.drop(1).joinToString("\n")
+                    )
                 )
                 .build()
-        } else {
-            imageUrl
         }
     }
 }
+
+/**
+ * Applies [cloudLibraryDisplayArtworkUrl] to the primary (first) queue entry
+ * only, matching the previous single-URL model: queued fallback URLs stay raw.
+ */
+private fun List<String>.withCloudLibraryDisplayPrimary(): List<String> =
+    mapIndexed { index, url ->
+        if (index == 0) cloudLibraryDisplayArtworkUrl(url) ?: url else url
+    }
 
 internal fun ContinueWatchingItem.shouldBlurContinueWatchingArtwork(
     blurUnwatchedEpisodes: Boolean,
@@ -730,10 +801,12 @@ private fun ContinueWatchingCard(
             ),
     ) {
         if (imageUrl != null) {
-            val cwFallbackUrl = item.fallbackUrlForArtwork(imageUrl)
+            val artworkUrls = item.continueWatchingCardArtworkUrls(
+                useEpisodeThumbnails = useEpisodeThumbnails,
+                preferBackdropForNextUp = preferBackdropForNextUp,
+            )
             val cwImageModel = continuewatchingImageModel(
-                imageUrl = cloudLibraryDisplayArtworkUrl(imageUrl),
-                fallbackUrl = cwFallbackUrl,
+                artworkUrls = artworkUrls.withCloudLibraryDisplayPrimary(),
             )
             AsyncImage(
                 model = cwImageModel,
@@ -916,16 +989,16 @@ private fun ContinueWatchingWideCard(
             ),
     ) {
         val artworkUrl = item.continueWatchingArtworkUrl(useEpisodeThumbnails)
+        val artworkUrls = item.continueWatchingArtworkUrls(useEpisodeThumbnails)
         val shouldBlurArtwork = item.shouldBlurContinueWatchingArtwork(
             blurUnwatchedEpisodes = blurNextUp,
             useEpisodeThumbnails = useEpisodeThumbnails,
             artworkUrl = artworkUrl,
         )
         ArtworkPanel(
-            imageUrl = artworkUrl,
+            artworkUrls = artworkUrls,
             width = layout.widePosterStripWidth,
             blurred = shouldBlurArtwork,
-            fallbackUrl = item.fallbackUrlForArtwork(artworkUrl),
             contentScale = if (item.isCloudLibraryItem()) ContentScale.Fit else ContentScale.Crop,
             modifier = Modifier.fillMaxHeight(),
         )
@@ -1060,10 +1133,9 @@ private fun ContinueWatchingPosterCard(
                 artworkUrl = imageUrl,
             )
             if (imageUrl != null) {
-                val cwFallbackUrl = item.fallbackUrlForArtwork(imageUrl)
+                val artworkUrls = item.continueWatchingPosterArtworkUrls(useEpisodeThumbnails)
                 val cwImageModel = continuewatchingImageModel(
-                    imageUrl = cloudLibraryDisplayArtworkUrl(imageUrl),
-                    fallbackUrl = cwFallbackUrl,
+                    artworkUrls = artworkUrls.withCloudLibraryDisplayPrimary(),
                 )
                 AsyncImage(
                     model = cwImageModel,
@@ -1160,10 +1232,9 @@ private fun ContinueWatchingPosterCard(
 
 @Composable
 private fun ArtworkPanel(
-    imageUrl: String?,
+    artworkUrls: List<String>,
     width: Dp,
     blurred: Boolean = false,
-    fallbackUrl: String? = null,
     contentScale: ContentScale = ContentScale.Crop,
     modifier: Modifier = Modifier,
 ) {
@@ -1172,10 +1243,9 @@ private fun ArtworkPanel(
             .width(width)
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        if (imageUrl != null) {
+        if (artworkUrls.isNotEmpty()) {
             val artworkModel = continuewatchingImageModel(
-                imageUrl = cloudLibraryDisplayArtworkUrl(imageUrl),
-                fallbackUrl = fallbackUrl,
+                artworkUrls = artworkUrls.withCloudLibraryDisplayPrimary(),
             )
             AsyncImage(
                 model = artworkModel,

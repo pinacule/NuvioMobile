@@ -256,7 +256,6 @@ data class ContinueWatchingPreferencesUiState(
     val showUnairedNextUp: Boolean = true,
     val blurNextUp: Boolean = false,
     val dismissedNextUpKeys: Set<String> = emptySet(),
-    val showResumePromptOnLaunch: Boolean = true,
     val sortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT,
 )
 

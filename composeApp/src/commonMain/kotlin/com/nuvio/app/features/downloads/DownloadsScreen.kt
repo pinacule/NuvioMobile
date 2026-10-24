@@ -106,6 +106,7 @@ fun DownloadsScreen(
 
     var selectedShowId by rememberSaveable(initialShowId) { mutableStateOf(initialShowId) }
     var downloadPendingDeletionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingDeleteWatchedItems by remember { mutableStateOf<List<DownloadItem>?>(null) }
     val openDownloadsDirectoryFailedText = stringResource(Res.string.downloads_open_directory_failed)
 
     val completedEpisodes = remember(uiState.items) {
@@ -161,6 +162,7 @@ fun DownloadsScreen(
                     onNavigateToShow?.invoke(showId, title) ?: run { selectedShowId = showId }
                 },
                 onDeleteDownload = { downloadPendingDeletionId = it },
+                onDeleteWatched = { pendingDeleteWatchedItems = it },
             )
         } else {
             downloadsShowContent(
@@ -189,6 +191,29 @@ fun DownloadsScreen(
             onDismiss = { downloadPendingDeletionId = null },
         )
     }
+
+    val pendingDeleteWatched = pendingDeleteWatchedItems
+    if (pendingDeleteWatched != null) {
+        NuvioStatusModal(
+            title = stringResource(Res.string.downloads_delete_watched_confirm_title),
+            message = stringResource(
+                Res.string.downloads_delete_watched_confirm_message,
+                pendingDeleteWatched.size,
+                formatBytes(pendingDeleteWatched.sumOf { it.sizeOnDisk() }),
+            ),
+            isVisible = true,
+            destructive = true,
+            confirmText = stringResource(Res.string.action_delete),
+            dismissText = stringResource(Res.string.action_no),
+            onConfirm = {
+                pendingDeleteWatched.forEach { item ->
+                    DownloadsRepository.cancelDownload(item.id)
+                }
+                pendingDeleteWatchedItems = null
+            },
+            onDismiss = { pendingDeleteWatchedItems = null },
+        )
+    }
 }
 
 private fun LazyListScope.downloadsRootContent(
@@ -197,10 +222,12 @@ private fun LazyListScope.downloadsRootContent(
     onOpenDownload: (DownloadItem) -> Unit,
     onOpenShow: (showId: String, title: String) -> Unit,
     onDeleteDownload: (String) -> Unit,
+    onDeleteWatched: (List<DownloadItem>) -> Unit,
 ) {
     // Displayed in queue order (first episode first), matching the order transfer slots are
     // handed out in.
     val activeItems = uiState.activeItems.sortedForSeriesDownloads()
+    val watchedDownloads = watchedCompletedDownloads(uiState.completedItems, watchStates)
     val completedMovies = uiState.completedItems.filterNot(DownloadItem::isEpisode)
     val completedShows = uiState.completedItems
         .filter(DownloadItem::isEpisode)
@@ -226,7 +253,13 @@ private fun LazyListScope.downloadsRootContent(
         return
     }
 
-    item { DownloadsSummary(uiState) }
+    item {
+        DownloadsSummary(
+            uiState = uiState,
+            watchedDownloads = watchedDownloads,
+            onDeleteWatched = { onDeleteWatched(watchedDownloads) },
+        )
+    }
 
     if (activeItems.isNotEmpty()) {
         item { SectionTitle(stringResource(Res.string.downloads_section_active)) }
@@ -350,19 +383,52 @@ private fun LazyListScope.downloadsShowContent(
 
 /** One line on what is happening and how much space downloads take. */
 @Composable
-private fun DownloadsSummary(uiState: DownloadsUiState) {
+private fun DownloadsSummary(
+    uiState: DownloadsUiState,
+    watchedDownloads: List<DownloadItem>,
+    onDeleteWatched: () -> Unit,
+) {
     val downloading = uiState.items.count { it.status == DownloadStatus.Downloading }
     val usedBytes = uiState.items.sumOf { it.sizeOnDisk() }
     val parts = buildList {
         if (downloading > 0) add(stringResource(Res.string.downloads_summary_active, downloading))
         add(stringResource(Res.string.downloads_summary_storage, formatBytes(usedBytes)))
     }
-    Text(
-        text = parts.joinToString(" · "),
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    Column {
+        Text(
+            text = parts.joinToString(" · "),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (watchedDownloads.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .padding(horizontal = 14.dp, vertical = 2.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onDeleteWatched)
+                    .padding(horizontal = 2.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = stringResource(
+                        Res.string.downloads_delete_watched_action,
+                        watchedDownloads.size,
+                        formatBytes(watchedDownloads.sumOf { it.sizeOnDisk() }),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -445,7 +511,12 @@ private fun ActiveDownloadCard(
                 }
                 when (item.status) {
                     DownloadStatus.Downloading -> ActionIcon(Icons.Rounded.Pause, Res.string.compose_action_pause, onPause)
-                    DownloadStatus.Paused -> ActionIcon(Icons.Rounded.PlayArrow, Res.string.action_resume, onResume)
+                    // Waiting-for-Wi-Fi items resume automatically on Wi-Fi
+                    // return; no manual Resume action (it would no-op off
+                    // Wi-Fi by the gate, and the item is not user-paused).
+                    DownloadStatus.Paused -> if (!item.waitingForWifi) {
+                        ActionIcon(Icons.Rounded.PlayArrow, Res.string.action_resume, onResume)
+                    }
                     DownloadStatus.Failed -> ActionIcon(Icons.Rounded.Refresh, Res.string.action_retry, onRetry)
                     DownloadStatus.Completed -> Unit
                 }
@@ -502,6 +573,8 @@ private fun StatusLabel(item: DownloadItem, queued: Boolean) {
         queued -> stringResource(Res.string.downloads_label_queued) to MaterialTheme.colorScheme.onSurfaceVariant
         item.status == DownloadStatus.Downloading ->
             stringResource(Res.string.downloads_label_downloading) to MaterialTheme.colorScheme.primary
+        item.waitingForWifi ->
+            stringResource(Res.string.downloads_label_waiting_for_wifi) to MaterialTheme.colorScheme.onSurfaceVariant
         item.status == DownloadStatus.Paused ->
             stringResource(Res.string.downloads_label_paused) to MaterialTheme.colorScheme.onSurfaceVariant
         else -> stringResource(Res.string.downloads_status_failed) to MaterialTheme.colorScheme.error
@@ -773,16 +846,6 @@ private fun Artwork(url: String?, fallbackUrl: String? = null, tmdbStillUrl: Str
             )
         }
     }
-}
-
-/** Watched state + in-progress entry for one completed download. */
-private data class DownloadWatchState(
-    val progressEntry: WatchProgressEntry?,
-    val isWatched: Boolean,
-) {
-    /** The entry worth drawing a progress bar for — the episode grid's visible-entry rule. */
-    val visibleProgressEntry: WatchProgressEntry?
-        get() = progressEntry?.takeIf { it.durationMs > 0L && !it.isCompleted }
 }
 
 private fun DownloadItem.downloadWatchState(watchedKeys: Set<String>): DownloadWatchState {

@@ -99,6 +99,73 @@ class EpisodeDownloadPlannerTest {
     }
 
     @Test
+    fun startVideoSkipsSeasonZeroSpecialsWhenNeverStarted() {
+        // ATLA-shaped catalog: season-0 specials (incl. an unaired pilot)
+        // lead the ordered list. A cold start must probe S1E1, not S0E1 —
+        // the specials have no streams, which used to surface as
+        // "No downloadable streams found" for the whole series.
+        val videos = (1..6).map { video("s0e$it", 0, it) } +
+            listOf(video("s1e1", 1, 1), video("s1e2", 1, 2))
+        assertEquals("s1e1", EpisodeDownloadPlanner.resolveStartVideo(videos, null)?.id)
+    }
+
+    @Test
+    fun startVideoFallsBackToSpecialWhenSeriesIsSpecialsOnly() {
+        val videos = listOf(video("s0e1", 0, 1), video("s0e2", 0, 2))
+        assertEquals("s0e1", EpisodeDownloadPlanner.resolveStartVideo(videos, null)?.id)
+    }
+
+    @Test
+    fun startVideoAnchoredMidSeasonOneUnaffectedBySpecials() {
+        val videos = (1..6).map { video("s0e$it", 0, it) } +
+            listOf(video("s1e1", 1, 1), video("s1e2", 1, 2), video("s1e3", 1, 3))
+        val start = EpisodeDownloadPlanner.resolveStartVideo(
+            videos,
+            EpisodeAnchor(1, 2, isCompleted = false, lastUpdatedEpochMs = 1L),
+        )
+        assertEquals("s1e2", start?.id)
+    }
+
+    @Test
+    fun startVideoAnchoredCompletedUnaffectedBySpecials() {
+        val videos = (1..6).map { video("s0e$it", 0, it) } +
+            listOf(video("s1e1", 1, 1), video("s1e2", 1, 2))
+        val start = EpisodeDownloadPlanner.resolveStartVideo(
+            videos,
+            EpisodeAnchor(1, 1, isCompleted = true, lastUpdatedEpochMs = 1L),
+        )
+        assertEquals("s1e2", start?.id)
+    }
+
+    @Test
+    fun startVideoAnchoredOnSpecialStillResolvesToIt() {
+        // An anchor that actually points at a special (the user watched
+        // it) resolves exactly as before — only unanchored starts skip
+        // season 0.
+        val videos = listOf(video("s0e1", 0, 1), video("s0e2", 0, 2), video("s1e1", 1, 1))
+        val start = EpisodeDownloadPlanner.resolveStartVideo(
+            videos,
+            EpisodeAnchor(0, 2, isCompleted = false, lastUpdatedEpochMs = 1L),
+        )
+        assertEquals("s0e2", start?.id)
+    }
+
+    @Test
+    fun startVideoMissingAnchorFallsBackToFirstRegularEpisode() {
+        val videos = (1..6).map { video("s0e$it", 0, it) } +
+            listOf(video("s1e1", 1, 1), video("s1e2", 1, 2))
+        // Anchor episode not in the video list -> start over at the
+        // first season >= 1 episode, not at a season-0 special.
+        assertEquals(
+            "s1e1",
+            EpisodeDownloadPlanner.resolveStartVideo(
+                videos,
+                EpisodeAnchor(2, 5, isCompleted = false, lastUpdatedEpochMs = 1L),
+            )?.id,
+        )
+    }
+
+    @Test
     fun restOfSeasonStopsAtSeasonEnd() {
         val videos = listOf(
             video("s1e1", 1, 1), video("s1e2", 1, 2), video("s1e3", 1, 3),
