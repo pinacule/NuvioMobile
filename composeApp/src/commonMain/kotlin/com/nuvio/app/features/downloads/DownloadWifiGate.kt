@@ -65,10 +65,16 @@ internal enum class DownloadNotificationContent {
 }
 
 internal fun downloadNotificationContentFor(item: DownloadItem): DownloadNotificationContent =
-    when {
-        DownloadWifiGate.isWaiting(item) -> DownloadNotificationContent.WaitingForWifi
-        item.status == DownloadStatus.Downloading -> DownloadNotificationContent.Progress
-        item.status == DownloadStatus.Paused -> DownloadNotificationContent.Paused
-        item.status == DownloadStatus.Failed -> DownloadNotificationContent.Failed
-        item.status == DownloadStatus.Completed -> DownloadNotificationContent.Finished
+    // Subject on the status enum (not a subject-less when over booleans):
+    // a subject-less when used as an expression is never exhaustive without
+    // an else branch, even when its conditions logically cover every case.
+    // The enum subject makes exhaustiveness provable, and the waiting check
+    // lives inside the Paused branch, where isWaiting can be true.
+    when (item.status) {
+        DownloadStatus.Downloading -> DownloadNotificationContent.Progress
+        DownloadStatus.Paused ->
+            if (DownloadWifiGate.isWaiting(item)) DownloadNotificationContent.WaitingForWifi
+            else DownloadNotificationContent.Paused
+        DownloadStatus.Failed -> DownloadNotificationContent.Failed
+        DownloadStatus.Completed -> DownloadNotificationContent.Finished
     }
